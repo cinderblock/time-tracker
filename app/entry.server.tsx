@@ -1,4 +1,6 @@
-import type { AppLoadContext, EntryContext } from "react-router";
+// React Router 8 replaced the old `AppLoadContext` with `RouterContextProvider`,
+// the same context object the middleware API hands to loaders and actions.
+import type { EntryContext, RouterContextProvider } from "react-router";
 import { ServerRouter } from "react-router";
 // Import the Web Streams build *explicitly* rather than the bare
 // "react-dom/server".
@@ -22,7 +24,7 @@ export default async function handleRequest(
   responseStatusCode: number,
   responseHeaders: Headers,
   routerContext: EntryContext,
-  _loadContext: AppLoadContext,
+  _loadContext: RouterContextProvider,
 ) {
   let didError = false;
 

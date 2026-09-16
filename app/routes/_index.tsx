@@ -1,6 +1,6 @@
 import { Alert, Badge, Card, Container, Group, Stack, Text, Title } from "@mantine/core";
-import { useLoaderData } from "react-router";
 
+import type { Route } from "./+types/_index";
 import { accountingBackend } from "../../src/accounting/index.ts";
 import { config } from "../../src/config.ts";
 import { db } from "../../src/db.ts";
@@ -43,8 +43,8 @@ export async function loader() {
   };
 }
 
-export default function Home() {
-  const { appName, timezone, needsSetup, backend } = useLoaderData<typeof loader>();
+export default function Home({ loaderData }: Route.ComponentProps) {
+  const { appName, timezone, needsSetup, backend } = loaderData;
 
   return (
     <Container size="sm" py="xl">

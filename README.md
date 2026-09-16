@@ -30,7 +30,7 @@ repository. All of that is deployment configuration.
 
 ## Stack
 
-Bun · React Router v7 (SSR) · Mantine · `bun:sqlite` · SimpleWebAuthn · Docker
+Bun · React Router v8 (SSR) · Mantine v9 · `bun:sqlite` · SimpleWebAuthn · TypeScript 7 · Vite 8 · Docker
 
 ## Running locally
 

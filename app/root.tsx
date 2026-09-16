@@ -12,9 +12,11 @@ import {
   Scripts,
   ScrollRestoration,
   isRouteErrorResponse,
-  useLoaderData,
   useRouteError,
+  useRouteLoaderData,
 } from "react-router";
+
+import type { Route } from "./+types/root";
 
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
@@ -41,19 +43,27 @@ export function loader() {
   };
 }
 
-export function meta({ data }: { data?: Awaited<ReturnType<typeof loader>> }) {
-  const name = data?.branding.name ?? "Time Tracker";
+// Use the generated `Route.MetaArgs` rather than hand-writing this parameter's
+// type. The field is `loaderData`; an earlier hand-rolled `{ data }` signature
+// type-checked perfectly — because it was self-declared — and silently shipped
+// the fallback title on every page.
+export function meta({ loaderData }: Route.MetaArgs) {
+  const name = loaderData?.branding.name ?? FALLBACK_NAME;
   return [
     { title: name },
     { name: "description", content: `${name} — track time, on or offline.` },
   ];
 }
 
+const FALLBACK_NAME = "Time Tracker";
+const FALLBACK_THEME_COLOR = "#1c7ed6";
+
 export function Layout({ children }: { children: React.ReactNode }) {
-  const data = useLoaderData<typeof loader>() as
-    | Awaited<ReturnType<typeof loader>>
-    | undefined;
-  const themeColor = data?.branding.themeColor ?? "#1c7ed6";
+  // `useRouteLoaderData` rather than `useLoaderData`: Layout also wraps the
+  // ErrorBoundary, and when the root loader itself failed there is no loader
+  // data to read. This returns undefined instead of throwing.
+  const data = useRouteLoaderData<typeof loader>("root");
+  const themeColor = data?.branding.themeColor ?? FALLBACK_THEME_COLOR;
 
   return (
     <html lang="en" {...mantineHtmlProps}>
@@ -85,8 +95,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function App() {
-  const { branding } = useLoaderData<typeof loader>();
+export default function App({ loaderData }: Route.ComponentProps) {
+  const { branding } = loaderData;
 
   const theme = createTheme({
     primaryColor: "brand",

@@ -1,9 +1,13 @@
 import { reactRouter } from "@react-router/dev/vite";
 import { defineConfig } from "vite";
-import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
-  plugins: [reactRouter(), tsconfigPaths()],
+  plugins: [reactRouter()],
+  resolve: {
+    // Vite 8 resolves tsconfig `paths` natively, so the `vite-tsconfig-paths`
+    // plugin this project used to carry is gone.
+    tsconfigPaths: true,
+  },
   server: {
     port: Number(process.env.PORT ?? 3000),
   },
