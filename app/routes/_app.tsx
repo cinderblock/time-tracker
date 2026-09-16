@@ -35,9 +35,14 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   useEffect(close, [location.pathname, close]);
 
   const links = [
-    { to: "/", label: "Home" },
+    { to: "/", label: "Track time" },
     { to: "/account", label: "Your account" },
-    ...(user.role === "admin" ? [{ to: "/admin/people", label: "People" }] : []),
+    ...(user.role === "admin"
+      ? [
+          { to: "/admin/jobs", label: "Jobs" },
+          { to: "/admin/people", label: "People" },
+        ]
+      : []),
   ];
 
   return (
@@ -76,7 +81,11 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
                 component={Link}
                 to={link.to}
                 label={link.label}
-                active={link.to === "/" ? location.pathname === "/" : location.pathname.startsWith(link.to)}
+                active={
+                  link.to === "/"
+                    ? location.pathname === "/" || location.pathname.startsWith("/day/")
+                    : location.pathname.startsWith(link.to)
+                }
               />
             ))}
           </Stack>

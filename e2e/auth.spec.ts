@@ -41,6 +41,11 @@ function mintAdminLink(): string {
   return url;
 }
 
+/** The app header names whoever is signed in. */
+async function expectSignedInAs(page: Page, name: string) {
+  await expect(page.getByRole("banner").getByText(name)).toBeVisible();
+}
+
 let admin: { context: BrowserContext; page: Page };
 let employee: { context: BrowserContext; page: Page };
 let inviteUrl = "";
@@ -68,9 +73,12 @@ test("the first admin sets up with a one-time link and a passkey", async ({ brow
   await page.getByLabel("Your name").fill("Ada Lovelace");
   await page.getByRole("button", { name: "Create passkey" }).click();
 
-  await expect(page.getByRole("heading", { name: "Hi, Ada" })).toBeVisible();
+  await expectSignedInAs(page, "Ada Lovelace");
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+  await expect(page).toHaveTitle("Today · E2E Time");
+  // Admins get the Jobs page, where the backend status now lives.
+  await page.getByRole("link", { name: "Jobs" }).click();
   await expect(page.getByText("Accounting backend", { exact: true })).toBeVisible();
-  await expect(page).toHaveTitle("E2E Time");
 });
 
 test("the admin can sign out and back in with the passkey", async () => {
@@ -81,7 +89,7 @@ test("the admin can sign out and back in with the passkey", async () => {
   await expect(page.getByText("No admin exists yet")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Sign in with a passkey" }).click();
-  await expect(page.getByRole("heading", { name: "Hi, Ada" })).toBeVisible();
+  await expectSignedInAs(page, "Ada Lovelace");
 });
 
 test("sign-in returns to the page that asked for it", async () => {
@@ -122,10 +130,10 @@ test("the employee signs up from the invite on their own device", async ({ brows
   await expect(page.getByLabel("Your name")).toHaveValue("Grace Hopper");
   await page.getByRole("button", { name: "Create passkey" }).click();
 
-  await expect(page.getByRole("heading", { name: "Hi, Grace" })).toBeVisible();
-  // Employees don't see backend status or the admin area.
-  await expect(page.getByText("Accounting backend", { exact: true })).toHaveCount(0);
+  await expectSignedInAs(page, "Grace Hopper");
+  // Employees don't get the admin area.
   await expect(page.getByRole("link", { name: "People" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Jobs" })).toHaveCount(0);
 });
 
 test("employees are refused the admin pages", async () => {

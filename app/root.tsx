@@ -22,6 +22,7 @@ import {
 import type { Route } from "./+types/root";
 
 import "@mantine/core/styles.css";
+import "@mantine/dates/styles.css";
 import "@mantine/notifications/styles.css";
 
 import { config } from "../src/config.server.ts";

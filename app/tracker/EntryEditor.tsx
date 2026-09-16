@@ -1,0 +1,277 @@
+import {
+  Alert,
+  Button,
+  Group,
+  Modal,
+  NumberInput,
+  SegmentedControl,
+  Stack,
+  Text,
+  TextInput,
+  Textarea,
+} from "@mantine/core";
+import { TimeInput } from "@mantine/dates";
+import { useMediaQuery } from "@mantine/hooks";
+import { useEffect, useRef, useState } from "react";
+
+import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
+import { addDays, formatDurationHuman, workDateOf, zonedTimeInput, zonedTimeToInstant } from "../../src/time.ts";
+import { uuidv7 } from "../../src/uuid.ts";
+import { useTracker, useUndoToast } from "./context.tsx";
+import { JobSelect } from "./JobPicker.tsx";
+import type { EntryView } from "./model.ts";
+
+type Mode = "times" | "duration";
+
+/**
+ * Create or edit an entry. An entry with start and end times is edited by
+ * times; a typed-in duration by date and duration. An end time earlier than
+ * the start means the work ran past midnight.
+ */
+export function EntryEditor({
+  entry,
+  opened,
+  onClose,
+  defaultDate,
+}: {
+  /** null = create a new entry */
+  entry: EntryView | null;
+  opened: boolean;
+  onClose: () => void;
+  defaultDate: string;
+}) {
+  const { model, dispatch } = useTracker();
+  const undoToast = useUndoToast();
+  const narrow = useMediaQuery("(max-width: 36em)");
+  const tz = model.timezone;
+  const isOpenTimer = entry?.status === "open";
+
+  const [mode, setMode] = useState<Mode>("times");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [date, setDate] = useState(defaultDate);
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [hours, setHours] = useState<number | string>(0);
+  const [minutes, setMinutes] = useState<number | string>(0);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Reset the form when it opens — and only then. Defaults are read through a
+  // ref: the model is rebuilt on every data refresh (creating a job from
+  // inside this dialog causes one), which must not wipe what's been typed.
+  const defaults = useRef({ jobId: model.open?.jobId ?? model.recentJobIds[0] ?? null, tz, defaultDate });
+  defaults.current = { jobId: model.open?.jobId ?? model.recentJobIds[0] ?? null, tz, defaultDate };
+  useEffect(() => {
+    const { tz, defaultDate } = defaults.current;
+    if (!opened) return;
+    setError(null);
+    setBusy(false);
+    if (entry) {
+      setMode(entry.startedAt != null ? "times" : "duration");
+      setJobId(entry.jobId);
+      setDate(entry.startedAt != null ? workDateOf(entry.startedAt, tz) : entry.workDate);
+      setStart(entry.startedAt != null ? zonedTimeInput(entry.startedAt, tz) : "");
+      setEnd(entry.endedAt != null ? zonedTimeInput(entry.endedAt, tz) : "");
+      setHours(Math.floor(entry.durationSeconds / 3600));
+      setMinutes(Math.round((entry.durationSeconds % 3600) / 60));
+      setNote(entry.note ?? "");
+    } else {
+      setMode("times");
+      setJobId(defaults.current.jobId);
+      setDate(defaultDate);
+      setStart("");
+      setEnd("");
+      setHours(0);
+      setMinutes(0);
+      setNote("");
+    }
+  }, [opened, entry]);
+
+  // Derived span for "times" mode.
+  const startAt = start ? zonedTimeToInstant(date, start, tz) : null;
+  let endAt = end ? zonedTimeToInstant(date, end, tz) : null;
+  const overnight = startAt != null && endAt != null && endAt <= startAt;
+  if (overnight && endAt != null) endAt = zonedTimeToInstant(addDays(date, 1), end, tz);
+  const durationFromTimes = startAt != null && endAt != null ? Math.round((endAt - startAt) / 1000) : null;
+  const typedSeconds = (Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60;
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (!jobId) return setError("Pick a job.");
+    const cleanNote = note.trim() || null;
+
+    let result;
+    setBusy(true);
+    if (!entry) {
+      if (mode === "times") {
+        if (startAt == null || endAt == null) {
+          setBusy(false);
+          return setError("Enter a start and an end time.");
+        }
+        result = await dispatch(
+          "entry.create",
+          { entryId: uuidv7(), jobId, startedAt: startAt, endedAt: endAt, note: cleanNote },
+          { quiet: true },
+        );
+      } else {
+        if (typedSeconds <= 0) {
+          setBusy(false);
+          return setError("Enter how long you worked.");
+        }
+        result = await dispatch(
+          "entry.create",
+          { entryId: uuidv7(), jobId, workDate: date, durationSeconds: typedSeconds, note: cleanNote },
+          { quiet: true },
+        );
+      }
+    } else if (entry.startedAt != null) {
+      result = await dispatch(
+        "entry.update",
+        {
+          entryId: entry.id,
+          jobId: jobId !== entry.jobId ? jobId : undefined,
+          note: cleanNote !== entry.note ? cleanNote : undefined,
+          startedAt: startAt != null && startAt !== entry.startedAt ? startAt : undefined,
+          endedAt: !isOpenTimer && endAt != null && endAt !== entry.endedAt ? endAt : undefined,
+        },
+        { quiet: true },
+      );
+    } else {
+      result = await dispatch(
+        "entry.update",
+        {
+          entryId: entry.id,
+          jobId: jobId !== entry.jobId ? jobId : undefined,
+          note: cleanNote !== entry.note ? cleanNote : undefined,
+          workDate: date !== entry.workDate ? date : undefined,
+          durationSeconds: typedSeconds !== entry.durationSeconds ? typedSeconds : undefined,
+        },
+        { quiet: true },
+      );
+    }
+    setBusy(false);
+    if (result.ok) onClose();
+    else setError(result.error);
+  }
+
+  async function remove() {
+    if (!entry) return;
+    setBusy(true);
+    const result = await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
+    setBusy(false);
+    if (!result.ok) return;
+    onClose();
+    undoToast(`Deleted ${entry.jobName}.`, () => dispatch("entry.restore", { entryId: entry.id, at: Date.now() }));
+  }
+
+  const title = !entry ? "Add time" : isOpenTimer ? "Edit running timer" : "Edit entry";
+
+  return (
+    <Modal opened={opened} onClose={onClose} title={title} centered fullScreen={narrow}>
+      <form onSubmit={save}>
+        <Stack gap="md">
+          <JobSelect label="Job" value={jobId} onChange={setJobId} required />
+
+          {!entry && (
+            <SegmentedControl
+              value={mode}
+              onChange={(v) => setMode(v as Mode)}
+              data={[
+                { value: "times", label: "Start & end" },
+                { value: "duration", label: "Just a duration" },
+              ]}
+            />
+          )}
+
+          <TextInput
+            type="date"
+            label="Date"
+            value={date}
+            onChange={(e) => setDate(e.currentTarget.value)}
+            required
+            max={model.today}
+            disabled={isOpenTimer}
+          />
+
+          {mode === "times" ? (
+            <Stack gap={4}>
+              <Group grow align="start">
+                <TimeInput label="Start" value={start} onChange={(e) => setStart(e.currentTarget.value)} required />
+                {!isOpenTimer && (
+                  <TimeInput label="End" value={end} onChange={(e) => setEnd(e.currentTarget.value)} required />
+                )}
+              </Group>
+              {durationFromTimes != null && durationFromTimes > 0 && (
+                <Text size="sm" c="dimmed">
+                  {formatDurationHuman(durationFromTimes)}
+                  {overnight ? " — ends the next day" : ""}
+                </Text>
+              )}
+              {isOpenTimer && (
+                <Text size="sm" c="dimmed">
+                  The timer is still running; stop it to set an end time.
+                </Text>
+              )}
+            </Stack>
+          ) : (
+            <Group grow align="start">
+              <NumberInput label="Hours" value={hours} onChange={setHours} min={0} max={24} allowDecimal={false} />
+              <NumberInput
+                label="Minutes"
+                value={minutes}
+                onChange={setMinutes}
+                min={0}
+                max={59}
+                step={5}
+                allowDecimal={false}
+              />
+            </Group>
+          )}
+
+          <Textarea
+            label="Note"
+            value={note}
+            onChange={(e) => setNote(e.currentTarget.value)}
+            maxLength={NOTE_MAX_LENGTH}
+            autosize
+            minRows={2}
+            maxRows={6}
+          />
+
+          {entry && entry.segmentCount > 1 && (
+            <Text size="sm" c="dimmed">
+              This timer was paused {entry.segmentCount - 1} time{entry.segmentCount > 2 ? "s" : ""}; changing the
+              start or end keeps the pauses.
+            </Text>
+          )}
+
+          {error && (
+            <Alert color="red" role="alert">
+              {error}
+            </Alert>
+          )}
+
+          <Group justify="space-between">
+            {entry ? (
+              <Button variant="subtle" color="red" onClick={() => void remove()} disabled={busy}>
+                Delete
+              </Button>
+            ) : (
+              <span />
+            )}
+            <Group gap="xs">
+              <Button variant="default" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={busy}>
+                {entry ? "Save" : "Add time"}
+              </Button>
+            </Group>
+          </Group>
+        </Stack>
+      </form>
+    </Modal>
+  );
+}

@@ -10,12 +10,17 @@ export default [
   // Everything behind sign-in shares the app chrome.
   layout("routes/_app.tsx", [
     index("routes/_app._index.tsx"),
+    route("day/:date", "routes/_app.day.$date.tsx"),
     route("account", "routes/_app.account.tsx"),
     ...prefix("admin", [
+      route("jobs", "routes/_app.admin.jobs.tsx"),
       route("people", "routes/_app.admin.people.tsx"),
       route("people/:userId", "routes/_app.admin.people.$userId.tsx"),
     ]),
   ]),
+
+  // Every change to tracking data arrives here as an op.
+  route("api/ops", "routes/api.ops.ts"),
 
   // JSON endpoints for the passkey ceremonies.
   ...prefix("api/passkey", [

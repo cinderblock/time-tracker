@@ -7,6 +7,7 @@ import { countActiveAdmins } from "../../src/users.ts";
 import { getAuth } from "../auth.server.ts";
 import { AuthCard } from "../components/auth-card.tsx";
 import { PasskeyError, passkeysSupported, signInWithPasskey } from "../passkey-client.ts";
+import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/signin";
 
 export function loader({ request, context }: Route.LoaderArgs) {
@@ -15,8 +16,8 @@ export function loader({ request, context }: Route.LoaderArgs) {
   return { next, setupPending: countActiveAdmins() === 0 };
 }
 
-export function meta() {
-  return [{ title: "Sign in" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return pageTitle(matches, "Sign in");
 }
 
 export default function SignIn({ loaderData }: Route.ComponentProps) {

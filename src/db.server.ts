@@ -164,13 +164,19 @@ const migrations: Migration[] = [
         -- the job exists in this app only because someone had to book hours
         -- against it before it was created in QuickBooks. An admin links it
         -- later and every entry already booked against it follows the link.
+        --
+        -- id is a UUID v7, like entry ids: a job created on a phone while
+        -- offline must be usable (a timer started on it) before it syncs.
         CREATE TABLE jobs (
-          id                INTEGER PRIMARY KEY AUTOINCREMENT,
+          id                TEXT PRIMARY KEY,
           name              TEXT NOT NULL,
-          parent_id         INTEGER REFERENCES jobs(id),
+          parent_id         TEXT REFERENCES jobs(id),
           remote_id         TEXT UNIQUE,
           remote_full_name  TEXT,
           provisional       INTEGER NOT NULL DEFAULT 0,
+          -- Stopping a timer on this job needs a note (on top of the global
+          -- require_note_on_stop setting).
+          requires_note     INTEGER NOT NULL DEFAULT 0,
           active            INTEGER NOT NULL DEFAULT 1,
           created_by        INTEGER REFERENCES users(id),
           created_at        INTEGER NOT NULL,
@@ -194,7 +200,7 @@ const migrations: Migration[] = [
           scope          TEXT NOT NULL
                            CHECK (scope IN ('user_job','job','user','category','global')),
           user_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
-          job_id         INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+          job_id         TEXT REFERENCES jobs(id) ON DELETE CASCADE,
           category_id    INTEGER REFERENCES employee_categories(id) ON DELETE CASCADE,
           hourly_rate    REAL NOT NULL,
           effective_from INTEGER NOT NULL,
@@ -209,7 +215,7 @@ const migrations: Migration[] = [
         CREATE TABLE time_entries (
           id                    TEXT PRIMARY KEY,
           user_id               INTEGER NOT NULL REFERENCES users(id),
-          job_id                INTEGER REFERENCES jobs(id),
+          job_id                TEXT REFERENCES jobs(id),
           service_item_id       INTEGER REFERENCES service_items(id),
           work_date             TEXT NOT NULL,          -- 'YYYY-MM-DD', local
           duration_seconds      INTEGER NOT NULL DEFAULT 0,
@@ -260,7 +266,7 @@ const migrations: Migration[] = [
           at                  INTEGER NOT NULL,
           work_date           TEXT NOT NULL,
           text                TEXT NOT NULL,
-          job_id              INTEGER REFERENCES jobs(id),
+          job_id              TEXT REFERENCES jobs(id),
           rolled_into_entry_id TEXT REFERENCES time_entries(id),
           device_id           TEXT,
           created_at          INTEGER NOT NULL,
@@ -287,14 +293,19 @@ const migrations: Migration[] = [
         ------------------------------------------------------- sync & auditing
         -- Idempotency ledger for the offline outbox. Replaying an op whose id
         -- is already here returns the stored result instead of applying twice.
+        --
+        -- It also keeps each op's payload, which makes it a complete, replayable
+        -- record of what every device asked for and what the server answered.
         CREATE TABLE applied_ops (
-          op_id       TEXT PRIMARY KEY,
-          user_id     INTEGER NOT NULL REFERENCES users(id),
-          type        TEXT NOT NULL,
-          device_id   TEXT,
-          client_time INTEGER,
-          applied_at  INTEGER NOT NULL,
-          result_json TEXT
+          op_id        TEXT PRIMARY KEY,
+          user_id      INTEGER NOT NULL REFERENCES users(id),
+          type         TEXT NOT NULL,
+          device_id    TEXT,
+          client_time  INTEGER,
+          applied_at   INTEGER NOT NULL,
+          payload_json TEXT,
+          ok           INTEGER NOT NULL,
+          result_json  TEXT NOT NULL
         );
         CREATE INDEX idx_applied_ops_user ON applied_ops(user_id, applied_at);
 

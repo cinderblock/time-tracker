@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { decimalHours, durationSeconds, formatDuration, formatDurationHuman, workDateOf } from "./time.ts";
+import {
+  addDays,
+  decimalHours,
+  durationSeconds,
+  formatClock,
+  formatDuration,
+  formatDurationHuman,
+  formatWorkDate,
+  weekdayOf,
+  workDateOf,
+  zonedTimeInput,
+  zonedTimeToInstant,
+} from "./time.ts";
 
 describe("workDateOf", () => {
   test("books late-evening work on the local day, not the UTC one", () => {
@@ -79,5 +91,44 @@ describe("decimalHours", () => {
     expect(decimalHours(3600)).toBe(1);
     expect(decimalHours(5400)).toBe(1.5);
     expect(decimalHours(1000)).toBe(0.28);
+  });
+});
+
+describe("zone-aware conversions", () => {
+  const LA = "America/Los_Angeles";
+
+  test("round-trip a wall-clock time through an instant", () => {
+    const t = zonedTimeToInstant("2026-09-16", "14:30", LA);
+    expect(new Date(t).toISOString()).toBe("2026-09-16T21:30:00.000Z");
+    expect(zonedTimeInput(t, LA)).toBe("14:30");
+    expect(formatClock(t, LA)).toBe("2:30 PM");
+    expect(workDateOf(t, LA)).toBe("2026-09-16");
+  });
+
+  test("a time the spring-forward gap skips lands just after the gap", () => {
+    // 2026-03-08 02:30 doesn't exist in Los Angeles.
+    const t = zonedTimeToInstant("2026-03-08", "02:30", LA);
+    expect(zonedTimeInput(t, LA)).toBe("03:30");
+  });
+
+  test("a time the fall-back hour repeats resolves to the first occurrence", () => {
+    // 2026-11-01 01:30 happens twice; the first is still daylight time.
+    const t = zonedTimeToInstant("2026-11-01", "01:30", LA);
+    expect(new Date(t).toISOString()).toBe("2026-11-01T08:30:00.000Z");
+  });
+
+  test("works for zones ahead of UTC and half-hour zones", () => {
+    expect(new Date(zonedTimeToInstant("2026-09-16", "00:15", "Asia/Kolkata")).toISOString()).toBe(
+      "2026-09-15T18:45:00.000Z",
+    );
+    expect(zonedTimeToInstant("2026-09-16", "09:00", "UTC")).toBe(Date.parse("2026-09-16T09:00:00Z"));
+  });
+
+  test("calendar helpers", () => {
+    expect(addDays("2026-02-28", 1)).toBe("2026-03-01");
+    expect(addDays("2026-01-01", -1)).toBe("2025-12-31");
+    expect(formatWorkDate("2026-09-16")).toBe("Wed, Sep 16");
+    expect(formatWorkDate("2026-09-16", { withYear: true })).toBe("Wed, Sep 16, 2026");
+    expect(weekdayOf("2026-09-20")).toBe(0);
   });
 });

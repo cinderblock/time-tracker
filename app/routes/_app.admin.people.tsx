@@ -26,6 +26,7 @@ import { type ActionResult, handleForm, intField, lifetimeFrom, stringField } fr
 import { requireAdmin } from "../auth.server.ts";
 import { LinkReveal, type RevealedLink } from "../components/link-reveal.tsx";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
+import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/_app.admin.people";
 
 export function loader({ request, context }: Route.LoaderArgs) {
@@ -55,8 +56,8 @@ export function loader({ request, context }: Route.LoaderArgs) {
   };
 }
 
-export function meta() {
-  return [{ title: "People" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return pageTitle(matches, "People");
 }
 
 export async function action({ request, context }: Route.ActionArgs) {

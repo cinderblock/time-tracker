@@ -7,9 +7,9 @@ Built to replace a per-seat SaaS time tracker. It is deliberately **generic** �
 no organisation's name, hostname, colour or job list appears anywhere in this
 repository. All of that is deployment configuration.
 
-> **Status: phase 1 (auth) done.** Passkey sign-in, first-run setup, invites,
-> device links and people management work end to end. Time tracking, offline
-> support and the accounting sync are not built yet. See
+> **Status: phase 2 (time tracking) done.** Passkey sign-in, people management
+> and online time tracking work end to end. Offline support, the admin reports
+> and the accounting sync are not built yet. See
 > [`plans/time-tracker.md`](plans/time-tracker.md) for the full plan, the
 > decisions already taken, and the gotchas found along the way.
 
@@ -22,18 +22,29 @@ repository. All of that is deployment configuration.
   signs them out everywhere), remove a lost phone's passkey, and see each person's
   devices and history. Everyone can manage their own passkeys and signed-in devices.
 
+- **Three ways to record time.**
+  - *Timers* — start, pause, resume, stop. Switching jobs is one tap on a recent
+    job and stops the old timer at the same instant. A job (or the whole
+    organisation) can require a note before a timer stops.
+  - *Notes* — jot what you're doing as you go; at the end of the day (or the next
+    morning) review them as proposed time entries, fix them up, and add them.
+  - *Manual entry* — a start and end time (overnight shifts included) or just a
+    duration, on any past day.
+- **No "are you sure?".** Discarding an accidental timer or deleting an entry is
+  one tap, with an Undo. Nothing is ever really deleted.
+- **Jobs** can be created on the spot while tracking; admins open, close and
+  rename them and choose which need notes.
+- **Location**, if a person turns it on for their device, is recorded with timer
+  starts, stops and notes — samples at those moments, not a trail.
+
 ## What it will do
 
-- **Three ways to record time** — start/pause/stop timers, sporadic notes that
-  roll up into line items at the end of the day, and plain manual entry.
 - **Offline-native.** Installed to a home screen, it keeps working when the
   backend does not: mutations queue locally and replay when the server returns.
-- **Location** captured opportunistically at start, stop and notes (a PWA cannot
-  track in the background — this is samples, not a breadcrumb trail).
 - **Admin views** — a weekly calendar across everyone, plus summaries and
   breakdowns by job, person and category.
-- **Jobs from your accounting system**, with locally-invented "provisional" jobs
-  that an admin links up once the real job exists.
+- **Jobs from your accounting system**, with jobs created here first staying
+  "provisional" until an admin links them to the real one.
 
 ## Stack
 
@@ -81,6 +92,16 @@ docker exec <container> bun run admin-link
 Once an admin exists the same command prints an *admin invite* instead — the
 recovery path if every admin loses their passkeys. Setup links stop working the
 moment any admin exists.
+
+## How changes reach the server
+
+Every change to tracking data — starting a timer, adding a note, deleting an
+entry — is an *operation* with an id generated on the device, sent to
+`POST /api/ops`. The server applies each at most once and records it (payload,
+device and outcome) in a ledger, so a retried request can't double-book time, and
+the ledger doubles as a complete audit trail. Entry, note and job ids are also
+generated on the device. The offline mode builds on this: it queues the same
+operations locally and sends them when it can.
 
 ## Configuration
 
@@ -130,6 +151,7 @@ sole ingress.
 
 ```
 app/          React Router routes, UI, server-side loaders/actions
+app/tracker/  The time-tracking screen
 src/          Server-side modules (SQLite, auth flows, accounting backends, helpers)
 src/testing/  Test helpers, including the software passkey authenticator
 src/cli/      Operator commands (`bun run admin-link`)
@@ -143,6 +165,7 @@ separately, which is why runtime-only code belongs there rather than in `app/`.
 
 **Keep server code out of the browser.** `src/db.server.ts` and
 `src/config.server.ts` carry the `.server` suffix, so the build fails if any page
-component reaches them — even indirectly. A constant the browser needs goes in a
-dependency-free module such as `src/limits.ts`. (Without that guard, a leaked
+component reaches them — even indirectly. Code the browser shares
+(`src/limits.ts`, `src/time.ts`, `src/rollup.ts`, `src/ops-schema.ts`,
+`src/uuid.ts`) must not import them. (Without that guard, a leaked
 import shows up only as a page that renders but never becomes interactive.)

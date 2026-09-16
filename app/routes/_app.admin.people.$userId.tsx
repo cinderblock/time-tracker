@@ -15,6 +15,7 @@ import { PasskeyList, SessionList } from "../components/credential-lists.tsx";
 import { LinkReveal, type RevealedLink } from "../components/link-reveal.tsx";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
 import { passkeyViews, sessionViews } from "../views.server.ts";
+import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/_app.admin.people.$userId";
 
 function targetUser(params: { userId: string }) {
@@ -62,8 +63,8 @@ export function loader({ request, context, params }: Route.LoaderArgs) {
   };
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
-  return [{ title: loaderData?.person.name ?? "Person" }];
+export function meta({ loaderData, matches }: Route.MetaArgs) {
+  return pageTitle(matches, loaderData?.person.name ?? "Person");
 }
 
 type Extra = { link?: RevealedLink };

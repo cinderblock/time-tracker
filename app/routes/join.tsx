@@ -8,6 +8,7 @@ import { getUser } from "../../src/users.ts";
 import { getAuth, joinCookie, readCookie } from "../auth.server.ts";
 import { AuthCard } from "../components/auth-card.tsx";
 import { PasskeyError, passkeysSupported, registerPasskey } from "../passkey-client.ts";
+import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/join";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -28,8 +29,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   };
 }
 
-export function meta() {
-  return [{ title: "Set up your passkey" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return pageTitle(matches, "Set up your passkey");
 }
 
 export default function Join({ loaderData }: Route.ComponentProps) {
