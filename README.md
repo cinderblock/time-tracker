@@ -34,6 +34,10 @@ Bun · React Router v8 (SSR) · Mantine v9 · `bun:sqlite` · SimpleWebAuthn · 
 
 ## Running locally
 
+Requires **Bun 1.4.2 or newer**. Older Bun on Windows cannot load React's
+production server build, so `bun run start` dies at import there (`bun run dev`
+still works).
+
 ```bash
 bun install
 cp .env.example .env     # then edit: SESSION_SECRET at minimum
