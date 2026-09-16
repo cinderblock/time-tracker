@@ -1,20 +1,37 @@
 import { Anchor, AppShell, Avatar, Burger, Group, NavLink, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useEffect } from "react";
-import { Form, Link, Outlet, useLocation, useRouteLoaderData } from "react-router";
+import { Link, Outlet, useLocation, useRouteLoaderData } from "react-router";
 
 import { requireUser } from "../auth.server.ts";
+import { isOfflineError } from "../offline/loaders.ts";
+import { shellCopy } from "../offline/storage.ts";
+import { SignOutButton, SyncStatusBadge, useSyncLifecycle } from "../offline/SyncStatusBadge.tsx";
 import type { loader as rootLoader } from "../root";
 import type { Route } from "./+types/_app";
 
 /**
- * Chrome for every signed-in page. The navigation lives in a drawer on phones
- * and a sidebar on wider screens; phase 2 revisits it once there is real
- * tracking UI to organise.
+ * Chrome for every signed-in page: navigation (a drawer on phones, a sidebar
+ * on wider screens), who's signed in, and whether changes are waiting to sync.
  */
 export function loader({ request, context }: Route.LoaderArgs) {
   const { user } = requireUser(context, request);
   return { user: { id: user.id, name: user.name, role: user.role } };
+}
+
+/**
+ * Offline, whoever was last signed in on this device is shown. Only their own
+ * copies are on the device, and nothing is sent until the server has checked
+ * the session again.
+ */
+export async function clientLoader({ serverLoader }: Route.ClientLoaderArgs) {
+  try {
+    return await serverLoader();
+  } catch (err) {
+    const shell = isOfflineError(err) ? shellCopy.read() : null;
+    if (shell) return { user: { id: shell.userId, name: shell.name, role: shell.role } };
+    throw err;
+  }
 }
 
 const initials = (name: string) =>
@@ -30,6 +47,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   const root = useRouteLoaderData<typeof rootLoader>("root");
   const [opened, { toggle, close }] = useDisclosure();
   const location = useLocation();
+  useSyncLifecycle(user);
 
   // Close the phone drawer after navigating.
   useEffect(close, [location.pathname, close]);
@@ -59,6 +77,8 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
               {root?.branding.name}
             </Anchor>
           </Group>
+          <Group gap="sm" wrap="nowrap">
+          <SyncStatusBadge />
           <UnstyledButton component={Link} to="/account" aria-label="Your account">
             <Group gap="xs" wrap="nowrap">
               <Text size="sm" visibleFrom="xs" truncate>
@@ -69,6 +89,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
               </Avatar>
             </Group>
           </UnstyledButton>
+          </Group>
         </Group>
       </AppShell.Header>
 
@@ -89,9 +110,9 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
               />
             ))}
           </Stack>
-          <Form method="post" action="/signout">
-            <NavLink component="button" type="submit" label="Sign out" c="dimmed" />
-          </Form>
+          <SignOutButton userId={user.id}>
+            {(signOut) => <NavLink component="button" type="button" label="Sign out" c="dimmed" onClick={signOut} />}
+          </SignOutButton>
         </Stack>
       </AppShell.Navbar>
 

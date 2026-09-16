@@ -41,9 +41,11 @@ export function NotesPanel() {
       {isToday && <QuickNote />}
       {model.notes.length === 0 ? (
         <Text c="dimmed" size="sm">
-          {isToday
-            ? "Jot what you're working on as you switch tasks. At the end of the day, turn the notes into time."
-            : "No notes on this day."}
+          {model.partial
+            ? "Notes for this day aren't on this device."
+            : isToday
+              ? "Jot what you're working on as you switch tasks. At the end of the day, turn the notes into time."
+              : "No notes on this day."}
         </Text>
       ) : (
         model.notes.map((n) => <NoteRow key={n.id} note={n} />)

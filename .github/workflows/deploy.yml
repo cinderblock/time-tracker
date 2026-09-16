@@ -38,7 +38,7 @@ jobs:
         run: bun run typecheck
 
       - name: Test
-        run: bun test src/
+        run: bun run test
 
       - name: Install Chromium for the end-to-end tests
         run: bunx playwright install --with-deps chromium

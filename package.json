@@ -8,10 +8,10 @@
   },
   "scripts": {
     "dev": "bun --bun react-router dev",
-    "build": "bun --bun react-router build",
+    "build": "bun --bun react-router build && bun scripts/finalize-build.ts",
     "start": "bun --bun react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "bun test src/",
+    "test": "bun test src/ app/",
     "test:e2e": "bun run build && playwright test",
     "admin-link": "bun src/cli/admin-link.ts"
   },

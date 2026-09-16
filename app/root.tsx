@@ -20,6 +20,8 @@ import {
 } from "react-router";
 
 import type { Route } from "./+types/root";
+import { type RootCopy, isOfflineError } from "./offline/loaders.ts";
+import { rootCopy } from "./offline/storage.ts";
 
 import "@mantine/core/styles.css";
 import "@mantine/dates/styles.css";
@@ -48,7 +50,19 @@ export function loader() {
       themeColor: config.branding.themeColor,
       palette: [...generateColors(config.branding.themeColor)],
     },
-  };
+    timezone: config.timezone,
+  } satisfies RootCopy;
+}
+
+/** Offline, the last copy of the branding and timezone stands in. */
+export async function clientLoader({ serverLoader }: Route.ClientLoaderArgs) {
+  try {
+    return await serverLoader();
+  } catch (err) {
+    const copy = isOfflineError(err) ? rootCopy.read<Awaited<ReturnType<typeof loader>>>() : null;
+    if (copy) return copy;
+    throw err;
+  }
 }
 
 // Use the generated `Route.MetaArgs` rather than hand-writing this parameter's
@@ -105,6 +119,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export default function App({ loaderData }: Route.ComponentProps) {
   const { palette } = loaderData.branding;
 
+  useEffect(() => rootCopy.write(loaderData), [loaderData]);
+
   const theme = useMemo(
     () =>
       createTheme({
@@ -122,8 +138,9 @@ export default function App({ loaderData }: Route.ComponentProps) {
   );
 
   useEffect(() => {
-    // Registered from the client only; the worker is what makes the app
-    // installable (and, from phase 3, usable offline).
+    // The worker is what makes the app installable and usable offline. Not in
+    // development: a caching worker and Vite's hot reloading fight each other.
+    if (import.meta.env.DEV) return;
     navigator.serviceWorker?.register("/sw.js").catch((err: unknown) => {
       console.warn("Service worker registration failed", err);
     });
@@ -143,7 +160,10 @@ export function ErrorBoundary() {
   let heading = "Something went wrong";
   // Never surface a raw stack to a field employee; the server log has it.
   let detail = "The app hit an unexpected error. Your tracked time is safe.";
-  if (isRouteErrorResponse(error)) {
+  if (isOfflineError(error)) {
+    heading = "You're offline";
+    detail = "This page needs a connection. Time tracking still works offline — go to Today.";
+  } else if (isRouteErrorResponse(error)) {
     heading = error.status === 404 ? "Page not found" : error.status === 403 ? "Not allowed" : `Error ${error.status}`;
     detail =
       typeof error.data === "string" && error.data

@@ -4,38 +4,45 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useRevalidator } from "react-router";
 
 import type { OpPayload, OpResult, OpType } from "../../src/ops-schema.ts";
+import { getEngine, useQueuedOps } from "../offline/client.ts";
+import { applyPending } from "../offline/reducer.ts";
 import { refreshLocation } from "./location.ts";
 import type { DayModel } from "./model.ts";
-import { SignedOutError, makeOp, sendOps } from "./ops-client.ts";
+import { makeOp } from "./ops-client.ts";
 
 /**
  * The tracking screen's data and its one way of changing it.
  *
- * Components get `model` to render and `dispatch` to change things; nothing
- * else talks to the server. Phase 3 swaps the implementation of both (local
- * store + outbox) behind this same interface.
+ * `model` is the server's copy of the day with every not-yet-reflected change
+ * applied on top, so a change shows the instant it's made — online or not.
+ * `dispatch` puts the change in the outbox and, if the server answers
+ * promptly, returns its answer; otherwise the change is simply queued.
  */
 
-export type DispatchResult = OpResult | { opId: string; ok: false; code: "offline" | "signed_out"; error: string };
+export type DispatchResult = OpResult | { opId: string; ok: true; queued: true };
 
 export interface Tracker {
   model: DayModel;
   /**
-   * Send one op. Errors are shown to the person, except `note_required`, which
-   * the caller handles. `quiet` suppresses the error toast (the caller shows it
-   * inline); `background` keeps the op from marking the screen busy — use it
-   * for saves that happen as a side effect, like a note saved when its field
-   * loses focus, so they never disable the button that was just tapped.
+   * Make a change. Errors are shown to the person, except `note_required`,
+   * which the caller handles. `quiet` suppresses the error message (the caller
+   * shows it inline). `background` doesn't wait for the server and doesn't
+   * mark the screen busy — for saves that happen as a side effect, like a note
+   * saved when its field loses focus.
    */
   dispatch<T extends OpType>(
     type: T,
     payload: OpPayload<T>,
     opts?: { quiet?: boolean; background?: boolean },
   ): Promise<DispatchResult>;
-  /** Send several ops in order, as one request. */
+  /** Make several changes, in order; resolves with each one's result. */
   dispatchAll(ops: { type: OpType; payload: unknown }[]): Promise<DispatchResult[]>;
+  /** A foreground change is waiting for the server's answer. */
   pending: boolean;
 }
+
+/** How long a change waits for the server before being treated as queued. */
+const ANSWER_WAIT_MS = 8_000;
 
 const TrackerContext = createContext<Tracker | null>(null);
 
@@ -47,60 +54,69 @@ export function useTracker(): Tracker {
 
 function reportFailure(result: DispatchResult): void {
   if (result.ok || result.code === "note_required") return;
-  notifications.show({
-    color: "red",
-    title: result.code === "offline" ? "Not saved" : undefined,
-    message: result.error,
-    autoClose: result.code === "offline" ? false : 8000,
-  });
+  notifications.show({ color: "red", message: result.error, autoClose: 8000 });
 }
 
-export function TrackerProvider({ model, children }: { model: DayModel; children: React.ReactNode }) {
-  const revalidator = useRevalidator();
+export function TrackerProvider({ model: base, children }: { model: DayModel; children: React.ReactNode }) {
+  const ops = useQueuedOps();
   const [inFlight, setInFlight] = useState(0);
 
   useEffect(() => {
     refreshLocation();
   }, []);
 
-  const send = useCallback(
-    async (ops: ReturnType<typeof makeOp>[], background = false): Promise<DispatchResult[]> => {
-      if (!background) setInFlight((n) => n + 1);
-      try {
-        const results = await sendOps(ops);
-        await revalidator.revalidate();
-        return results;
-      } catch (err) {
-        const code = err instanceof SignedOutError ? ("signed_out" as const) : ("offline" as const);
-        const error =
-          code === "offline"
-            ? "Couldn't reach the server, so that change wasn't saved. Try again when you're back online."
-            : (err as Error).message;
-        return ops.map((op) => ({ opId: op.opId, ok: false as const, code, error }));
-      } finally {
-        if (!background) setInFlight((n) => n - 1);
-      }
-    },
-    [revalidator],
-  );
+  // A fresh server copy includes changes confirmed before it was requested.
+  useEffect(() => getEngine()?.reflect(base.fetchedAt), [base]);
+
+  // Showing the device's copy: keep trying the server until it answers.
+  const revalidator = useRevalidator();
+  const revalidate = useRef(revalidator.revalidate);
+  revalidate.current = revalidator.revalidate;
+  useEffect(() => {
+    if (!base.offline) return;
+    const retry = () => void revalidate.current();
+    window.addEventListener("online", retry);
+    const id = window.setInterval(retry, 20_000);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.clearInterval(id);
+    };
+  }, [base.offline]);
+
+  const model = useMemo(() => (ops.length ? applyPending(base, ops) : base), [base, ops]);
+
+  const submit = useCallback(async (list: ReturnType<typeof makeOp>[], wait: boolean): Promise<DispatchResult[]> => {
+    const engine = getEngine();
+    if (!engine) throw new Error("Changes can only be made in the browser");
+    if (wait) setInFlight((n) => n + 1);
+    try {
+      const answers = await Promise.all(list.map((op) => engine.enqueue(op, wait ? ANSWER_WAIT_MS : 0)));
+      return answers.map((a, i): DispatchResult => a ?? { opId: list[i]!.opId, ok: true, queued: true });
+    } finally {
+      if (wait) setInFlight((n) => n - 1);
+    }
+  }, []);
 
   const dispatch = useCallback<Tracker["dispatch"]>(
     async (type, payload, opts) => {
-      const [result] = await send([makeOp(type, payload)], opts?.background);
+      const [result] = await submit([makeOp(type, payload)], !opts?.background);
       if (!opts?.quiet) reportFailure(result!);
       return result!;
     },
-    [send],
+    [submit],
   );
 
   const dispatchAll = useCallback<Tracker["dispatchAll"]>(
     async (list) => {
-      const results = await send(list.map((o) => makeOp(o.type, o.payload as never)));
+      const results = await submit(
+        list.map((o) => makeOp(o.type, o.payload as never)),
+        true,
+      );
       const firstFailure = results.find((r) => !r.ok);
       if (firstFailure) reportFailure(firstFailure);
       return results;
     },
-    [send],
+    [submit],
   );
 
   const value = useMemo<Tracker>(

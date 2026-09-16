@@ -1,7 +1,7 @@
 import { Alert, Button, Card, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useState } from "react";
-import { Form, useFetcher, useRevalidator } from "react-router";
+import { useFetcher, useRevalidator } from "react-router";
 
 import { removeCredential, renameCredential } from "../../src/credentials.ts";
 import { revokeAllSessions, revokeSession } from "../../src/sessions.ts";
@@ -12,6 +12,7 @@ import { requireUser } from "../auth.server.ts";
 import { PasskeyList, SessionList } from "../components/credential-lists.tsx";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
 import { PasskeyError, passkeysSupported, registerPasskey } from "../passkey-client.ts";
+import { SignOutButton } from "../offline/SyncStatusBadge.tsx";
 import { locationEnabled, setLocationEnabled } from "../tracker/location.ts";
 import { passkeyViews, sessionViews } from "../views.server.ts";
 import { pageTitle } from "../meta.ts";
@@ -20,6 +21,7 @@ import type { Route } from "./+types/_app.account";
 export function loader({ request, context }: Route.LoaderArgs) {
   const { user, session } = requireUser(context, request);
   return {
+    userId: user.id,
     name: user.name,
     role: user.role,
     passkeys: passkeyViews(user.id),
@@ -59,7 +61,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 }
 
 export default function Account({ loaderData }: Route.ComponentProps) {
-  const { name, role, passkeys, sessions } = loaderData;
+  const { userId, name, role, passkeys, sessions } = loaderData;
 
   return (
     <Stack gap="xl" maw={640}>
@@ -87,11 +89,15 @@ export default function Account({ loaderData }: Route.ComponentProps) {
         <SessionList sessions={sessions} action="/account" revokeLabel="Sign out all other devices" />
       </Stack>
 
-      <Form method="post" action="/signout">
-        <Button type="submit" variant="default">
-          Sign out of this device
-        </Button>
-      </Form>
+      <SignOutButton userId={userId}>
+        {(signOut) => (
+          <Group>
+            <Button variant="default" onClick={signOut}>
+              Sign out of this device
+            </Button>
+          </Group>
+        )}
+      </SignOutButton>
     </Stack>
   );
 }

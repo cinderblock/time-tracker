@@ -22,7 +22,11 @@ export function EntryList() {
       </Group>
 
       {model.entries.length === 0 ? (
-        <Text c="dimmed">Nothing recorded for this day yet.</Text>
+        <Text c="dimmed">
+          {model.partial
+            ? "Time saved for this day isn't on this device."
+            : "Nothing recorded for this day yet."}
+        </Text>
       ) : (
         model.entries.map((e) => <EntryRow key={e.id} entry={e} now={now} onEdit={() => setEditing(e)} />)
       )}

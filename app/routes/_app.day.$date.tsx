@@ -4,7 +4,8 @@ import { config } from "../../src/config.server.ts";
 import { WORK_DATE_PATTERN, addDays, formatWorkDate, today } from "../../src/time.ts";
 import { requireUser } from "../auth.server.ts";
 import { loadDay } from "../tracker.server.ts";
-import { TrackerScreen } from "../tracker/TrackerScreen.tsx";
+import { loadDayWithFallback } from "../offline/loaders.ts";
+import { TrackerScreen, TrackerSkeleton } from "../tracker/TrackerScreen.tsx";
 import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/_app.day.$date";
 
@@ -20,6 +21,15 @@ export function loader({ request, context, params }: Route.LoaderArgs) {
   if (date === todayDate) throw redirect("/");
   if (date > todayDate) throw data("That day hasn't happened yet.", { status: 404 });
   return loadDay(user.id, date);
+}
+
+export async function clientLoader({ serverLoader, params }: Route.ClientLoaderArgs) {
+  return loadDayWithFallback(serverLoader, params.date);
+}
+clientLoader.hydrate = true as const;
+
+export function HydrateFallback() {
+  return <TrackerSkeleton />;
 }
 
 export function meta({ loaderData, matches }: Route.MetaArgs) {

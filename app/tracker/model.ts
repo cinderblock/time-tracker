@@ -26,6 +26,8 @@ export interface EntryView {
   endedAt: number | null;
   /** Start of the running segment, when the timer is running (not paused). */
   runningSince: number | null;
+  /** End of the last closed segment — where a paused timer's time stopped. */
+  lastEndedAt: number | null;
   segmentCount: number;
   /** For an open timer: whether stopping it needs a note. */
   noteRequired: boolean;
@@ -41,6 +43,18 @@ export interface NoteView {
 }
 
 export interface DayModel {
+  userId: number;
+  /** Server clock when this was built. Decides which of two copies is newer. */
+  generatedAt: number;
+  /**
+   * Browser clock when the request for this copy started. Changes confirmed
+   * before then are already reflected in it. Set by the client loader.
+   */
+  fetchedAt?: number;
+  /** True when this copy came from the device because the server was unreachable. */
+  offline?: boolean;
+  /** Offline, and this day was never loaded on this device: its saved time isn't known here. */
+  partial?: boolean;
   workDate: string;
   today: string;
   timezone: string;
@@ -52,6 +66,24 @@ export interface DayModel {
   jobs: JobView[];
   recentJobIds: string[];
   week: { date: string; seconds: number }[];
+}
+
+/**
+ * The one order entries are listed in, on the server and in the browser:
+ * timed entries by start, then typed-in durations by id — UUID v7 ids sort by
+ * when the device created them. Ties break on id, compared as plain strings
+ * (the same order SQLite uses), so both sides always agree.
+ */
+export function compareEntries(a: Pick<EntryView, "startedAt" | "id">, b: Pick<EntryView, "startedAt" | "id">): number {
+  if (a.startedAt != null && b.startedAt != null && a.startedAt !== b.startedAt) return a.startedAt - b.startedAt;
+  if (a.startedAt != null && b.startedAt == null) return -1;
+  if (a.startedAt == null && b.startedAt != null) return 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+export function compareNotes(a: Pick<NoteView, "at" | "id">, b: Pick<NoteView, "at" | "id">): number {
+  if (a.at !== b.at) return a.at - b.at;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 /** Seconds an entry covers as of `now`, including a running segment. */

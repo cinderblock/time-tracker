@@ -7,9 +7,9 @@ Built to replace a per-seat SaaS time tracker. It is deliberately **generic** �
 no organisation's name, hostname, colour or job list appears anywhere in this
 repository. All of that is deployment configuration.
 
-> **Status: phase 2 (time tracking) done.** Passkey sign-in, people management
-> and online time tracking work end to end. Offline support, the admin reports
-> and the accounting sync are not built yet. See
+> **Status: phase 3 (offline) done.** Passkey sign-in, people management and
+> time tracking work end to end, online or off. The admin reports and the
+> accounting sync are not built yet. See
 > [`plans/time-tracker.md`](plans/time-tracker.md) for the full plan, the
 > decisions already taken, and the gotchas found along the way.
 
@@ -37,10 +37,15 @@ repository. All of that is deployment configuration.
 - **Location**, if a person turns it on for their device, is recorded with timer
   starts, stops and notes — samples at those moments, not a trail.
 
+- **Works offline.** Installed to a home screen, the app starts and tracks time
+  with no connection, or while the server is down. Changes are kept on the device,
+  shown immediately, and saved in order when the server is reachable again; the
+  header says how many are waiting. A change the server refuses once it arrives
+  is reported, never silently dropped. Signing out with unsaved changes warns
+  first and keeps them for the next sign-in on that device.
+
 ## What it will do
 
-- **Offline-native.** Installed to a home screen, it keeps working when the
-  backend does not: mutations queue locally and replay when the server returns.
 - **Admin views** — a weekly calendar across everyone, plus summaries and
   breakdowns by job, person and category.
 - **Jobs from your accounting system**, with jobs created here first staying
@@ -100,8 +105,14 @@ entry — is an *operation* with an id generated on the device, sent to
 `POST /api/ops`. The server applies each at most once and records it (payload,
 device and outcome) in a ledger, so a retried request can't double-book time, and
 the ledger doubles as a complete audit trail. Entry, note and job ids are also
-generated on the device. The offline mode builds on this: it queues the same
-operations locally and sends them when it can.
+generated on the device.
+
+Offline, the same operations wait in an IndexedDB outbox
+([`app/offline/`](app/offline/)). The screen shows the server's last copy of the
+day with the waiting operations applied by a client-side mirror of the server's
+rules, which is tested against the real server code. A service worker keeps the
+app's files (the list is stamped into it at build time by
+[`scripts/finalize-build.ts`](scripts/finalize-build.ts)) and the tracking pages.
 
 ## Configuration
 
@@ -152,11 +163,13 @@ sole ingress.
 ```
 app/          React Router routes, UI, server-side loaders/actions
 app/tracker/  The time-tracking screen
+app/offline/  Outbox, sync engine, device copies, offline loaders
 src/          Server-side modules (SQLite, auth flows, accounting backends, helpers)
 src/testing/  Test helpers, including the software passkey authenticator
 src/cli/      Operator commands (`bun run admin-link`)
 e2e/          Playwright end-to-end tests
 public/       Service worker and icons served at the site root
+scripts/      Build steps
 plans/        The living plan for this project — read this first
 ```
 

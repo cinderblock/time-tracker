@@ -96,6 +96,8 @@ test("sign-in returns to the page that asked for it", async () => {
   const { page } = admin;
   await page.goto("/account");
   await page.getByRole("button", { name: "Sign out of this device" }).click();
+  // Signing out clears this device's copies first; wait for it to finish.
+  await expect(page).toHaveURL(/\/signin$/);
   await page.goto("/admin/people");
   await expect(page).toHaveURL(/\/signin\?next=%2Fadmin%2Fpeople$/);
   await page.getByRole("button", { name: "Sign in with a passkey" }).click();

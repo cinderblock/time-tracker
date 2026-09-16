@@ -198,7 +198,7 @@ test("move to the previous day and back", async () => {
 });
 
 test("jot notes through the day, then turn them into time", async () => {
-  const noteBox = page.getByRole("textbox", { name: "Note", exact: true });
+  const noteBox = page.getByPlaceholder("What are you working on now?");
   await noteBox.fill("Measuring the east wall");
   await pickJob(page.getByPlaceholder("Job (optional)").first(), "Bravo Site");
   await page.getByRole("button", { name: "Add note" }).click();
