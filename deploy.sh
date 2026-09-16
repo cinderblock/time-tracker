@@ -28,6 +28,7 @@
 #   APP_NAME            branding                     (VAR,    default "Time Tracker")
 #   APP_SHORT_NAME      branding                     (VAR,    default "Time")
 #   APP_THEME_COLOR     branding                     (VAR,    default #1c7ed6)
+#   APP_CURRENCY        ISO 4217 display currency    (VAR,    default USD)
 #   ACCOUNTING_BACKEND  none|qb-bridge|qb-webconnector (VAR,  default none)
 #   QB_BRIDGE_URL       bridge base URL, IPv4 literal (VAR,   optional)
 #   QB_BRIDGE_API_KEY   bridge API key               (SECRET, optional)
@@ -99,6 +100,7 @@ TZ_VALUE="$(var_or TZ 'UTC')"
 APP_NAME="$(var_or APP_NAME 'Time Tracker')"
 APP_SHORT_NAME="$(var_or APP_SHORT_NAME 'Time')"
 APP_THEME_COLOR="$(var_or APP_THEME_COLOR '#1c7ed6')"
+APP_CURRENCY="$(var_or APP_CURRENCY 'USD')"
 ACCOUNTING_BACKEND="$(var_or ACCOUNTING_BACKEND 'none')"
 QB_BRIDGE_URL="$(var_or QB_BRIDGE_URL '')"
 VAPID_PUBLIC_KEY="$(var_or VAPID_PUBLIC_KEY '')"
@@ -140,6 +142,7 @@ Resolved configuration:
   PUBLIC_BASE_URL    ${PUBLIC_BASE_URL}
   TZ                 ${TZ_VALUE}
   APP_NAME           ${APP_NAME}
+  APP_CURRENCY       ${APP_CURRENCY}
   ACCOUNTING_BACKEND ${ACCOUNTING_BACKEND}
   QB_BRIDGE_URL      ${QB_BRIDGE_URL:-(unset)}
   web push           $([ -n "${VAPID_PRIVATE_KEY}" ] && echo enabled || echo disabled)
@@ -156,6 +159,7 @@ TZ=${TZ_VALUE}
 APP_NAME=${APP_NAME}
 APP_SHORT_NAME=${APP_SHORT_NAME}
 APP_THEME_COLOR=${APP_THEME_COLOR}
+APP_CURRENCY=${APP_CURRENCY}
 ACCOUNTING_BACKEND=${ACCOUNTING_BACKEND}
 QB_BRIDGE_URL=${QB_BRIDGE_URL}
 QB_BRIDGE_API_KEY=${QB_BRIDGE_API_KEY}

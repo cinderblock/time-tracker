@@ -2,8 +2,8 @@ import { config } from "../src/config.server.ts";
 import { type Entry, getOpenEntry, listEntriesForDate, noteRequiredFor, totalsByDate } from "../src/entries.ts";
 import { listJobs, recentJobIds } from "../src/jobs.ts";
 import { listNotesForDate } from "../src/notes.ts";
-import { requireNoteOnStop } from "../src/settings.ts";
-import { addDays, today, weekdayOf } from "../src/time.ts";
+import { requireNoteOnStop, weekStartsOn } from "../src/settings.ts";
+import { addDays, today, weekStartOf } from "../src/time.ts";
 import { type DayModel, type EntryView, type JobView, compareEntries, compareNotes } from "./tracker/model.ts";
 
 /**
@@ -51,8 +51,8 @@ export function loadDay(userId: number, workDate: string): DayModel {
   const open = getOpenEntry(userId);
   const todayDate = today(config.timezone);
 
-  // A week strip ending on Saturday of the shown date's week.
-  const weekStart = addDays(workDate, -weekdayOf(workDate));
+  // The week containing the shown date, starting on the organisation's first weekday.
+  const weekStart = weekStartOf(workDate, weekStartsOn());
   const weekEnd = addDays(weekStart, 6);
   const totals = totalsByDate(userId, weekStart, weekEnd);
 

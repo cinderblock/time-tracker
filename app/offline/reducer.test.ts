@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
+import { approveEntries } from "../../src/approvals.ts";
 import { applyOp } from "../../src/ops.ts";
 import type { Op, OpPayload, OpType } from "../../src/ops-schema.ts";
 import { freshDb } from "../../src/testing/db.ts";
-import { setRequireNoteOnStop } from "../../src/settings.ts";
+import { setRequireNoteOnStop, setWeekStartsOn } from "../../src/settings.ts";
 import { createUser } from "../../src/users.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { loadDay } from "../tracker.server.ts";
@@ -103,6 +104,31 @@ describe("the reducer mirrors the server", () => {
       op("timer.pause", { entryId: b, at: NINE + 30 * MIN }),
       op("timer.start", { entryId: uuidv7(), jobId: jobA, at: NINE + 45 * MIN }),
     ]);
+  });
+
+  test("approved time is locked", () => {
+    const [done, other] = [uuidv7(), uuidv7()];
+    mirror([
+      op("entry.create", { entryId: done, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }),
+      op("entry.create", { entryId: other, jobId: jobB, workDate: DAY, durationSeconds: 1800 }),
+    ]);
+    approveEntries({ userId, from: DAY, to: DAY, actorUserId: userId });
+    const m = mirror(
+      [
+        op("entry.update", { entryId: done, note: "too late", endedAt: NINE + 2 * HOUR }),
+        op("entry.update", { entryId: other, durationSeconds: 60 }),
+        op("entry.delete", { entryId: other, at: NINE }),
+      ],
+      { expectRejected: 3 },
+    );
+    expect(m.entries.map((e) => e.status)).toEqual(["approved", "approved"]);
+  });
+
+  test("weeks start on the configured day", () => {
+    setWeekStartsOn(3, userId);
+    const m = mirror([op("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: DAY, durationSeconds: 600 })]);
+    expect(m.week[0]).toEqual({ date: DAY, seconds: 600 });
+    expect(m.week.at(-1)!.date).toBe("2026-09-22");
   });
 
   test("manual entries, edits, deletes and restores", () => {

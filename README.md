@@ -7,9 +7,9 @@ Built to replace a per-seat SaaS time tracker. It is deliberately **generic** �
 no organisation's name, hostname, colour or job list appears anywhere in this
 repository. All of that is deployment configuration.
 
-> **Status: phase 3 (offline) done.** Passkey sign-in, people management and
-> time tracking work end to end, online or off. The admin reports and the
-> accounting sync are not built yet. See
+> **Status: phase 4 (admin) done.** Passkey sign-in, people management, time
+> tracking (online or off), approval, rates and reports work end to end. The
+> accounting sync is not built yet. See
 > [`plans/time-tracker.md`](plans/time-tracker.md) for the full plan, the
 > decisions already taken, and the gotchas found along the way.
 
@@ -44,10 +44,22 @@ repository. All of that is deployment configuration.
   is reported, never silently dropped. Signing out with unsaved changes warns
   first and keeps them for the next sign-in on that device.
 
+- **Admin views.**
+  - *Timesheets* — everyone's week as a people × days grid. Approve a person's
+    week in one tap (or everyone's), reopen it to allow changes. Approved time is
+    locked for everyone, admins included, and keeps the rate it was approved at.
+  - *Calendar* — the week as blocks of time per person, pauses as gaps.
+  - *Reports* — hours, approved hours and cost over a date range, grouped by
+    person, customer, job, category or day, with a CSV download of every entry.
+  - *Someone's day* — admins open any person's day on the same tracking screen to
+    fill in or fix it; the change is recorded as made by the admin.
+- **Rates and categories.** Hourly rates for everyone, a category, a person, a job
+  (and its sub-jobs) or a person on a job — the most specific wins — each starting
+  on a date, so a raise doesn't rewrite earlier work. Categories group people for
+  filtering and rates. Weeks start on whichever day your payroll week does.
+
 ## What it will do
 
-- **Admin views** — a weekly calendar across everyone, plus summaries and
-  breakdowns by job, person and category.
 - **Jobs from your accounting system**, with jobs created here first staying
   "provisional" until an admin links them to the real one.
 
@@ -72,8 +84,9 @@ network dependencies, jobs defined in-app.
 
 ```bash
 bun run typecheck
-bun test src/        # unit tests, including real passkey ceremonies
+bun run test         # unit tests, including real passkey ceremonies
 bun run test:e2e     # builds, then drives the app in Chromium
+E2E_SCREENSHOTS=/tmp/shots bun run test:e2e   # ...and saves admin-page screenshots (desktop and phone)
 bun run build
 ```
 
@@ -107,6 +120,10 @@ device and outcome) in a ledger, so a retried request can't double-book time, an
 the ledger doubles as a complete audit trail. Entry, note and job ids are also
 generated on the device.
 
+An admin changing someone else's time sends the same operations to
+`POST /api/admin/people/:id/ops`; the ledger records both whose time changed and
+who changed it.
+
 Offline, the same operations wait in an IndexedDB outbox
 ([`app/offline/`](app/offline/)). The screen shows the server's last copy of the
 day with the waiting operations applied by a client-side mirror of the server's
@@ -126,6 +143,7 @@ annotated list. The ones worth calling out:
 | `TZ` | The wall-clock zone that decides which day a piece of work belongs to. QuickBooks stores a bare date with no zone, so a wrong value books evening work onto the following day. |
 | `ACCOUNTING_BACKEND` | `none` (default), `qb-bridge`, or `qb-webconnector`. |
 | `APP_NAME`, `APP_SHORT_NAME`, `APP_THEME_COLOR` | Branding. Drives the UI theme and the generated PWA manifest. |
+| `APP_CURRENCY` | ISO 4217 code rates and costs are shown in (default `USD`). Display only. |
 
 ## Accounting backends
 
@@ -162,7 +180,7 @@ sole ingress.
 
 ```
 app/          React Router routes, UI, server-side loaders/actions
-app/tracker/  The time-tracking screen
+app/tracker/  The time-tracking screen (also used by admins for someone else's day)
 app/offline/  Outbox, sync engine, device copies, offline loaders
 src/          Server-side modules (SQLite, auth flows, accounting backends, helpers)
 src/testing/  Test helpers, including the software passkey authenticator
@@ -180,5 +198,6 @@ separately, which is why runtime-only code belongs there rather than in `app/`.
 `src/config.server.ts` carry the `.server` suffix, so the build fails if any page
 component reaches them — even indirectly. Code the browser shares
 (`src/limits.ts`, `src/time.ts`, `src/rollup.ts`, `src/ops-schema.ts`,
-`src/uuid.ts`) must not import them. (Without that guard, a leaked
+`src/uuid.ts`, `src/entry-status.ts`, `src/rate-scopes.ts`, `src/money.ts`) must
+not import them. Typecheck doesn't catch a violation; `bun run build` does. (Without that guard, a leaked
 import shows up only as a page that renders but never becomes interactive.)

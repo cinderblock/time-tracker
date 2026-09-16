@@ -1,0 +1,99 @@
+/*
+ * A week of time blocks: an hour ruler, then one column per day. On phones
+ * only the chosen day's column shows.
+ */
+
+.grid {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  gap: 0 4px;
+}
+
+.ruler {
+  position: relative;
+}
+
+.hour {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+  font-variant-numeric: tabular-nums;
+}
+
+.days {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.day {
+  position: relative;
+  border-left: 1px solid var(--mantine-color-default-border);
+  background-image: linear-gradient(to bottom, var(--mantine-color-default-border) 1px, transparent 1px);
+  background-size: 100% var(--hour-height);
+}
+
+.day[data-today="true"] {
+  background-color: var(--mantine-color-brand-light);
+}
+
+.day[data-focus="false"],
+.head[data-focus="false"],
+.untimed[data-focus="false"] {
+  display: none;
+}
+
+.head {
+  text-align: center;
+}
+
+.block {
+  position: absolute;
+  overflow: hidden;
+  border-radius: var(--mantine-radius-sm);
+  border-left: 3px solid var(--block-edge);
+  background: var(--block-fill);
+  color: var(--block-text);
+  padding: 1px 4px;
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+.block[data-running="true"] {
+  border-bottom: 2px dashed var(--block-edge);
+}
+
+.block[data-approved="true"] {
+  box-shadow: inset 0 0 0 1px var(--block-edge);
+}
+
+.block:hover,
+.block:focus-visible {
+  z-index: 2;
+  outline: 2px solid var(--block-edge);
+}
+
+.picker {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+@media (min-width: $mantine-breakpoint-md) {
+  .days {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .day[data-focus="false"],
+  .head[data-focus="false"],
+  .untimed[data-focus="false"] {
+    display: block;
+  }
+
+  .picker {
+    display: none;
+  }
+}

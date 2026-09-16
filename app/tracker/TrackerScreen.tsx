@@ -1,9 +1,9 @@
-import { Alert, Anchor, Card, Grid, Skeleton, Stack } from "@mantine/core";
+import { Alert, Anchor, Card, Grid, Skeleton, Stack, Text } from "@mantine/core";
 import { Link } from "react-router";
 
 import { formatDurationHuman } from "../../src/time.ts";
-import { TrackerProvider, useNow, useTracker } from "./context.tsx";
-import { DayHeader, dayHref } from "./DayHeader.tsx";
+import { type ActingFor, TrackerProvider, useNow, useTracker } from "./context.tsx";
+import { DayHeader } from "./DayHeader.tsx";
 import { EntryList } from "./EntryList.tsx";
 import { type DayModel, liveSeconds } from "./model.ts";
 import { NotesPanel } from "./NotesPanel.tsx";
@@ -13,10 +13,11 @@ import { TimerPanel } from "./TimerCard.tsx";
  * The tracking screen for one day. On a phone everything stacks, timer
  * first; on a wide screen the timer and notes sit beside the day's entries.
  */
-export function TrackerScreen({ model }: { model: DayModel }) {
+export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor?: ActingFor }) {
   return (
-    <TrackerProvider model={model}>
+    <TrackerProvider model={model} actingFor={actingFor}>
       <Stack gap="lg" maw={1100}>
+        <ActingForNotice />
         <DayHeader />
         <OfflineNotice />
         <Grid gap="lg">
@@ -32,6 +33,20 @@ export function TrackerScreen({ model }: { model: DayModel }) {
         </Grid>
       </Stack>
     </TrackerProvider>
+  );
+}
+
+/** Makes it unmistakable whose time is on screen when it isn't yours. */
+function ActingForNotice() {
+  const { actingFor } = useTracker();
+  if (!actingFor) return null;
+  return (
+    <Alert color="grape" title={`${actingFor.name}'s time`}>
+      <Text size="sm">
+        Changes here are made to {actingFor.name}'s time and recorded as made by you. They need a connection — nothing
+        is kept on this device.
+      </Text>
+    </Alert>
   );
 }
 
@@ -77,14 +92,14 @@ export function TrackerSkeleton() {
 
 /** On a past day, a running timer is still worth knowing about. */
 function OpenTimerElsewhere() {
-  const { model } = useTracker();
+  const { model, hrefFor } = useTracker();
   const now = useNow();
   const open = model.open;
   if (!open) return null;
   return (
     <Alert color="green" title="A timer is running">
       {open.jobName} — {formatDurationHuman(now === undefined ? open.durationSeconds : liveSeconds(open, now))}.{" "}
-      <Anchor component={Link} to={dayHref(model.today, model.today)}>
+      <Anchor component={Link} to={hrefFor(model.today)}>
         Go to today
       </Anchor>
     </Alert>

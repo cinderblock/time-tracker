@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, data, useFetcher } from "react-router";
 
 import { auditFor } from "../../src/audit.ts";
+import { getCategory, setUserCategory } from "../../src/categories.ts";
 import { removeCredential, renameCredential } from "../../src/credentials.ts";
 import { formatDateTime } from "../../src/format.ts";
 import { LINK_LIFETIMES, mintRegistration } from "../../src/registrations.ts";
@@ -10,6 +11,7 @@ import { revokeAllSessions, revokeSession } from "../../src/sessions.ts";
 import { NAME_MAX_LENGTH } from "../../src/limits.ts";
 import { getUser, renameUser, updateUserAccess } from "../../src/users.ts";
 import { type ActionResult, handleForm, intField, lifetimeFrom, stringField } from "../actions.server.ts";
+import { categoryOptions } from "../admin.server.ts";
 import { requireAdmin } from "../auth.server.ts";
 import { PasskeyList, SessionList } from "../components/credential-lists.tsx";
 import { LinkReveal, type RevealedLink } from "../components/link-reveal.tsx";
@@ -34,6 +36,12 @@ function describeAudit(action: string, entity: string, after: Record<string, unk
         return `Renamed to ${String(after?.name ?? "")}`;
       case "access":
         return `Now ${after?.active ? "active" : "deactivated"}, ${String(after?.role ?? "")}`;
+      case "category": {
+        const id = after?.categoryId;
+        if (id == null) return "Taken out of their category";
+        const category = getCategory(Number(id));
+        return category ? `Put in the ${category.name} category` : "Category changed";
+      }
       case "revoke_sessions":
         return `Signed out of ${String(after?.count ?? "")} device(s)`;
       case "signin_refused_inactive":
@@ -47,7 +55,8 @@ export function loader({ request, context, params }: Route.LoaderArgs) {
   const { user: me, session } = requireAdmin(context, request);
   const user = targetUser(params);
   return {
-    person: { id: user.id, name: user.name, role: user.role, active: user.active },
+    person: { id: user.id, name: user.name, role: user.role, active: user.active, categoryId: user.categoryId },
+    categories: categoryOptions(),
     isMe: user.id === me.id,
     passkeys: passkeyViews(user.id),
     sessions: sessionViews(user.id, user.id === me.id ? session.id : null),
@@ -78,6 +87,13 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     rename: (form) => {
       renameUser({ ...target, name: stringField(form, "name") });
       return { ok: true, message: "Name updated." };
+    },
+    category: (form) => {
+      const raw = stringField(form, "categoryId");
+      const categoryId = raw ? intField(form, "categoryId") : null;
+      setUserCategory({ ...target, categoryId });
+      const name = categoryId != null ? getCategory(categoryId)?.name : null;
+      return { ok: true, message: name ? `${user.name} is now in ${name}.` : `${user.name} has no category now.` };
     },
     role: (form) => {
       const role = stringField(form, "role") === "admin" ? "admin" : "employee";
@@ -125,7 +141,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 }
 
 export default function Person({ loaderData }: Route.ComponentProps) {
-  const { person, isMe, passkeys, sessions, history, lifetimes } = loaderData;
+  const { person, isMe, passkeys, sessions, history, lifetimes, categories } = loaderData;
 
   return (
     <Stack gap="xl" maw={640}>
@@ -136,6 +152,17 @@ export default function Person({ loaderData }: Route.ComponentProps) {
         <Group gap="xs">
           <Title order={2}>{person.name}</Title>
           {!person.active && <Badge color="gray">deactivated</Badge>}
+        </Group>
+        <Group gap="md">
+          <Anchor component={Link} to={`/admin/people/${person.id}/time`} size="sm">
+            Their time today
+          </Anchor>
+          <Anchor component={Link} to="/admin/timesheets" size="sm">
+            Timesheets
+          </Anchor>
+          <Anchor component={Link} to={`/admin/reports?person=${person.id}`} size="sm">
+            Report
+          </Anchor>
         </Group>
         {isMe && (
           <Text size="sm" c="dimmed">
@@ -148,7 +175,7 @@ export default function Person({ loaderData }: Route.ComponentProps) {
         )}
       </Stack>
 
-      <AccessCard person={person} />
+      <AccessCard person={person} categories={categories} />
 
       <DeviceLinkCard active={person.active} name={person.name} lifetimes={lifetimes} />
 
@@ -183,13 +210,21 @@ export default function Person({ loaderData }: Route.ComponentProps) {
   );
 }
 
-function AccessCard({ person }: { person: { name: string; role: string; active: boolean } }) {
+function AccessCard({
+  person,
+  categories,
+}: {
+  person: { name: string; role: string; active: boolean; categoryId: number | null };
+  categories: { value: string; label: string }[];
+}) {
   const rename = useFetcher();
   const role = useFetcher();
   const active = useFetcher();
+  const category = useFetcher();
   useActionFeedback(rename.data);
   useActionFeedback(role.data);
   useActionFeedback(active.data);
+  useActionFeedback(category.data);
 
   return (
     <Card withBorder>
@@ -221,6 +256,17 @@ function AccessCard({ person }: { person: { name: string; role: string; active: 
           allowDeselect={false}
           disabled={role.state !== "idle"}
           onChange={(value) => value && role.submit({ intent: "role", role: value }, { method: "post" })}
+        />
+
+        <Select
+          label="Category"
+          placeholder={categories.length ? "None" : "No categories yet"}
+          description={categories.length ? undefined : "Add categories under Rates & categories."}
+          data={categories}
+          value={person.categoryId != null ? String(person.categoryId) : null}
+          clearable
+          disabled={categories.length === 0 || category.state !== "idle"}
+          onChange={(value) => category.submit({ intent: "category", categoryId: value ?? "" }, { method: "post" })}
         />
 
         <Stack gap={4}>

@@ -29,6 +29,16 @@ function backendKind(): AccountingBackendKind {
   return raw as AccountingBackendKind;
 }
 
+function currencyCode(raw: string): string {
+  const code = raw.trim().toUpperCase();
+  try {
+    new Intl.NumberFormat("en-US", { style: "currency", currency: code });
+  } catch {
+    throw new Error(`APP_CURRENCY must be an ISO 4217 code like USD (got ${JSON.stringify(raw)})`);
+  }
+  return code;
+}
+
 export const config = {
   /**
    * Branding. All user-visible naming comes from here so the same image can be
@@ -60,6 +70,9 @@ export const config = {
    * this wrong books evening work onto the wrong day.
    */
   timezone: process.env.TZ ?? "UTC",
+
+  /** ISO 4217 code that rates and costs are shown in. Display only; nothing is converted. */
+  currency: currencyCode(process.env.APP_CURRENCY ?? "USD"),
 
   accounting: {
     kind: backendKind(),

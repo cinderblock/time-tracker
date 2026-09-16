@@ -190,4 +190,21 @@ export function weekdayOf(date: string): number {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
+/** The first day of the week containing `date`, for weeks starting on `weekStartsOn` (0 = Sunday). */
+export function weekStartOf(date: string, weekStartsOn = 0): string {
+  return addDays(date, -((weekdayOf(date) - weekStartsOn + 7) % 7));
+}
+
+/** Every date from `from` to `to`, inclusive. Empty if `to` is before `from`. */
+export function datesBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+
 export const WORK_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A real calendar date in 'YYYY-MM-DD' form (not just the right shape). */
+export function isWorkDate(value: unknown): value is string {
+  return typeof value === "string" && WORK_DATE_PATTERN.test(value) && addDays(value, 0) === value;
+}

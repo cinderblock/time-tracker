@@ -1,3 +1,4 @@
+import { isEditable } from "../../src/entry-status.ts";
 import type { Op } from "../../src/ops-schema.ts";
 import { workDateOf } from "../../src/time.ts";
 import { type DayModel, type EntryView, type JobView, type NoteView, compareEntries, compareNotes } from "../tracker/model.ts";
@@ -204,7 +205,8 @@ function applyOne(s: State, op: Op): void {
     case "entry.update": {
       const p = op.payload;
       const e = findEntry(m, p.entryId);
-      if (!e) return;
+      // Approved time is locked; the server will refuse the change.
+      if (!e || !isEditable(e.status)) return;
       const next: EntryView = { ...e };
       if (p.jobId !== undefined) {
         next.jobId = p.jobId;
@@ -241,7 +243,7 @@ function applyOne(s: State, op: Op): void {
     case "entry.delete": {
       const p = op.payload;
       const e = findEntry(m, p.entryId);
-      if (!e) return;
+      if (!e || !isEditable(e.status)) return;
       s.deletedEntries.set(e.id, { entry: e, at: p.at });
       m.entries = m.entries.filter((x) => x.id !== e.id);
       if (m.open?.id === e.id) m.open = null;

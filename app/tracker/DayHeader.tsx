@@ -1,19 +1,15 @@
 import { Button, Group, SimpleGrid, Stack, Text, Title, UnstyledButton } from "@mantine/core";
 import { Link } from "react-router";
 
-import { addDays, formatDurationHuman, formatWorkDate } from "../../src/time.ts";
+import { addDays, formatDurationHuman, formatWorkDate, weekdayOf } from "../../src/time.ts";
 import { useNow, useTracker } from "./context.tsx";
 import { liveSeconds } from "./model.ts";
-
-export function dayHref(date: string, today: string): string {
-  return date === today ? "/" : `/day/${date}`;
-}
 
 const WEEKDAY = ["S", "M", "T", "W", "T", "F", "S"];
 
 /** Which day is shown, how to move between days, and the week at a glance. */
 export function DayHeader() {
-  const { model } = useTracker();
+  const { model, hrefFor } = useTracker();
   const { workDate, today } = model;
   const isToday = workDate === today;
   const canGoForward = workDate < today;
@@ -29,7 +25,7 @@ export function DayHeader() {
       <Group justify="space-between" wrap="nowrap">
         <Button
           component={Link}
-          to={dayHref(addDays(workDate, -1), today)}
+          to={hrefFor(addDays(workDate, -1))}
           variant="default"
           size="sm"
           aria-label="Previous day"
@@ -45,14 +41,14 @@ export function DayHeader() {
               {formatWorkDate(workDate)}
             </Text>
           ) : (
-            <Button component={Link} to="/" variant="subtle" size="compact-sm">
+            <Button component={Link} to={hrefFor(today)} variant="subtle" size="compact-sm">
               Back to today
             </Button>
           )}
         </Stack>
         <Button
           component={Link}
-          to={dayHref(addDays(workDate, 1), today)}
+          to={hrefFor(addDays(workDate, 1))}
           variant="default"
           size="sm"
           aria-label="Next day"
@@ -63,7 +59,7 @@ export function DayHeader() {
       </Group>
 
       <SimpleGrid cols={7} spacing={4}>
-        {week.map((d, i) => {
+        {week.map((d) => {
           const selected = d.date === workDate;
           const future = d.date > today;
           const style: React.CSSProperties = {
@@ -78,7 +74,7 @@ export function DayHeader() {
           const label = (
             <>
               <Text size="xs" c="dimmed">
-                {WEEKDAY[i]}
+                {WEEKDAY[weekdayOf(d.date)]}
               </Text>
               <Text size="sm" fw={selected ? 700 : 500}>
                 {Number(d.date.slice(8))}
@@ -97,7 +93,7 @@ export function DayHeader() {
             <UnstyledButton
               key={d.date}
               component={Link}
-              to={dayHref(d.date, today)}
+              to={hrefFor(d.date)}
               aria-label={`${formatWorkDate(d.date)}: ${formatDurationHuman(d.seconds)}`}
               aria-current={selected ? "date" : undefined}
               style={style}

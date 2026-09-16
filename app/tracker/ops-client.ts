@@ -35,10 +35,10 @@ export function makeOp<T extends OpType>(type: T, payload: OpPayload<T>): Op {
  * ops queued for a retry. A dead connection must fail fast rather than hang,
  * hence the timeout.
  */
-export async function sendOps(ops: Op[]): Promise<OpResult[]> {
+export async function sendOps(ops: Op[], endpoint = "/api/ops"): Promise<OpResult[]> {
   let response: Response;
   try {
-    response = await fetch("/api/ops", {
+    response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",

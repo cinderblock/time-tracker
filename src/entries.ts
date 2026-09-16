@@ -1,5 +1,6 @@
 import { audit } from "./audit.ts";
 import { db } from "./db.server.ts";
+import { type EntryStatus, isEditable, lockedReason } from "./entry-status.ts";
 import { requireBookableJob } from "./jobs.ts";
 import { MAX_ENTRY_SECONDS } from "./ops-schema.ts";
 import { OpError } from "./op-error.ts";
@@ -9,12 +10,13 @@ import { workDateOf } from "./time.ts";
 /**
  * Time entries and their segments — the timer state machine and edits.
  *
- * State:
+ * State (see entry-status.ts):
  *   open   a timer that hasn't been stopped. Running when it has an open
  *          segment, paused when it doesn't. At most one per person (a
  *          partial unique index enforces it).
  *   draft  stopped, or entered by hand; editable.
- *   (submitted / approved / synced arrive with the approval workflow.)
+ *   approved and later states are locked; approvals.ts moves entries
+ *   between draft and approved.
  *
  * Every function here runs inside the op transaction and throws OpError for
  * anything that doesn't make sense against the current state. Times named
@@ -35,7 +37,11 @@ export interface Entry {
   durationSeconds: number;
   note: string | null;
   source: "timer" | "manual" | "note_rollup";
-  status: "open" | "draft" | "submitted" | "approved" | "synced" | "sync_failed";
+  status: EntryStatus;
+  /** Frozen at approval; null before. */
+  rateSnapshot: number | null;
+  approvedAt: number | null;
+  approvedBy: number | null;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -51,15 +57,16 @@ interface EntryRow {
   note: string | null;
   source: Entry["source"];
   status: Entry["status"];
+  rate_snapshot: number | null;
+  approved_at: number | null;
+  approved_by: number | null;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
 }
 
 const COLUMNS =
-  "id, user_id, job_id, work_date, duration_seconds, note, source, status, created_at, updated_at, deleted_at";
-
-const EDITABLE: ReadonlySet<Entry["status"]> = new Set(["open", "draft"]);
+  "id, user_id, job_id, work_date, duration_seconds, note, source, status, rate_snapshot, approved_at, approved_by, created_at, updated_at, deleted_at";
 
 function segmentsOf(entryIds: string[]): Map<string, Segment[]> {
   const map = new Map<string, Segment[]>();
@@ -90,6 +97,9 @@ function hydrate(rows: EntryRow[]): Entry[] {
     note: r.note,
     source: r.source,
     status: r.status,
+    rateSnapshot: r.rate_snapshot,
+    approvedAt: r.approved_at,
+    approvedBy: r.approved_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -406,9 +416,7 @@ export function updateEntry(args: {
   now: number;
 }): Entry {
   const entry = ownLiveEntry(args.userId, args.entryId);
-  if (!EDITABLE.has(entry.status)) {
-    throw new OpError("conflict", "This entry has been submitted and can no longer be changed here.");
-  }
+  if (!isEditable(entry.status)) throw new OpError("conflict", lockedReason(entry.status));
   const before = snapshot(entry);
   const hasTimes = entry.segments.length > 0;
 
@@ -490,9 +498,7 @@ export function updateEntry(args: {
  */
 export function deleteEntry(args: { userId: number; actorUserId: number; entryId: string; at: number; now: number }): void {
   const entry = ownLiveEntry(args.userId, args.entryId);
-  if (!EDITABLE.has(entry.status)) {
-    throw new OpError("conflict", "This entry has been submitted and can no longer be deleted here.");
-  }
+  if (!isEditable(entry.status)) throw new OpError("conflict", lockedReason(entry.status));
   db().query("UPDATE time_entries SET deleted_at = ?, updated_at = ? WHERE id = ?").run(args.at, args.now, entry.id);
   audit({
     actorUserId: args.actorUserId,

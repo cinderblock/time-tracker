@@ -35,7 +35,10 @@ import {
  */
 
 export interface OpContext {
+  /** Whose time is being changed. */
   userId: number;
+  /** Who is changing it: the same person, or an admin acting for them. */
+  actorUserId: number;
   deviceId: string;
   clientTime: number;
   now: number;
@@ -56,10 +59,10 @@ const handlers: { [T in OpType]: Handler<T> } = {
     createManualEntry({ ...c, ...p });
     return { entryId: p.entryId };
   },
-  "entry.update": (c, p) => void updateEntry({ userId: c.userId, actorUserId: c.userId, now: c.now, ...p }),
-  "entry.delete": (c, p) => void deleteEntry({ userId: c.userId, actorUserId: c.userId, now: c.now, ...p }),
+  "entry.update": (c, p) => void updateEntry({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, ...p }),
+  "entry.delete": (c, p) => void deleteEntry({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, ...p }),
   "entry.restore": (c, p) =>
-    void restoreEntry({ userId: c.userId, actorUserId: c.userId, now: c.now, entryId: p.entryId }),
+    void restoreEntry({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, entryId: p.entryId }),
 
   "note.create": (c, p) => {
     createNote({ userId: c.userId, deviceId: c.deviceId, now: c.now, ...p });
@@ -72,7 +75,7 @@ const handlers: { [T in OpType]: Handler<T> } = {
   "rollup.commit": (c, p) => ({ entryIds: commitRollup({ ...c, ...p }) }),
 
   "job.create": (c, p) => {
-    const job = createJob({ id: p.jobId, name: p.name, parentId: p.parentId, actorUserId: c.userId, now: c.now });
+    const job = createJob({ id: p.jobId, name: p.name, parentId: p.parentId, actorUserId: c.actorUserId, now: c.now });
     return { jobId: job.id };
   },
 };
@@ -84,16 +87,17 @@ function describeZodError(error: { issues: { message: string; path: PropertyKey[
   return `${where}${first.message}`;
 }
 
-function record(userId: number, env: OpEnvelope, now: number, result: OpResult): void {
+function record(who: Who, env: OpEnvelope, now: number, result: OpResult): void {
   db()
     .query(
       `INSERT INTO applied_ops
-         (op_id, user_id, type, device_id, client_time, applied_at, payload_json, ok, result_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (op_id, user_id, actor_user_id, type, device_id, client_time, applied_at, payload_json, ok, result_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       env.opId,
-      userId,
+      who.userId,
+      who.actorUserId,
       env.type,
       env.deviceId,
       env.clientTime,
@@ -104,7 +108,19 @@ function record(userId: number, env: OpEnvelope, now: number, result: OpResult):
     );
 }
 
-export function applyOp(userId: number, raw: unknown, now: number = Date.now()): OpResult {
+/**
+ * Whose time an op changes, and who is changing it. Admins acting for someone
+ * pass both; everyone else just their own id.
+ */
+export type Who = { userId: number; actorUserId: number };
+
+function whoOf(who: number | Who): Who {
+  return typeof who === "number" ? { userId: who, actorUserId: who } : who;
+}
+
+export function applyOp(as: number | Who, raw: unknown, now: number = Date.now()): OpResult {
+  const who = whoOf(as);
+  const { userId } = who;
   const envelope = opEnvelope.safeParse(raw);
   const rawId = (raw as { opId?: unknown } | null)?.opId;
   if (!envelope.success) {
@@ -128,30 +144,30 @@ export function applyOp(userId: number, raw: unknown, now: number = Date.now()):
   const payload = opPayloads[env.type].safeParse(env.payload);
   if (!payload.success) {
     const result: OpResult = { opId: env.opId, ok: false, code: "invalid", error: describeZodError(payload.error) };
-    record(userId, env, now, result);
+    record(who, env, now, result);
     return result;
   }
 
-  const ctx: OpContext = { userId, deviceId: env.deviceId, clientTime: env.clientTime, now };
+  const ctx: OpContext = { ...who, deviceId: env.deviceId, clientTime: env.clientTime, now };
   const handler = handlers[env.type] as Handler<OpType>;
   try {
     return db().transaction((): OpResult => {
       const data = handler(ctx, payload.data as never);
       const result: OpResult = data === undefined ? { opId: env.opId, ok: true } : { opId: env.opId, ok: true, data };
-      record(userId, env, now, result);
+      record(who, env, now, result);
       return result;
     })();
   } catch (err) {
     if (!(err instanceof OpError)) throw err;
     const result: OpResult = { opId: env.opId, ok: false, code: err.code, error: err.message };
-    record(userId, env, now, result);
+    record(who, env, now, result);
     return result;
   }
 }
 
 /** Apply a batch in order. Each op stands alone; one rejection doesn't stop the rest. */
-export function applyOps(userId: number, raw: unknown, now: number = Date.now()): OpResult[] {
+export function applyOps(as: number | Who, raw: unknown, now: number = Date.now()): OpResult[] {
   if (!Array.isArray(raw)) throw new OpError("invalid", "Expected a list of operations.");
   if (raw.length > OPS_PER_REQUEST) throw new OpError("invalid", `Send at most ${OPS_PER_REQUEST} operations at once.`);
-  return raw.map((op) => applyOp(userId, op, now));
+  return raw.map((op) => applyOp(as, op, now));
 }

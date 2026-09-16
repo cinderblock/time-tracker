@@ -7,7 +7,6 @@ import { formatClock, formatDuration } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
-import { recentFix } from "./location.ts";
 import { type EntryView, type JobView, liveSeconds } from "./model.ts";
 
 /**
@@ -21,11 +20,11 @@ export function TimerPanel() {
 }
 
 function StartTimer() {
-  const { dispatch, pending } = useTracker();
+  const { dispatch, pending, location } = useTracker();
   const [jobId, setJobId] = useState<string | null>(null);
 
   async function start(id: string) {
-    await dispatch("timer.start", { entryId: uuidv7(), jobId: id, at: Date.now(), location: recentFix() });
+    await dispatch("timer.start", { entryId: uuidv7(), jobId: id, at: Date.now(), location: location() });
     setJobId(null);
   }
 
@@ -48,7 +47,7 @@ function StartTimer() {
 }
 
 function RunningTimer({ entry }: { entry: EntryView }) {
-  const { model, dispatch, dispatchAll, pending } = useTracker();
+  const { model, dispatch, dispatchAll, pending, location } = useTracker();
   const now = useNow();
   const undoToast = useUndoToast();
   const [note, setNote] = useState(entry.note ?? "");
@@ -79,7 +78,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
       entryId: entry.id,
       at: Date.now(),
       note: noteDirty ? note.trim() || null : undefined,
-      location: recentFix(),
+      location: location(),
     });
     if (!result.ok && result.code === "note_required") setNoteError(result.error);
   }
@@ -92,10 +91,10 @@ function RunningTimer({ entry }: { entry: EntryView }) {
     if (closingNote !== undefined || noteDirty) {
       ops.push({
         type: "timer.stop",
-        payload: { entryId: entry.id, at, note: (closingNote ?? note).trim() || null, location: recentFix() },
+        payload: { entryId: entry.id, at, note: (closingNote ?? note).trim() || null, location: location() },
       });
     }
-    ops.push({ type: "timer.start", payload: { entryId: uuidv7(), jobId: job.id, at, location: recentFix() } });
+    ops.push({ type: "timer.start", payload: { entryId: uuidv7(), jobId: job.id, at, location: location() } });
     const results = await dispatchAll(ops);
     const blocked = results.find((r) => !r.ok && r.code === "note_required");
     if (blocked) setSwitchTo(job);

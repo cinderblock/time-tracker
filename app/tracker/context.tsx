@@ -3,12 +3,14 @@ import { notifications } from "@mantine/notifications";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRevalidator } from "react-router";
 
-import type { OpPayload, OpResult, OpType } from "../../src/ops-schema.ts";
+import type { Op, OpPayload, OpResult, OpType } from "../../src/ops-schema.ts";
 import { getEngine, useQueuedOps } from "../offline/client.ts";
 import { applyPending } from "../offline/reducer.ts";
-import { refreshLocation } from "./location.ts";
+import { SignedOutError } from "../offline/sync.ts";
+import { dayHref } from "./day-href.ts";
+import { type Fix, recentFix, refreshLocation } from "./location.ts";
 import type { DayModel } from "./model.ts";
-import { makeOp } from "./ops-client.ts";
+import { makeOp, sendOps } from "./ops-client.ts";
 
 /**
  * The tracking screen's data and its one way of changing it.
@@ -17,7 +19,18 @@ import { makeOp } from "./ops-client.ts";
  * applied on top, so a change shows the instant it's made — online or not.
  * `dispatch` puts the change in the outbox and, if the server answers
  * promptly, returns its answer; otherwise the change is simply queued.
+ *
+ * An admin working on someone else's day uses the same screen "acting for"
+ * them: changes go straight to the server (the outbox belongs to whoever is
+ * signed in), nothing is kept on the device, and no location is attached.
  */
+
+export interface ActingFor {
+  userId: number;
+  name: string;
+  /** Their day pages live under this path: `${basePath}` is today, `${basePath}/${date}` any other day. */
+  basePath: string;
+}
 
 export type DispatchResult = OpResult | { opId: string; ok: true; queued: true };
 
@@ -39,6 +52,12 @@ export interface Tracker {
   dispatchAll(ops: { type: OpType; payload: unknown }[]): Promise<DispatchResult[]>;
   /** A foreground change is waiting for the server's answer. */
   pending: boolean;
+  /** Set when an admin is working on someone else's day. */
+  actingFor: ActingFor | null;
+  /** Link to another day of the same person. */
+  hrefFor(date: string): string;
+  /** A recent location fix to attach to a change, if the person allows it. */
+  location(): Fix | null;
 }
 
 /** How long a change waits for the server before being treated as queued. */
@@ -57,16 +76,28 @@ function reportFailure(result: DispatchResult): void {
   notifications.show({ color: "red", message: result.error, autoClose: 8000 });
 }
 
-export function TrackerProvider({ model: base, children }: { model: DayModel; children: React.ReactNode }) {
-  const ops = useQueuedOps();
+export function TrackerProvider({
+  model: base,
+  actingFor = null,
+  children,
+}: {
+  model: DayModel;
+  actingFor?: ActingFor | null;
+  children: React.ReactNode;
+}) {
+  const queued = useQueuedOps();
+  const direct = useDirectOps(base, actingFor);
+  const ops = actingFor ? direct.ops : queued;
   const [inFlight, setInFlight] = useState(0);
 
   useEffect(() => {
-    refreshLocation();
-  }, []);
+    if (!actingFor) refreshLocation();
+  }, [actingFor]);
 
   // A fresh server copy includes changes confirmed before it was requested.
-  useEffect(() => getEngine()?.reflect(base.fetchedAt), [base]);
+  useEffect(() => {
+    if (!actingFor) getEngine()?.reflect(base.fetchedAt);
+  }, [base, actingFor]);
 
   // Showing the device's copy: keep trying the server until it answers.
   const revalidator = useRevalidator();
@@ -85,17 +116,22 @@ export function TrackerProvider({ model: base, children }: { model: DayModel; ch
 
   const model = useMemo(() => (ops.length ? applyPending(base, ops) : base), [base, ops]);
 
-  const submit = useCallback(async (list: ReturnType<typeof makeOp>[], wait: boolean): Promise<DispatchResult[]> => {
-    const engine = getEngine();
-    if (!engine) throw new Error("Changes can only be made in the browser");
-    if (wait) setInFlight((n) => n + 1);
-    try {
-      const answers = await Promise.all(list.map((op) => engine.enqueue(op, wait ? ANSWER_WAIT_MS : 0)));
-      return answers.map((a, i): DispatchResult => a ?? { opId: list[i]!.opId, ok: true, queued: true });
-    } finally {
-      if (wait) setInFlight((n) => n - 1);
-    }
-  }, []);
+  const sendDirect = direct.send;
+  const submit = useCallback(
+    async (list: Op[], wait: boolean): Promise<DispatchResult[]> => {
+      if (wait) setInFlight((n) => n + 1);
+      try {
+        if (actingFor) return await sendDirect(list);
+        const engine = getEngine();
+        if (!engine) throw new Error("Changes can only be made in the browser");
+        const answers = await Promise.all(list.map((op) => engine.enqueue(op, wait ? ANSWER_WAIT_MS : 0)));
+        return answers.map((a, i): DispatchResult => a ?? { opId: list[i]!.opId, ok: true, queued: true });
+      } finally {
+        if (wait) setInFlight((n) => n - 1);
+      }
+    },
+    [actingFor, sendDirect],
+  );
 
   const dispatch = useCallback<Tracker["dispatch"]>(
     async (type, payload, opts) => {
@@ -120,10 +156,77 @@ export function TrackerProvider({ model: base, children }: { model: DayModel; ch
   );
 
   const value = useMemo<Tracker>(
-    () => ({ model, dispatch, dispatchAll, pending: inFlight > 0 }),
-    [model, dispatch, dispatchAll, inFlight],
+    () => ({
+      model,
+      dispatch,
+      dispatchAll,
+      pending: inFlight > 0,
+      actingFor,
+      hrefFor: (date) =>
+        actingFor
+          ? date === model.today
+            ? actingFor.basePath
+            : `${actingFor.basePath}/${date}`
+          : dayHref(date, model.today),
+      location: () => (actingFor ? null : recentFix()),
+    }),
+    [model, dispatch, dispatchAll, inFlight, actingFor],
   );
   return <TrackerContext.Provider value={value}>{children}</TrackerContext.Provider>;
+}
+
+/**
+ * Changes made while acting for someone: sent straight to the server, and
+ * shown on screen until a copy fetched after the server confirmed them
+ * arrives (the same rule the outbox follows).
+ */
+function useDirectOps(base: DayModel, actingFor: ActingFor | null) {
+  const [items, setItems] = useState<{ op: Op; confirmedAt?: number }[]>([]);
+  const revalidator = useRevalidator();
+  const revalidate = useRef(revalidator.revalidate);
+  revalidate.current = revalidator.revalidate;
+  const endpoint = actingFor ? `/api/admin/people/${actingFor.userId}/ops` : null;
+
+  useEffect(() => {
+    const fetchedAt = base.fetchedAt;
+    if (fetchedAt == null) return;
+    setItems((list) => {
+      const kept = list.filter((i) => i.confirmedAt == null || i.confirmedAt > fetchedAt);
+      return kept.length === list.length ? list : kept;
+    });
+  }, [base]);
+
+  const send = useCallback(
+    async (ops: Op[]): Promise<DispatchResult[]> => {
+      if (!endpoint) throw new Error("Not acting for anyone");
+      const ids = new Set(ops.map((o) => o.opId));
+      setItems((list) => [...list, ...ops.map((op) => ({ op }))]);
+      let results: OpResult[];
+      try {
+        results = await sendOps(ops, endpoint);
+      } catch (err) {
+        setItems((list) => list.filter((i) => !ids.has(i.op.opId)));
+        const error =
+          err instanceof SignedOutError
+            ? "You've been signed out, so that change wasn't saved. Sign in and try again."
+            : "Couldn't reach the server, so that change wasn't saved. Try again once you're connected.";
+        return ops.map((op) => ({ opId: op.opId, ok: false as const, error }));
+      }
+      const confirmedAt = Date.now();
+      const accepted = new Set(results.filter((r) => r.ok).map((r) => r.opId));
+      setItems((list) =>
+        list
+          .filter((i) => !ids.has(i.op.opId) || accepted.has(i.op.opId))
+          .map((i) => (accepted.has(i.op.opId) ? { ...i, confirmedAt } : i)),
+      );
+      void revalidate.current();
+      return results;
+    },
+    [endpoint],
+  );
+
+  const ops = useMemo(() => items.map((i) => i.op), [items]);
+  return { ops, send };
 }
 
 /** A clock that re-renders its user every `intervalMs`. Undefined until mounted (SSR-safe). */

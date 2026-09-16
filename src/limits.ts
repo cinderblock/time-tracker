@@ -11,3 +11,6 @@ export const NICKNAME_MAX_LENGTH = 60;
 /** Notes on time entries and day notes. Long enough for a paragraph. */
 export const NOTE_MAX_LENGTH = 2000;
 export const JOB_NAME_MAX_LENGTH = 120;
+export const CATEGORY_NAME_MAX_LENGTH = 60;
+/** Hourly rates are money per hour; anything above this is a typo. */
+export const MAX_HOURLY_RATE = 100_000;

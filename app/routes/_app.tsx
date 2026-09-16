@@ -1,4 +1,4 @@
-import { Anchor, AppShell, Avatar, Burger, Group, NavLink, Stack, Text, UnstyledButton } from "@mantine/core";
+import { Anchor, AppShell, Avatar, Burger, Divider, Group, NavLink, ScrollArea, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useEffect } from "react";
 import { Link, Outlet, useLocation, useRouteLoaderData } from "react-router";
@@ -55,13 +55,25 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   const links = [
     { to: "/", label: "Track time" },
     { to: "/account", label: "Your account" },
-    ...(user.role === "admin"
-      ? [
-          { to: "/admin/jobs", label: "Jobs" },
-          { to: "/admin/people", label: "People" },
-        ]
-      : []),
   ];
+  const adminLinks =
+    user.role === "admin"
+      ? [
+          { to: "/admin/timesheets", label: "Timesheets" },
+          { to: "/admin/calendar", label: "Calendar" },
+          { to: "/admin/reports", label: "Reports" },
+          { to: "/admin/people", label: "People" },
+          { to: "/admin/jobs", label: "Jobs" },
+          { to: "/admin/rates", label: "Rates & categories" },
+        ]
+      : [];
+  const isActive = (to: string) =>
+    to === "/"
+      ? location.pathname === "/" || location.pathname.startsWith("/day/")
+      : location.pathname === to || location.pathname.startsWith(`${to}/`);
+  const renderLink = (link: { to: string; label: string }) => (
+    <NavLink key={link.to} component={Link} to={link.to} label={link.label} active={isActive(link.to)} />
+  );
 
   return (
     <AppShell
@@ -94,26 +106,22 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
       </AppShell.Header>
 
       <AppShell.Navbar p="sm">
-        <Stack gap={4} justify="space-between" h="100%">
+        <AppShell.Section grow component={ScrollArea}>
           <Stack gap={4}>
-            {links.map((link) => (
-              <NavLink
-                key={link.to}
-                component={Link}
-                to={link.to}
-                label={link.label}
-                active={
-                  link.to === "/"
-                    ? location.pathname === "/" || location.pathname.startsWith("/day/")
-                    : location.pathname.startsWith(link.to)
-                }
-              />
-            ))}
+            {links.map(renderLink)}
+            {adminLinks.length > 0 && (
+              <>
+                <Divider my="xs" label="Admin" labelPosition="left" />
+                {adminLinks.map(renderLink)}
+              </>
+            )}
           </Stack>
+        </AppShell.Section>
+        <AppShell.Section>
           <SignOutButton userId={user.id}>
             {(signOut) => <NavLink component="button" type="button" label="Sign out" c="dimmed" onClick={signOut} />}
           </SignOutButton>
-        </Stack>
+        </AppShell.Section>
       </AppShell.Navbar>
 
       <AppShell.Main>

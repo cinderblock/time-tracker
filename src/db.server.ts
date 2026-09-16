@@ -79,10 +79,12 @@ const migrations: Migration[] = [
     up: (db) => {
       db.exec(`
         ---------------------------------------------------------------- people
+        -- Groups of people ("Field", "Shop") for filtering and default rates.
+        -- A category's rate lives in the rates table (scope 'category'), with the
+        -- same effective dates as every other rate.
         CREATE TABLE employee_categories (
           id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-          name                  TEXT NOT NULL UNIQUE,
-          default_hourly_rate   REAL,
+          name                  TEXT NOT NULL UNIQUE COLLATE NOCASE,
           default_payroll_item  TEXT,
           created_at            INTEGER NOT NULL
         );
@@ -92,7 +94,7 @@ const migrations: Migration[] = [
           name              TEXT NOT NULL,
           email             TEXT,
           role              TEXT NOT NULL CHECK (role IN ('admin','employee')),
-          category_id       INTEGER REFERENCES employee_categories(id),
+          category_id       INTEGER REFERENCES employee_categories(id) ON DELETE SET NULL,
           -- ListID of the matching Employee/Vendor/OtherName in the accounting
           -- backend. NULL until an admin links them; entries for an unlinked
           -- user cannot be pushed.
@@ -193,8 +195,9 @@ const migrations: Migration[] = [
           created_at INTEGER NOT NULL
         );
 
-        -- Rate resolution, most specific wins:
+        -- Rate resolution, most specific wins (src/rates.ts):
         --   user+job -> job -> user -> category -> global
+        -- Job rates also cover the job's sub-jobs.
         CREATE TABLE rates (
           id             INTEGER PRIMARY KEY AUTOINCREMENT,
           scope          TEXT NOT NULL
@@ -203,8 +206,13 @@ const migrations: Migration[] = [
           job_id         TEXT REFERENCES jobs(id) ON DELETE CASCADE,
           category_id    INTEGER REFERENCES employee_categories(id) ON DELETE CASCADE,
           hourly_rate    REAL NOT NULL,
-          effective_from INTEGER NOT NULL,
-          created_at     INTEGER NOT NULL
+          -- A work date ('YYYY-MM-DD'): the rate applies to work on or after it.
+          effective_from TEXT NOT NULL,
+          created_by     INTEGER REFERENCES users(id),
+          created_at     INTEGER NOT NULL,
+          -- Rates are never edited in place; a correction deletes and re-adds,
+          -- and the audit log keeps both.
+          deleted_at     INTEGER
         );
         CREATE INDEX idx_rates_lookup ON rates(scope, user_id, job_id, category_id);
 
@@ -223,6 +231,9 @@ const migrations: Migration[] = [
           billable              INTEGER NOT NULL DEFAULT 1,
           -- Rate frozen at approval so later rate edits don't rewrite history.
           rate_snapshot         REAL,
+          -- Approval freezes the rate and locks the entry until reopened.
+          approved_at           INTEGER,
+          approved_by           INTEGER REFERENCES users(id),
           source                TEXT NOT NULL
                                   CHECK (source IN ('timer','manual','note_rollup')),
           status                TEXT NOT NULL
@@ -298,7 +309,11 @@ const migrations: Migration[] = [
         -- record of what every device asked for and what the server answered.
         CREATE TABLE applied_ops (
           op_id        TEXT PRIMARY KEY,
+          -- Whose time the op changed...
           user_id      INTEGER NOT NULL REFERENCES users(id),
+          -- ...and who made the change: the same person, or an admin acting
+          -- for them.
+          actor_user_id INTEGER NOT NULL REFERENCES users(id),
           type         TEXT NOT NULL,
           device_id    TEXT,
           client_time  INTEGER,

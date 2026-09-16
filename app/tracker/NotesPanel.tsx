@@ -22,7 +22,6 @@ import { addDays, formatClock, formatDurationHuman, zonedTimeInput, zonedTimeToI
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { JobSelect } from "./JobPicker.tsx";
-import { recentFix } from "./location.ts";
 import type { NoteView } from "./model.ts";
 
 /**
@@ -63,7 +62,7 @@ export function NotesPanel() {
 }
 
 function QuickNote() {
-  const { model, dispatch } = useTracker();
+  const { model, dispatch, location } = useTracker();
   const [text, setText] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -81,7 +80,7 @@ function QuickNote() {
       at: Date.now(),
       text: text.trim(),
       jobId,
-      location: recentFix(),
+      location: location(),
     });
     setBusy(false);
     if (result.ok) setText("");
