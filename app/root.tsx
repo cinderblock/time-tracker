@@ -1,0 +1,136 @@
+import {
+  ColorSchemeScript,
+  MantineProvider,
+  createTheme,
+  mantineHtmlProps,
+} from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
+import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+  isRouteErrorResponse,
+  useLoaderData,
+  useRouteError,
+} from "react-router";
+
+import "@mantine/core/styles.css";
+import "@mantine/notifications/styles.css";
+
+import { config } from "../src/config.ts";
+import { ensureServerInit } from "./server-init.ts";
+
+/**
+ * Branding reaches the client through a root loader rather than being compiled
+ * in, so one image serves any deployment. Nothing secret goes through here.
+ *
+ * The root loader also runs startup: it is the one loader guaranteed to run
+ * before any other, so the database is open and migrated by the time a child
+ * route's loader touches it.
+ */
+export function loader() {
+  ensureServerInit();
+  return {
+    branding: {
+      name: config.branding.name,
+      shortName: config.branding.shortName,
+      themeColor: config.branding.themeColor,
+    },
+  };
+}
+
+export function meta({ data }: { data?: Awaited<ReturnType<typeof loader>> }) {
+  const name = data?.branding.name ?? "Time Tracker";
+  return [
+    { title: name },
+    { name: "description", content: `${name} — track time, on or offline.` },
+  ];
+}
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  const data = useLoaderData<typeof loader>() as
+    | Awaited<ReturnType<typeof loader>>
+    | undefined;
+  const themeColor = data?.branding.themeColor ?? "#1c7ed6";
+
+  return (
+    <html lang="en" {...mantineHtmlProps}>
+      <head>
+        <meta charSet="utf-8" />
+        {/* viewport-fit=cover so the layout can reach under the notch; the
+            safe-area insets are respected in CSS rather than by letterboxing. */}
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+        <meta name="theme-color" content={themeColor} />
+        {/* iOS ignores the manifest's display mode; this is what makes a
+            home-screen launch open without Safari chrome. */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+        <ColorSchemeScript />
+        <Meta />
+        <Links />
+      </head>
+      <body>
+        {children}
+        <ScrollRestoration />
+        <Scripts />
+      </body>
+    </html>
+  );
+}
+
+export default function App() {
+  const { branding } = useLoaderData<typeof loader>();
+
+  const theme = createTheme({
+    primaryColor: "brand",
+    colors: {
+      // Mantine wants ten shades. Rather than ship a hand-tuned ramp that only
+      // suits one brand colour, every slot takes the configured colour and the
+      // component library's own alpha handling provides the variation. A
+      // deployment that wants a real ramp can replace this wholesale.
+      brand: Array.from({ length: 10 }, () => branding.themeColor) as unknown as [
+        string, string, string, string, string, string, string, string, string, string,
+      ],
+    },
+    // Phone-first: bigger default hit targets than Mantine's desktop defaults.
+    components: {
+      Button: { defaultProps: { size: "md" } },
+    },
+  });
+
+  return (
+    <MantineProvider theme={theme} defaultColorScheme="auto">
+      <Notifications position="bottom-center" />
+      <Outlet />
+    </MantineProvider>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+
+  const { heading, detail } = isRouteErrorResponse(error)
+    ? { heading: `${error.status}`, detail: error.statusText || "Something went wrong." }
+    : {
+        heading: "Something went wrong",
+        // Never surface a raw stack to a field employee; the server log has it.
+        detail: "The app hit an unexpected error. Your tracked time is safe.",
+      };
+
+  return (
+    <main style={{ padding: "2rem", fontFamily: "system-ui, sans-serif" }}>
+      <h1>{heading}</h1>
+      <p>{detail}</p>
+      <p>
+        <a href="/">Back to the app</a>
+      </p>
+    </main>
+  );
+}

@@ -1,0 +1,30 @@
+# Runtime composition for the deployed app.
+#
+# Every knob comes from the deploy `.env` that deploy.sh writes next to this
+# file (compose auto-loads it), so a deploy is fully determined by that file
+# rather than drifting with an implicit "latest". App secrets are NOT here —
+# deploy.sh materializes them into the `env_file` below from CI secrets.
+services:
+  app:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-cinderblock/time-tracker}:${APP_TAG:-latest}
+    container_name: ${CONTAINER_NAME:-time-tracker}
+    restart: unless-stopped
+
+    # Bind to host loopback ONLY: the reverse proxy must be the sole ingress.
+    # Anything that can reach the app directly would bypass TLS and make any
+    # X-Forwarded-For reasoning unsound.
+    ports:
+      - "127.0.0.1:${APP_PORT:-9020}:3000"
+
+    # Runtime config + secrets, rewritten fresh on every deploy by deploy.sh.
+    env_file:
+      - ${APP_ENV_FILE:-./app.env}
+
+    # Fixed inside the container regardless of the host env file, so the
+    # published port mapping and DB path cannot be accidentally moved.
+    environment:
+      - PORT=3000
+      - DATABASE_PATH=/data/time-tracker.db
+
+    volumes:
+      - ${APP_DATA_DIR:-/srv/time-tracker-data}:/data

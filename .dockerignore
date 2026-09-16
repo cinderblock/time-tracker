@@ -1,0 +1,16 @@
+node_modules
+build
+.react-router
+data
+.env
+.env.*
+.git
+.gitignore
+*.log
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+docs
+plans
+*.md

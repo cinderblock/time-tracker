@@ -1,0 +1,30 @@
+# env / secrets
+.env
+.env.local
+.env.*.local
+
+# local deploy override (real one is per-host; the .example is committed)
+deploy.env
+
+# app env file materialized by deploy.sh from GitHub secrets (holds secrets)
+app.env
+
+# deps / build
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.react-router/
+
+# local SQLite db + WAL/SHM sidecars
+data/
+
+# logs
+logs/
+*.log
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
