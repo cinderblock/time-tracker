@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { config } from "./config.ts";
+import { config } from "./config.server.ts";
 
 /**
  * SQLite access. One connection, opened at startup, stashed on globalThis so
@@ -25,22 +25,39 @@ export function db(): Database {
   return conn;
 }
 
-export function initDb(): Database {
+/**
+ * Open (and migrate) the database. `path` defaults to the configured file;
+ * tests pass ":memory:" for an isolated, throwaway database. `log` receives
+ * the open/migration lines — the CLI sends them to stderr so its stdout stays
+ * machine-readable.
+ */
+export function initDb(
+  path: string = config.databasePath,
+  log: (line: string) => void = console.log,
+): Database {
   const g = globalThis as GlobalWithDb;
   if (g.__timeTrackerDb__) return g.__timeTrackerDb__;
 
-  const path = resolve(config.databasePath);
-  mkdirSync(dirname(path), { recursive: true });
+  const inMemory = path === ":memory:";
+  // resolve() would turn ":memory:" into a real (and, on Windows, invalid)
+  // file path, so leave the in-memory sentinel exactly as SQLite expects it.
+  if (!inMemory) {
+    path = resolve(path);
+    mkdirSync(dirname(path), { recursive: true });
+  }
 
   const conn = new Database(path);
   conn.exec("PRAGMA journal_mode = WAL;");
   conn.exec("PRAGMA foreign_keys = ON;");
   conn.exec("PRAGMA busy_timeout = 5000;");
 
-  runMigrations(conn);
+  // Throwaway test databases are opened once per test; logging each would
+  // bury the output that matters.
+  const say = inMemory ? () => {} : log;
+  runMigrations(conn, say);
 
   g.__timeTrackerDb__ = conn;
-  console.log(`[db] opened ${path}`);
+  say(`[db] opened ${path}`);
   return conn;
 }
 
@@ -80,6 +97,9 @@ const migrations: Migration[] = [
           -- backend. NULL until an admin links them; entries for an unlinked
           -- user cannot be pushed.
           remote_person_id  TEXT,
+          -- WebAuthn user handle: 32 random bytes, base64url. Deliberately not
+          -- the row id, which would leak account ordering to authenticators.
+          webauthn_user_id  TEXT NOT NULL UNIQUE,
           active            INTEGER NOT NULL DEFAULT 1,
           created_at        INTEGER NOT NULL,
           updated_at        INTEGER NOT NULL
@@ -89,38 +109,53 @@ const migrations: Migration[] = [
         CREATE TABLE credentials (
           id             INTEGER PRIMARY KEY AUTOINCREMENT,
           user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          credential_id  TEXT NOT NULL UNIQUE,
+          credential_id  TEXT NOT NULL UNIQUE,     -- base64url
           public_key     BLOB NOT NULL,
           counter        INTEGER NOT NULL DEFAULT 0,
-          transports     TEXT,
-          nickname       TEXT,
+          transports     TEXT,                     -- JSON array
+          device_type    TEXT,                     -- 'singleDevice' | 'multiDevice'
+          backed_up      INTEGER NOT NULL DEFAULT 0,
+          nickname       TEXT NOT NULL,
           created_at     INTEGER NOT NULL,
           last_used_at   INTEGER
         );
         CREATE INDEX idx_credentials_user ON credentials(user_id);
 
+        -- id is the SHA-256 of the cookie token, never the token itself, so a
+        -- database leak cannot be replayed as a login.
         CREATE TABLE sessions (
-          id          TEXT PRIMARY KEY,
-          user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          created_at  INTEGER NOT NULL,
-          expires_at  INTEGER NOT NULL,
-          user_agent  TEXT,
-          revoked_at  INTEGER
+          id             TEXT PRIMARY KEY,
+          user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          -- The passkey that signed this session in, for display. NULL once
+          -- that passkey is removed; the session itself is left alone.
+          credential_id  INTEGER REFERENCES credentials(id) ON DELETE SET NULL,
+          user_agent     TEXT,
+          created_at     INTEGER NOT NULL,
+          last_used_at   INTEGER NOT NULL,
+          expires_at     INTEGER NOT NULL,
+          revoked_at     INTEGER
         );
         CREATE INDEX idx_sessions_user ON sessions(user_id);
 
-        -- One-time registration URLs. Only the SHA-256 hash of the token is
+        -- One-time registration links. Only the SHA-256 hash of the token is
         -- stored, so a database leak cannot be replayed into an account.
+        --   bootstrap   first admin; minted automatically while no admin exists
+        --   invite      a new person, with the role the admin chose
+        --   add_device  an existing person (user_id preset) on a new device
+        -- For bootstrap/invite, user_id is filled in when the link is used.
         CREATE TABLE registrations (
           id          INTEGER PRIMARY KEY AUTOINCREMENT,
           token_hash  TEXT NOT NULL UNIQUE,
+          purpose     TEXT NOT NULL
+                        CHECK (purpose IN ('bootstrap','invite','add_device')),
           role        TEXT NOT NULL CHECK (role IN ('admin','employee')),
           name_hint   TEXT,
+          user_id     INTEGER REFERENCES users(id),
           created_by  INTEGER REFERENCES users(id),
           created_at  INTEGER NOT NULL,
           expires_at  INTEGER NOT NULL,
           used_at     INTEGER,
-          user_id     INTEGER REFERENCES users(id)
+          revoked_at  INTEGER
         );
 
         ------------------------------------------------------------------ work
@@ -302,7 +337,7 @@ const migrations: Migration[] = [
   },
 ];
 
-function runMigrations(db: Database): void {
+function runMigrations(db: Database, log: (line: string) => void): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS migrations (
       name        TEXT PRIMARY KEY,
@@ -316,7 +351,7 @@ function runMigrations(db: Database): void {
 
   for (const migration of migrations) {
     if (applied.has(migration.name)) continue;
-    console.log(`[db] applying migration ${migration.name}`);
+    log(`[db] applying migration ${migration.name}`);
     db.transaction(() => {
       migration.up(db);
       db.query("INSERT INTO migrations (name, applied_at) VALUES (?, ?)").run(

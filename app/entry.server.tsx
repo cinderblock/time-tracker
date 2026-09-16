@@ -17,6 +17,14 @@ import { ServerRouter } from "react-router";
 //    stream and adapting it back, for nothing.
 import { renderToReadableStream } from "react-dom/server.browser";
 
+import { ensureServerInit } from "./server-init.ts";
+
+// The production server imports this module when it starts, so initialising
+// here opens the database and prints the first-run setup link at boot rather
+// than on the first request. (In development Vite loads it lazily; the init
+// middleware covers that case. Both calls are idempotent.)
+ensureServerInit();
+
 export const streamTimeout = 5_000;
 
 export default async function handleRequest(

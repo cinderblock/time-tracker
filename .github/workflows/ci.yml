@@ -12,7 +12,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -26,5 +26,17 @@ jobs:
       - name: Test
         run: bun test src/
 
-      - name: Build
-        run: bun run build
+      - name: Install Chromium for the end-to-end tests
+        run: bunx playwright install --with-deps chromium
+
+      # Builds, then drives the real server through Chromium with a virtual
+      # passkey authenticator.
+      - name: End-to-end tests
+        run: bun run test:e2e
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7

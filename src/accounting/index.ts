@@ -1,4 +1,4 @@
-import { config } from "../config.ts";
+import { config } from "../config.server.ts";
 import { NoAccountingBackend } from "./none.ts";
 import { type AccountingBackend, BackendUnavailableError } from "./types.ts";
 

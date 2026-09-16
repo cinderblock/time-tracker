@@ -11,9 +11,12 @@
     "build": "bun --bun react-router build",
     "start": "bun --bun react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "bun test src/"
+    "test": "bun test src/",
+    "test:e2e": "bun run build && playwright test",
+    "admin-link": "bun src/cli/admin-link.ts"
   },
   "dependencies": {
+    "@mantine/colors-generator": "^9.6.1",
     "@mantine/core": "^9.0.0",
     "@mantine/dates": "^9.0.0",
     "@mantine/hooks": "^9.0.0",
@@ -22,14 +25,17 @@
     "@react-router/serve": "^8.0.0",
     "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^14.0.0",
+    "chroma-js": "^3.2.0",
     "dayjs": "^1.11.0",
     "idb": "^8.0.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router": "^8.0.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@react-router/dev": "^8.0.0",
     "@types/bun": "latest",
     "@types/react": "^19.0.0",

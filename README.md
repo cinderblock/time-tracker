@@ -7,16 +7,23 @@ Built to replace a per-seat SaaS time tracker. It is deliberately **generic** �
 no organisation's name, hostname, colour or job list appears anywhere in this
 repository. All of that is deployment configuration.
 
-> **Status: phase 0 (scaffold).** The spine is in place — config, SQLite with
-> migrations, the accounting seam, Docker image, CI and deploy. The tracking UI,
-> auth and offline support are not built yet. See
+> **Status: phase 1 (auth) done.** Passkey sign-in, first-run setup, invites,
+> device links and people management work end to end. Time tracking, offline
+> support and the accounting sync are not built yet. See
 > [`plans/time-tracker.md`](plans/time-tracker.md) for the full plan, the
 > decisions already taken, and the gotchas found along the way.
 
+## What it does
+
+- **Passkey-only auth.** No passwords, no usernames — Face ID, Touch ID or the
+  device's screen lock. First run creates the initial admin; admins hand out
+  one-time links (as a QR code, share sheet or copied URL) to invite people or to
+  enrol someone's new phone. Admins can change roles, deactivate people (which
+  signs them out everywhere), remove a lost phone's passkey, and see each person's
+  devices and history. Everyone can manage their own passkeys and signed-in devices.
+
 ## What it will do
 
-- **Passkey-only auth.** First run creates the initial admin; admins mint
-  one-time registration URLs for everyone else.
 - **Three ways to record time** — start/pause/stop timers, sporadic notes that
   roll up into line items at the end of the day, and plain manual entry.
 - **Offline-native.** Installed to a home screen, it keeps working when the
@@ -49,9 +56,31 @@ network dependencies, jobs defined in-app.
 
 ```bash
 bun run typecheck
-bun test src/
+bun test src/        # unit tests, including real passkey ceremonies
+bun run test:e2e     # builds, then drives the app in Chromium
 bun run build
 ```
+
+The unit tests exercise the passkey flows against a software authenticator
+([`src/testing/soft-authenticator.ts`](src/testing/soft-authenticator.ts)) that
+produces genuine attestations and signatures. The end-to-end tests
+([`e2e/`](e2e/)) use Chromium's virtual authenticator. Install the browser once
+with `bunx playwright install chromium`.
+
+## First run
+
+With no admin yet, the server prints a one-time setup link to its log every time
+it starts; open it to create the first admin and their passkey. If the log line
+is gone, print a fresh link on demand:
+
+```bash
+bun run admin-link                       # locally
+docker exec <container> bun run admin-link
+```
+
+Once an admin exists the same command prints an *admin invite* instead — the
+recovery path if every admin loses their passkeys. Setup links stop working the
+moment any admin exists.
 
 ## Configuration
 
@@ -100,11 +129,20 @@ sole ingress.
 ## Layout
 
 ```
-app/        React Router routes, UI, server-side loaders/actions
-src/        Runtime-only modules (SQLite, accounting backends, pure helpers)
-public/     Service worker and icons served at the site root
-plans/      The living plan for this project — read this first
+app/          React Router routes, UI, server-side loaders/actions
+src/          Server-side modules (SQLite, auth flows, accounting backends, helpers)
+src/testing/  Test helpers, including the software passkey authenticator
+src/cli/      Operator commands (`bun run admin-link`)
+e2e/          Playwright end-to-end tests
+public/       Service worker and icons served at the site root
+plans/        The living plan for this project — read this first
 ```
 
 `src/` is externalized from the SSR bundle and copied into the runtime image
 separately, which is why runtime-only code belongs there rather than in `app/`.
+
+**Keep server code out of the browser.** `src/db.server.ts` and
+`src/config.server.ts` carry the `.server` suffix, so the build fails if any page
+component reaches them — even indirectly. A constant the browser needs goes in a
+dependency-free module such as `src/limits.ts`. (Without that guard, a leaked
+import shows up only as a page that renders but never becomes interactive.)

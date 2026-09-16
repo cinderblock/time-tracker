@@ -1,10 +1,13 @@
 import {
   ColorSchemeScript,
   MantineProvider,
+  type MantineColorsTuple,
   createTheme,
   mantineHtmlProps,
 } from "@mantine/core";
+import { generateColors } from "@mantine/colors-generator";
 import { Notifications } from "@mantine/notifications";
+import { useEffect, useMemo } from "react";
 import {
   Links,
   Meta,
@@ -21,24 +24,28 @@ import type { Route } from "./+types/root";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 
-import { config } from "../src/config.ts";
-import { ensureServerInit } from "./server-init.ts";
+import { config } from "../src/config.server.ts";
+import { authMiddleware } from "./auth.server.ts";
+import { initMiddleware } from "./server-init.ts";
+
+// Order matters: the database must be open before the session is resolved.
+// Middleware (unlike the root loader) also runs for the JSON API routes.
+export const middleware: Route.MiddlewareFunction[] = [initMiddleware, authMiddleware];
 
 /**
- * Branding reaches the client through a root loader rather than being compiled
- * in, so one image serves any deployment. Nothing secret goes through here.
+ * Branding reaches the client through the root loader rather than being
+ * compiled in, so one image serves any deployment. Nothing secret goes here.
  *
- * The root loader also runs startup: it is the one loader guaranteed to run
- * before any other, so the database is open and migrated by the time a child
- * route's loader touches it.
+ * The ten-shade ramp is generated on the server so the colour library stays
+ * out of the browser bundle.
  */
 export function loader() {
-  ensureServerInit();
   return {
     branding: {
       name: config.branding.name,
       shortName: config.branding.shortName,
       themeColor: config.branding.themeColor,
+      palette: [...generateColors(config.branding.themeColor)],
     },
   };
 }
@@ -64,6 +71,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // data to read. This returns undefined instead of throwing.
   const data = useRouteLoaderData<typeof loader>("root");
   const themeColor = data?.branding.themeColor ?? FALLBACK_THEME_COLOR;
+  const shortName = data?.branding.shortName ?? FALLBACK_NAME;
 
   return (
     <html lang="en" {...mantineHtmlProps}>
@@ -71,18 +79,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         {/* viewport-fit=cover so the layout can reach under the notch; the
             safe-area insets are respected in CSS rather than by letterboxing. */}
-        <meta
-          name="viewport"
-          content="width=device-width, initial-scale=1, viewport-fit=cover"
-        />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content={themeColor} />
-        {/* iOS ignores the manifest's display mode; this is what makes a
-            home-screen launch open without Safari chrome. */}
+        {/* iOS ignores the manifest's display mode; these make a home-screen
+            launch open without Safari chrome, under the right name. */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content={shortName} />
         <link rel="manifest" href="/manifest.webmanifest" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-        <ColorSchemeScript />
+        <ColorSchemeScript defaultColorScheme="auto" />
         <Meta />
         <Links />
       </head>
@@ -96,24 +102,31 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
-  const { branding } = loaderData;
+  const { palette } = loaderData.branding;
 
-  const theme = createTheme({
-    primaryColor: "brand",
-    colors: {
-      // Mantine wants ten shades. Rather than ship a hand-tuned ramp that only
-      // suits one brand colour, every slot takes the configured colour and the
-      // component library's own alpha handling provides the variation. A
-      // deployment that wants a real ramp can replace this wholesale.
-      brand: Array.from({ length: 10 }, () => branding.themeColor) as unknown as [
-        string, string, string, string, string, string, string, string, string, string,
-      ],
-    },
-    // Phone-first: bigger default hit targets than Mantine's desktop defaults.
-    components: {
-      Button: { defaultProps: { size: "md" } },
-    },
-  });
+  const theme = useMemo(
+    () =>
+      createTheme({
+        primaryColor: "brand",
+        colors: { brand: palette as unknown as MantineColorsTuple },
+        // Pick black or white text per shade, so a light brand colour still
+        // produces readable buttons.
+        autoContrast: true,
+        // Phone-first: bigger default hit targets than Mantine's desktop defaults.
+        components: {
+          Button: { defaultProps: { size: "md" } },
+        },
+      }),
+    [palette],
+  );
+
+  useEffect(() => {
+    // Registered from the client only; the worker is what makes the app
+    // installable (and, from phase 3, usable offline).
+    navigator.serviceWorker?.register("/sw.js").catch((err: unknown) => {
+      console.warn("Service worker registration failed", err);
+    });
+  }, []);
 
   return (
     <MantineProvider theme={theme} defaultColorScheme="auto">
@@ -126,16 +139,19 @@ export default function App({ loaderData }: Route.ComponentProps) {
 export function ErrorBoundary() {
   const error = useRouteError();
 
-  const { heading, detail } = isRouteErrorResponse(error)
-    ? { heading: `${error.status}`, detail: error.statusText || "Something went wrong." }
-    : {
-        heading: "Something went wrong",
-        // Never surface a raw stack to a field employee; the server log has it.
-        detail: "The app hit an unexpected error. Your tracked time is safe.",
-      };
+  let heading = "Something went wrong";
+  // Never surface a raw stack to a field employee; the server log has it.
+  let detail = "The app hit an unexpected error. Your tracked time is safe.";
+  if (isRouteErrorResponse(error)) {
+    heading = error.status === 404 ? "Page not found" : error.status === 403 ? "Not allowed" : `Error ${error.status}`;
+    detail =
+      typeof error.data === "string" && error.data
+        ? error.data
+        : error.statusText || (error.status === 404 ? "There's nothing at this address." : detail);
+  }
 
   return (
-    <main style={{ padding: "2rem", fontFamily: "system-ui, sans-serif" }}>
+    <main style={{ padding: "2rem", fontFamily: "system-ui, sans-serif", maxWidth: "36rem", margin: "0 auto" }}>
       <h1>{heading}</h1>
       <p>{detail}</p>
       <p>

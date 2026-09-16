@@ -1,4 +1,4 @@
-import { config } from "../../src/config.ts";
+import { config } from "../../src/config.server.ts";
 
 /**
  * The PWA manifest, generated from the deployment's branding config.

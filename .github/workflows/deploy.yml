@@ -24,7 +24,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -39,6 +39,12 @@ jobs:
 
       - name: Test
         run: bun test src/
+
+      - name: Install Chromium for the end-to-end tests
+        run: bunx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: bun run test:e2e
 
       - uses: docker/setup-buildx-action@v4
 
@@ -73,7 +79,7 @@ jobs:
       group: deploy-host
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Deploy
         env:

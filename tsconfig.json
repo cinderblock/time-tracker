@@ -27,5 +27,12 @@
       "~/*": ["./app/*"]
     }
   },
-  "include": ["src/**/*.ts", "app/**/*.ts", "app/**/*.tsx", ".react-router/types/**/*"]
+  "include": [
+    "src/**/*.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "e2e/**/*.ts",
+    "playwright.config.ts",
+    ".react-router/types/**/*"
+  ]
 }

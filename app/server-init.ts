@@ -1,12 +1,16 @@
-import { initDb } from "../src/db.ts";
+import type { MiddlewareFunction } from "react-router";
+
+import { ensureBootstrapLink } from "../src/bootstrap.ts";
+import { initDb } from "../src/db.server.ts";
 
 /**
- * One-shot startup: open the database (and run migrations) before the first
- * request is served.
+ * One-shot startup: open (and migrate) the database, then print the first-run
+ * setup link if no admin exists yet.
  *
- * The flag lives on globalThis rather than in module scope because Vite's SSR
- * re-evaluates modules and HMR reloads them, so a plain module-level boolean
- * can exist several times over in one process.
+ * There is no "server started" hook in a React Router app, so this runs from
+ * the first middleware on the first request. The flag lives on globalThis
+ * because Vite's SSR re-evaluates modules in development, so a module-level
+ * boolean can exist several times over in one process.
  */
 const KEY = "__timeTrackerInitialized__";
 type GlobalWithFlag = typeof globalThis & { [KEY]?: boolean };
@@ -14,6 +18,12 @@ type GlobalWithFlag = typeof globalThis & { [KEY]?: boolean };
 export function ensureServerInit(): void {
   const g = globalThis as GlobalWithFlag;
   if (g[KEY]) return;
-  g[KEY] = true;
   initDb();
+  ensureBootstrapLink();
+  g[KEY] = true;
 }
+
+export const initMiddleware: MiddlewareFunction<Response> = (_args, next) => {
+  ensureServerInit();
+  return next();
+};
