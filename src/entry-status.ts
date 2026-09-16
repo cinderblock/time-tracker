@@ -14,8 +14,11 @@ export type EntryStatus = "open" | "draft" | "submitted" | "approved" | "synced"
 /** States in which an entry can be edited or deleted — by anyone, admins included. */
 export const EDITABLE_STATUSES: ReadonlySet<EntryStatus> = new Set(["open", "draft"]);
 
-/** States an admin can take back to draft. Synced time must be corrected in the accounting system first. */
-export const REOPENABLE_STATUSES: ReadonlySet<EntryStatus> = new Set(["submitted", "approved", "sync_failed"]);
+/**
+ * States an admin can take back to draft. Time already sent keeps its link to
+ * the accounting system's record, so approving it again amends that record.
+ */
+export const REOPENABLE_STATUSES: ReadonlySet<EntryStatus> = new Set(["submitted", "approved", "synced", "sync_failed"]);
 
 /** Signed off: approved, whether or not it has reached the accounting system yet. */
 export const APPROVED_STATUSES: ReadonlySet<EntryStatus> = new Set(["approved", "synced", "sync_failed"]);
@@ -28,7 +31,7 @@ export function isEditable(status: EntryStatus): boolean {
 export function lockedReason(status: EntryStatus): string {
   switch (status) {
     case "synced":
-      return "This time has been approved and sent to accounting, so it can't be changed here.";
+      return "This time has been approved and sent to accounting. Ask an admin to reopen it to make changes.";
     case "submitted":
       return "This time has been submitted and can't be changed until it's reopened.";
     default:

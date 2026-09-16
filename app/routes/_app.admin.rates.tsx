@@ -337,6 +337,9 @@ function currencySymbol(currency: string): string {
 function CategoriesCard({ data }: { data: Data }) {
   const create = useFetcher<typeof action>();
   useActionFeedback(create.data);
+  // Shared by the rows: deleting one removes it.
+  const rows = useFetcher<typeof action>();
+  useActionFeedback(rows.data);
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (create.state === "idle" && create.data?.ok) form.current?.reset();
@@ -367,15 +370,19 @@ function CategoriesCard({ data }: { data: Data }) {
         </create.Form>
       </Card>
       {data.categories.map((c) => (
-        <CategoryRow key={c.id} category={c} />
+        <CategoryRow key={c.id} category={c} fetcher={rows} />
       ))}
     </Stack>
   );
 }
 
-function CategoryRow({ category }: { category: Data["categories"][number] }) {
-  const fetcher = useFetcher<typeof action>();
-  useActionFeedback(fetcher.data);
+function CategoryRow({
+  category,
+  fetcher,
+}: {
+  category: Data["categories"][number];
+  fetcher: ReturnType<typeof useFetcher<typeof action>>;
+}) {
   const [renaming, setRenaming] = useState(false);
   const [confirming, setConfirming] = useState(false);
 

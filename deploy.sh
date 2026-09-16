@@ -32,7 +32,9 @@
 #   ACCOUNTING_BACKEND  none|qb-bridge|qb-webconnector (VAR,  default none)
 #   QB_BRIDGE_URL       bridge base URL, IPv4 literal (VAR,   optional)
 #   QB_BRIDGE_API_KEY   bridge API key               (SECRET, optional)
-#   QBWC_PASSWORD       Web Connector shared secret  (SECRET, optional)
+#   ACCOUNTING_SYNC_EVERY_SECONDS  send interval, 0 = manual (VAR, default 60)
+#   QBWC_USERNAME       Web Connector user name      (VAR,    default time-tracker)
+#   QBWC_PASSWORD       Web Connector password       (SECRET, optional)
 #   VAPID_PUBLIC_KEY    web-push app server key      (VAR,    optional)
 #   VAPID_PRIVATE_KEY   web-push signer              (SECRET, optional)
 #   VAPID_SUBJECT       web-push contact URL         (VAR,    optional)
@@ -103,12 +105,30 @@ APP_THEME_COLOR="$(var_or APP_THEME_COLOR '#1c7ed6')"
 APP_CURRENCY="$(var_or APP_CURRENCY 'USD')"
 ACCOUNTING_BACKEND="$(var_or ACCOUNTING_BACKEND 'none')"
 QB_BRIDGE_URL="$(var_or QB_BRIDGE_URL '')"
+QBWC_USERNAME="$(var_or QBWC_USERNAME 'time-tracker')"
+ACCOUNTING_SYNC_EVERY_SECONDS="$(var_or ACCOUNTING_SYNC_EVERY_SECONDS '60')"
 VAPID_PUBLIC_KEY="$(var_or VAPID_PUBLIC_KEY '')"
 VAPID_SUBJECT="$(var_or VAPID_SUBJECT '')"
 
 missing=""
 [ -n "${PUBLIC_BASE_URL}" ] || missing="${missing} PUBLIC_BASE_URL(var)"
 [ -n "${SESSION_SECRET}" ] || missing="${missing} SESSION_SECRET(secret)"
+# The app refuses to start an accounting backend without its credentials;
+# catch that here, where the message says which setting to add.
+case "${ACCOUNTING_BACKEND}" in
+	none) ;;
+	qb-bridge)
+		[ -n "${QB_BRIDGE_URL}" ] || missing="${missing} QB_BRIDGE_URL(var)"
+		[ -n "${QB_BRIDGE_API_KEY}" ] || missing="${missing} QB_BRIDGE_API_KEY(secret)"
+		;;
+	qb-webconnector)
+		[ -n "${QBWC_PASSWORD}" ] || missing="${missing} QBWC_PASSWORD(secret)"
+		;;
+	*)
+		echo "Error: ACCOUNTING_BACKEND must be none, qb-bridge or qb-webconnector (got ${ACCOUNTING_BACKEND})." >&2
+		exit 1
+		;;
+esac
 if [ -n "${missing}" ]; then
 	echo "Error: missing required config:${missing}" >&2
 	echo "Set them on ${IMAGE_PREFIX}, e.g.:" >&2
@@ -145,6 +165,7 @@ Resolved configuration:
   APP_CURRENCY       ${APP_CURRENCY}
   ACCOUNTING_BACKEND ${ACCOUNTING_BACKEND}
   QB_BRIDGE_URL      ${QB_BRIDGE_URL:-(unset)}
+  QBWC_USERNAME      ${QBWC_USERNAME}
   web push           $([ -n "${VAPID_PRIVATE_KEY}" ] && echo enabled || echo disabled)
 
 EOF
@@ -162,7 +183,9 @@ APP_THEME_COLOR=${APP_THEME_COLOR}
 APP_CURRENCY=${APP_CURRENCY}
 ACCOUNTING_BACKEND=${ACCOUNTING_BACKEND}
 QB_BRIDGE_URL=${QB_BRIDGE_URL}
+ACCOUNTING_SYNC_EVERY_SECONDS=${ACCOUNTING_SYNC_EVERY_SECONDS}
 QB_BRIDGE_API_KEY=${QB_BRIDGE_API_KEY}
+QBWC_USERNAME=${QBWC_USERNAME}
 QBWC_PASSWORD=${QBWC_PASSWORD}
 VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
 VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}

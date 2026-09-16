@@ -1,19 +1,22 @@
 /**
  * The seam between this app and whatever accounting system it feeds.
  *
- * The app core deals in *jobs*, *people*, *service items* and *pushing approved
- * time*. It must never learn what qbXML is. Everything QuickBooks-shaped lives
- * behind this interface so a second backend (Web Connector) — or none at all —
- * is a matter of picking a different implementation.
+ * The app core deals in *jobs*, *people*, *items* and *sending approved
+ * time*, expressed as the requests and results below. How a request reaches
+ * the accounting system — and what language it's spoken in there — belongs to
+ * the backend. (Both QuickBooks backends encode with `qbxml.ts`.)
  *
  * Direction of truth:
- *   - The backend owns the job / person / service-item lists. We cache them.
+ *   - The backend owns the job / person / item lists. We cache them.
  *   - We own everything about time. Start and stop times, pauses, locations,
  *     notes and approval state have no representation in QuickBooks, which
- *     stores only a date plus a duration. Never read time back out of it.
+ *     stores only a date plus a duration. Never read time back out of it,
+ *     except to find a record we sent.
  */
 
-/** A Customer or Customer:Job in the accounting system. */
+import type { AccountingBackendKind } from "../config.server.ts";
+
+/** A customer or customer:job in the accounting system. */
 export interface RemoteJob {
   /** Stable backend identifier (QuickBooks ListID). */
   remoteId: string;
@@ -27,8 +30,8 @@ export interface RemoteJob {
 
 /**
  * Someone time can be booked against. QuickBooks lets an Employee, a Vendor or
- * an Other Name own a TimeTracking record, and the choice changes how payroll
- * treats it — so the kind travels with the person.
+ * an Other Name own a time record, and only Employees take payroll items — so
+ * the kind travels with the person.
  */
 export interface RemotePerson {
   remoteId: string;
@@ -37,42 +40,86 @@ export interface RemotePerson {
   active: boolean;
 }
 
-export interface RemoteServiceItem {
+/** A service item (what the work was) or a wage payroll item (how it's paid). */
+export interface RemoteItem {
   remoteId: string;
+  kind: "service" | "payroll_wage";
   name: string;
   fullName: string;
   active: boolean;
 }
 
-export interface RemotePayrollItem {
-  remoteId: string;
-  name: string;
-}
-
-/** A time entry flattened into what the backend can actually store. */
-export interface PushableTimeEntry {
-  /** Our `time_entries.id`, echoed back for correlation. */
-  localId: string;
-  /** Wall-clock date, 'YYYY-MM-DD'. QuickBooks has no timezone here. */
-  workDate: string;
+/** One entry, flattened into what the accounting system stores. */
+export interface TimeRecord {
+  /** Wall-clock date, 'YYYY-MM-DD'. The accounting system has no timezone here. */
+  txnDate: string;
   personRemoteId: string;
   jobRemoteId: string | null;
   serviceItemRemoteId: string | null;
   payrollItemRemoteId: string | null;
-  durationSeconds: number;
-  note: string | null;
+  minutes: number;
+  /** Ends with the entry's reference (sync.ts `entryRef`), so the record can be found again. */
+  notes: string;
   billable: boolean;
 }
 
-/** Identifies an already-pushed record so it can be amended or removed. */
-export interface RemoteRef {
+export type SyncRequest =
+  /** Is the accounting system there and answering? */
+  | { type: "ping" }
+  /** Every job, person and item. */
+  | { type: "pull" }
+  | { type: "time.add"; record: TimeRecord }
+  | { type: "time.mod"; txnId: string; editSequence: string; record: TimeRecord }
+  /** Records for one person on one date, or one record by id. */
+  | { type: "time.find"; by: { txnDate: string; personRemoteId: string } | { txnId: string } }
+  | { type: "time.delete"; txnId: string }
+  | { type: "job.add"; name: string; parentRemoteId: string | null };
+
+export interface FoundTime {
   txnId: string;
-  editSequence: string | null;
+  editSequence: string;
+  notes: string;
+  minutes: number;
 }
 
-export type PushResult =
-  | { localId: string; ok: true; remote: RemoteRef }
-  | { localId: string; ok: false; error: string; retryable: boolean };
+export interface PulledLists {
+  jobs: RemoteJob[];
+  people: RemotePerson[];
+  items: RemoteItem[];
+  /** Lists that couldn't be read (payroll switched off, say). Their cached copies are kept. */
+  skipped: string[];
+}
+
+export type SyncResult =
+  | { ok: true; type: "pong"; product: string }
+  | { ok: true; type: "pull"; lists: PulledLists }
+  | { ok: true; type: "time.saved"; txnId: string; editSequence: string }
+  | { ok: true; type: "time.found"; records: FoundTime[] }
+  | { ok: true; type: "deleted" }
+  | { ok: true; type: "job.added"; job: RemoteJob }
+  | SyncFailure;
+
+export interface SyncFailure {
+  ok: false;
+  /** The accounting system's status code, or -1 when its answer couldn't be read. */
+  code: number;
+  message: string;
+  /** Worth trying again soon, unchanged (the record was busy, say). */
+  retryable: boolean;
+  /** The record we pointed at isn't there any more. */
+  missing: boolean;
+  /** Our copy of the record's version is stale: someone changed it there. */
+  stale: boolean;
+  /** The name is already taken. */
+  duplicate: boolean;
+}
+
+/** One request carried out: its outcome, and the raw exchange for the attempt log. */
+export interface Performed {
+  result: SyncResult;
+  request: string;
+  response: string;
+}
 
 export interface BackendHealth {
   ok: boolean;
@@ -81,7 +128,16 @@ export interface BackendHealth {
 }
 
 export interface AccountingBackend {
-  readonly kind: string;
+  readonly kind: AccountingBackendKind;
+
+  /**
+   * How work reaches the accounting system:
+   *   none  — it doesn't; approved time stays here.
+   *   push  — the app sends each request when it likes (`perform`).
+   *   poll  — the accounting side asks for work (the Web Connector), so
+   *           requests wait for it.
+   */
+  readonly delivery: "none" | "push" | "poll";
 
   /**
    * Cheap liveness probe. Expected to fail routinely — the QB Bridge only
@@ -90,14 +146,12 @@ export interface AccountingBackend {
    */
   health(): Promise<BackendHealth>;
 
-  listJobs(): Promise<RemoteJob[]>;
-  listPeople(): Promise<RemotePerson[]>;
-  listServiceItems(): Promise<RemoteServiceItem[]>;
-  listPayrollItems(): Promise<RemotePayrollItem[]>;
-
-  pushTime(entries: PushableTimeEntry[]): Promise<PushResult[]>;
-  updateTime(entry: PushableTimeEntry, remote: RemoteRef): Promise<PushResult>;
-  deleteTime(remote: RemoteRef): Promise<PushResult>;
+  /**
+   * Push delivery: carry out one request now. Throws `BackendUnreachableError`
+   * when the system can't be reached or isn't set up to answer — that says
+   * nothing about the request itself.
+   */
+  perform(request: SyncRequest): Promise<Performed>;
 }
 
 /** Thrown when a backend is selected but cannot be built from the config. */
@@ -105,5 +159,13 @@ export class BackendUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "BackendUnavailableError";
+  }
+}
+
+/** The accounting system couldn't be reached, or refused us before looking at the request. */
+export class BackendUnreachableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BackendUnreachableError";
   }
 }

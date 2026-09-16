@@ -84,7 +84,7 @@ export function createNote(args: {
   now: number;
 }): DayNote {
   if (getRow(args.noteId)) throw new OpError("conflict", "That note already exists.");
-  if (args.jobId) requireBookableJob(args.jobId);
+  const jobId = args.jobId ? requireBookableJob(args.jobId).id : null;
   db()
     .query(
       `INSERT INTO day_notes (id, user_id, at, work_date, text, job_id, device_id, created_at, updated_at)
@@ -96,7 +96,7 @@ export function createNote(args: {
       args.at,
       workDateOf(args.at),
       args.text.trim(),
-      args.jobId ?? null,
+      jobId,
       args.deviceId,
       args.now,
       args.now,
@@ -119,13 +119,13 @@ export function updateNote(args: {
 }): DayNote {
   const row = ownLiveNote(args.userId, args.noteId);
   assertNotRolled(row);
-  if (args.jobId) requireBookableJob(args.jobId);
+  const jobId = args.jobId ? requireBookableJob(args.jobId).id : args.jobId;
   const at = args.at ?? row.at;
   db()
     .query("UPDATE day_notes SET text = ?, job_id = ?, at = ?, work_date = ?, updated_at = ? WHERE id = ?")
     .run(
       args.text?.trim() ?? row.text,
-      args.jobId !== undefined ? args.jobId : row.job_id,
+      jobId !== undefined ? jobId : row.job_id,
       at,
       workDateOf(at),
       args.now,
@@ -152,6 +152,8 @@ export function restoreNote(args: { userId: number; noteId: string; now: number 
  */
 export function commitRollup(args: {
   userId: number;
+  /** Who committed it, when not the person themselves. */
+  actorUserId?: number;
   workDate: string;
   lines: { entryId: string; jobId: string; startedAt: number; endedAt: number; note?: string | null; noteIds: string[] }[];
   deviceId: string;
@@ -191,7 +193,7 @@ export function commitRollup(args: {
     created.push(line.entryId);
   }
   audit({
-    actorUserId: args.userId,
+    actorUserId: args.actorUserId ?? args.userId,
     entity: "rollup",
     entityId: args.workDate,
     action: "commit",

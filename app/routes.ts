@@ -21,16 +21,23 @@ export default [
       route("people/:userId", "routes/_app.admin.people.$userId.tsx"),
       route("people/:userId/time/:date?", "routes/_app.admin.people.$userId.time.tsx"),
       route("rates", "routes/_app.admin.rates.tsx"),
+      route("accounting", "routes/_app.admin.accounting.tsx"),
     ]),
   ]),
 
   // Report downloads (no page chrome).
   route("admin/reports.csv", "routes/admin.reports.csv.ts"),
+  route("admin/accounting.qwc", "routes/admin.accounting.qwc.ts"),
 
   // Every change to tracking data arrives here as an op.
   route("api/ops", "routes/api.ops.ts"),
   // ...or here, when an admin changes someone else's time.
   route("api/admin/people/:userId/ops", "routes/api.admin.people.$userId.ops.ts"),
+
+  // The QuickBooks Web Connector's SOAP endpoint and the support page its
+  // connection file points at. They answer 404 unless it's the configured backend.
+  route("qbwc", "routes/qbwc.ts"),
+  route("qbwc/support", "routes/qbwc.support.ts"),
 
   // JSON endpoints for the passkey ceremonies.
   ...prefix("api/passkey", [

@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { ensureBootstrapLink } from "./bootstrap.ts";
+import { formatRelative } from "./format.ts";
 import { findUsableRegistration } from "./registrations.ts";
 import { safeRedirectPath } from "./safe-redirect.ts";
 import { freshDb } from "./testing/db.ts";
 import { describeUserAgent } from "./user-agent.ts";
 import { createUser } from "./users.ts";
 import { CEREMONY_TTL_MS, putCeremony, takeCeremony } from "./webauthn.ts";
+
+describe("formatRelative", () => {
+  const now = Date.parse("2026-09-16T20:00:00Z");
+  test("says which way, even within a minute", () => {
+    expect(formatRelative(now - 10_000, now)).toBe("just now");
+    expect(formatRelative(now + 59_000, now)).toBe("in under a minute");
+    expect(formatRelative(now + 90_000, now)).toBe("in 2 minutes");
+    expect(formatRelative(now - 3 * 3600_000, now)).toBe("3 hours ago");
+    expect(formatRelative(now - 24 * 3600_000, now)).toBe("yesterday");
+  });
+});
 
 describe("ensureBootstrapLink", () => {
   beforeEach(freshDb);

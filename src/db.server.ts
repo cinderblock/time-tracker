@@ -83,10 +83,33 @@ const migrations: Migration[] = [
         -- A category's rate lives in the rates table (scope 'category'), with the
         -- same effective dates as every other rate.
         CREATE TABLE employee_categories (
-          id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-          name                  TEXT NOT NULL UNIQUE COLLATE NOCASE,
-          default_payroll_item  TEXT,
-          created_at            INTEGER NOT NULL
+          id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+          name                     TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          -- remote_items.id of a wage payroll item, for Employees in it.
+          default_payroll_item_id  TEXT,
+          created_at               INTEGER NOT NULL
+        );
+
+        ------------------------------------------------ accounting-system lists
+        -- Copies of the accounting system's own lists, refreshed by each pull.
+        -- Ids are the backend's (QuickBooks ListIDs). No foreign keys point
+        -- here: a pull may drop a record something still names, and that must
+        -- show up as "not linked", not fail the pull.
+        CREATE TABLE remote_people (
+          id         TEXT PRIMARY KEY,
+          kind       TEXT NOT NULL CHECK (kind IN ('employee','vendor','other')),
+          name       TEXT NOT NULL,
+          active     INTEGER NOT NULL DEFAULT 1,
+          synced_at  INTEGER NOT NULL
+        );
+
+        CREATE TABLE remote_items (
+          id         TEXT PRIMARY KEY,
+          kind       TEXT NOT NULL CHECK (kind IN ('service','payroll_wage')),
+          name       TEXT NOT NULL,
+          full_name  TEXT NOT NULL,
+          active     INTEGER NOT NULL DEFAULT 1,
+          synced_at  INTEGER NOT NULL
         );
 
         CREATE TABLE users (
@@ -99,6 +122,8 @@ const migrations: Migration[] = [
           -- backend. NULL until an admin links them; entries for an unlinked
           -- user cannot be pushed.
           remote_person_id  TEXT,
+          -- remote_items.id; overrides the category's and the organisation's.
+          default_payroll_item_id TEXT,
           -- WebAuthn user handle: 32 random bytes, base64url. Deliberately not
           -- the row id, which would leak account ordering to authenticators.
           webauthn_user_id  TEXT NOT NULL UNIQUE,
@@ -175,7 +200,21 @@ const migrations: Migration[] = [
           parent_id         TEXT REFERENCES jobs(id),
           remote_id         TEXT UNIQUE,
           remote_full_name  TEXT,
+          -- The accounting system's own active flag. A job inactive there
+          -- can't take time, whatever active says.
+          remote_active     INTEGER NOT NULL DEFAULT 1,
           provisional       INTEGER NOT NULL DEFAULT 0,
+          -- A provisional job linked to a real one is merged into it: its
+          -- entries move, and this row forwards there so a device still
+          -- holding the old id keeps working.
+          merged_into       TEXT REFERENCES jobs(id),
+          -- An admin asked for this provisional job to be created in the
+          -- accounting system; cleared once it has a remote_id.
+          create_requested_at INTEGER,
+          sync_error        TEXT,
+          sync_next_at      INTEGER,
+          -- remote_items.id; sub-jobs inherit it.
+          default_service_item_id TEXT,
           -- Stopping a timer on this job needs a note (on top of the global
           -- require_note_on_stop setting).
           requires_note     INTEGER NOT NULL DEFAULT 0,
@@ -186,14 +225,6 @@ const migrations: Migration[] = [
         );
         CREATE INDEX idx_jobs_active ON jobs(active);
         CREATE INDEX idx_jobs_parent ON jobs(parent_id);
-
-        CREATE TABLE service_items (
-          id         INTEGER PRIMARY KEY AUTOINCREMENT,
-          name       TEXT NOT NULL,
-          remote_id  TEXT UNIQUE,
-          active     INTEGER NOT NULL DEFAULT 1,
-          created_at INTEGER NOT NULL
-        );
 
         -- Rate resolution, most specific wins (src/rates.ts):
         --   user+job -> job -> user -> category -> global
@@ -224,7 +255,9 @@ const migrations: Migration[] = [
           id                    TEXT PRIMARY KEY,
           user_id               INTEGER NOT NULL REFERENCES users(id),
           job_id                TEXT REFERENCES jobs(id),
-          service_item_id       INTEGER REFERENCES service_items(id),
+          -- remote_items.id, overriding the job's default. Not set by the
+          -- UI yet.
+          service_item_id       TEXT,
           work_date             TEXT NOT NULL,          -- 'YYYY-MM-DD', local
           duration_seconds      INTEGER NOT NULL DEFAULT 0,
           note                  TEXT,
@@ -239,8 +272,22 @@ const migrations: Migration[] = [
           status                TEXT NOT NULL
                                   CHECK (status IN ('open','draft','submitted',
                                                     'approved','synced','sync_failed')),
+          -- The accounting system's record of this entry, once sent. Kept
+          -- through a reopen, so re-approval amends it rather than adding a
+          -- second record.
           remote_txn_id         TEXT,
           remote_edit_sequence  TEXT,
+          synced_at             INTEGER,
+          -- Deleted here after being sent, and removed there too.
+          remote_deleted_at     INTEGER,
+          -- Last failure, and when to try again.
+          sync_error            TEXT,
+          sync_failures         INTEGER NOT NULL DEFAULT 0,
+          sync_next_at          INTEGER,
+          -- A send whose outcome is unknown (the answer was lost): where to
+          -- look for the record before sending again, as JSON
+          -- ({txnDate, personRemoteId} or {txnId}). NULL when certain.
+          sync_uncertain        TEXT,
           device_id             TEXT,
           -- Device clock vs server clock at creation. A large gap means the
           -- phone's clock is wrong; we flag rather than silently "correct",
@@ -344,14 +391,18 @@ const migrations: Migration[] = [
         -- entry hasn't landed.
         CREATE TABLE sync_attempts (
           id        INTEGER PRIMARY KEY AUTOINCREMENT,
-          entry_id  TEXT REFERENCES time_entries(id) ON DELETE CASCADE,
           backend   TEXT NOT NULL,
+          -- 'pull', 'entry.add', 'entry.mod', 'entry.find', 'entry.delete', 'job.add'
+          work      TEXT NOT NULL,
+          entry_id  TEXT REFERENCES time_entries(id) ON DELETE CASCADE,
+          job_id    TEXT REFERENCES jobs(id) ON DELETE CASCADE,
           at        INTEGER NOT NULL,
           ok        INTEGER NOT NULL,
           request   TEXT,
           response  TEXT,
           error     TEXT
         );
+        CREATE INDEX idx_sync_attempts_at ON sync_attempts(at);
         CREATE INDEX idx_sync_attempts_entry ON sync_attempts(entry_id, at);
 
         CREATE TABLE settings (

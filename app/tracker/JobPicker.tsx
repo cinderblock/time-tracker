@@ -39,6 +39,8 @@ export function JobSelect({
         onChange={onChange}
         searchable
         clearable={!required}
+        // Tapping the job that's already chosen must not un-choose a required one.
+        allowDeselect={!required}
         required={required}
         error={error}
         nothingFoundMessage="No job by that name"

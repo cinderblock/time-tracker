@@ -1,68 +1,23 @@
-import type {
-  AccountingBackend,
-  BackendHealth,
-  PushResult,
-  PushableTimeEntry,
-  RemoteJob,
-  RemotePayrollItem,
-  RemotePerson,
-  RemoteServiceItem,
-} from "./types.ts";
+import { type AccountingBackend, type BackendHealth, BackendUnreachableError, type Performed } from "./types.ts";
 
 /**
  * Standalone mode: no accounting system at all.
  *
- * Jobs are defined in this app and nothing is ever pushed anywhere. This is the
- * default backend so a fresh clone runs with zero external dependencies — which
- * matters both for local development and because this repo is meant to be
- * useful to someone who has never heard of QuickBooks.
- *
- * The empty list results are not a stub: they are correct. With no backend
- * there are no remote jobs to import, and every job is a local one.
+ * Jobs are defined in this app and nothing is ever sent anywhere; approved is
+ * the end of the road for time. This is the default backend so a fresh clone
+ * runs with zero external dependencies — which matters both for local
+ * development and because this repo is meant to be useful to someone who has
+ * never heard of QuickBooks.
  */
 export class NoAccountingBackend implements AccountingBackend {
-  readonly kind = "none";
+  readonly kind = "none" as const;
+  readonly delivery = "none" as const;
 
   async health(): Promise<BackendHealth> {
-    return { ok: true, detail: "Standalone mode — no accounting backend configured." };
+    return { ok: true, detail: "Standalone — no accounting system is connected, so approved time stays here." };
   }
 
-  async listJobs(): Promise<RemoteJob[]> {
-    return [];
-  }
-
-  async listPeople(): Promise<RemotePerson[]> {
-    return [];
-  }
-
-  async listServiceItems(): Promise<RemoteServiceItem[]> {
-    return [];
-  }
-
-  async listPayrollItems(): Promise<RemotePayrollItem[]> {
-    return [];
-  }
-
-  async pushTime(entries: PushableTimeEntry[]): Promise<PushResult[]> {
-    return entries.map((e) => ({
-      localId: e.localId,
-      ok: false as const,
-      error: "No accounting backend is configured, so approved time stays here.",
-      // Not retryable: retrying cannot help until someone changes the config.
-      retryable: false,
-    }));
-  }
-
-  async updateTime(entry: PushableTimeEntry): Promise<PushResult> {
-    return (await this.pushTime([entry]))[0]!;
-  }
-
-  async deleteTime(): Promise<PushResult> {
-    return {
-      localId: "",
-      ok: false,
-      error: "No accounting backend is configured.",
-      retryable: false,
-    };
+  async perform(): Promise<Performed> {
+    throw new BackendUnreachableError("No accounting system is connected.");
   }
 }

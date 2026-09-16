@@ -250,15 +250,17 @@ describe("approval", () => {
     expect(auditFor("entry", id).map((e) => e.action)).toEqual(["approve", "reopen", "update"]);
   });
 
-  test("time already in accounting isn't reopened", () => {
+  test("time already sent to accounting is locked, and reopens keeping its link there", () => {
     const id = worked(alice, acme, NINE, 60);
-    db().query("UPDATE time_entries SET status = 'synced' WHERE id = ?").run(id);
+    db().query("UPDATE time_entries SET status = 'synced', remote_txn_id = 'T1' WHERE id = ?").run(id);
+    const locked = send(alice, "entry.update", { entryId: id, note: "x" });
+    expect(!locked.ok && locked.error).toContain("sent to accounting");
     const result = reopenEntries({ userId: alice, from: WED, to: WED, actorUserId: admin });
-    expect(result).toEqual({ changed: 0, unchanged: 0, skipped: 1 });
-    expect(describeApproval("Reopened", result)).toBe(
-      "Nothing to reopen. One entry already sent to accounting was left as is.",
-    );
-    expect(send(alice, "entry.update", { entryId: id, note: "x" })).toMatchObject({ ok: false, code: "conflict" });
+    expect(result).toEqual({ changed: 1, unchanged: 0, skipped: 0 });
+    expect(describeApproval("Reopened", result)).toBe("Reopened 1 entry.");
+    expect(
+      db().query<{ status: string; remote_txn_id: string }, [string]>("SELECT status, remote_txn_id FROM time_entries WHERE id = ?").get(id),
+    ).toEqual({ status: "draft", remote_txn_id: "T1" });
   });
 
   test("deleted entries and entries of other people aren't selected by id", () => {

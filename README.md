@@ -7,9 +7,11 @@ Built to replace a per-seat SaaS time tracker. It is deliberately **generic** �
 no organisation's name, hostname, colour or job list appears anywhere in this
 repository. All of that is deployment configuration.
 
-> **Status: phase 4 (admin) done.** Passkey sign-in, people management, time
-> tracking (online or off), approval, rates and reports work end to end. The
-> accounting sync is not built yet. See
+> **Status: phases 5–6 (QuickBooks) built; not yet deployed.** Passkey sign-in,
+> people management, time tracking (online or off), approval, rates, reports and
+> sending approved time to QuickBooks Desktop work end to end — through the Web
+> Connector today, and through the QB Bridge once the bridge has the one endpoint
+> described in [`docs/qb-bridge-qbxml.md`](docs/qb-bridge-qbxml.md). See
 > [`plans/time-tracker.md`](plans/time-tracker.md) for the full plan, the
 > decisions already taken, and the gotchas found along the way.
 
@@ -58,10 +60,14 @@ repository. All of that is deployment configuration.
   on a date, so a raise doesn't rewrite earlier work. Categories group people for
   filtering and rates. Weeks start on whichever day your payroll week does.
 
-## What it will do
-
-- **Jobs from your accounting system**, with jobs created here first staying
-  "provisional" until an admin links them to the real one.
+- **Sends approved time to QuickBooks Desktop.** Jobs, people and service and
+  payroll items come from QuickBooks; each approved entry becomes one QuickBooks
+  time record (date, person, job, duration, note, service item, payroll item,
+  billable). Jobs made up while tracking are linked to the real job later — their
+  time follows — or created in QuickBooks. QuickBooks being closed is normal:
+  time waits and goes when it can, a lost answer never makes a duplicate, and
+  reopened time amends the record it already made. The Accounting page says what
+  is waiting and why, and what was refused.
 
 ## Stack
 
@@ -141,7 +147,10 @@ annotated list. The ones worth calling out:
 | `PUBLIC_BASE_URL` | **Required.** The WebAuthn Relying Party origin. If it doesn't match how the browser actually reaches the app, passkey registration fails. No trailing slash. |
 | `SESSION_SECRET` | **Required.** Signs session cookies. There is no default on purpose — a generated-at-boot fallback would log everyone out on every deploy. |
 | `TZ` | The wall-clock zone that decides which day a piece of work belongs to. QuickBooks stores a bare date with no zone, so a wrong value books evening work onto the following day. |
-| `ACCOUNTING_BACKEND` | `none` (default), `qb-bridge`, or `qb-webconnector`. |
+| `ACCOUNTING_BACKEND` | `none` (default), `qb-bridge`, or `qb-webconnector`. A QuickBooks backend without its settings stops the app at start rather than quietly running standalone. |
+| `QB_BRIDGE_URL`, `QB_BRIDGE_API_KEY` | For `qb-bridge`. Use the bridge machine's IPv4 address: bridges that only accept private addresses refuse a hostname that resolves to public IPv6. |
+| `ACCOUNTING_SYNC_EVERY_SECONDS` | For `qb-bridge`: how often approved time is sent (default 60). `0` sends only when an admin presses Send now. |
+| `QBWC_USERNAME`, `QBWC_PASSWORD` | For `qb-webconnector`: what the Web Connector signs in with. The password is typed into the Web Connector once. |
 | `APP_NAME`, `APP_SHORT_NAME`, `APP_THEME_COLOR` | Branding. Drives the UI theme and the generated PWA manifest. |
 | `APP_CURRENCY` | ISO 4217 code rates and costs are shown in (default `USD`). Display only. |
 
@@ -154,8 +163,15 @@ jobs, people, service items and pushing approved time — never about qbXML.
 | Kind | Status | Notes |
 | --- | --- | --- |
 | `none` | ✅ working | Standalone. Jobs live here, nothing is pushed anywhere. |
-| `qb-bridge` | phase 5 | Talks to a REST bridge in front of QuickBooks Desktop. |
-| `qb-webconnector` | phase 6 | SOAP endpoint that QuickBooks Web Connector polls. |
+| `qb-bridge` | ✅ built; needs the bridge endpoint | Posts qbXML to a REST bridge running beside QuickBooks Desktop, every `ACCOUNTING_SYNC_EVERY_SECONDS`. The bridge needs one endpoint: [`docs/qb-bridge-qbxml.md`](docs/qb-bridge-qbxml.md). |
+| `qb-webconnector` | ✅ working | `/qbwc` is the SOAP endpoint the QuickBooks Web Connector polls; admins download the `.qwc` file from the Accounting page. Needs HTTPS (the Web Connector refuses anything else except `localhost`). |
+
+Both QuickBooks backends speak qbXML 13.0 through one encoder
+([`src/accounting/qbxml.ts`](src/accounting/qbxml.ts)); the sending logic
+([`src/sync.ts`](src/sync.ts)) derives its work from the database each time rather
+than keeping a queue, and is tested against a pretend QuickBooks that answers qbXML
+([`src/testing/fake-quickbooks.ts`](src/testing/fake-quickbooks.ts)). Every
+attempt, with the full request and answer, is kept for 90 days.
 
 **The backend owns the job, person and service-item lists; this app owns
 everything about time.** Start and stop times, pauses, locations, notes and
@@ -179,20 +195,23 @@ sole ingress.
 ## Layout
 
 ```
-app/          React Router routes, UI, server-side loaders/actions
-app/tracker/  The time-tracking screen (also used by admins for someone else's day)
-app/offline/  Outbox, sync engine, device copies, offline loaders
-src/          Server-side modules (SQLite, auth flows, accounting backends, helpers)
-src/testing/  Test helpers, including the software passkey authenticator
-src/cli/      Operator commands (`bun run admin-link`)
-e2e/          Playwright end-to-end tests
-public/       Service worker and icons served at the site root
-scripts/      Build steps
-plans/        The living plan for this project — read this first
+app/             React Router routes, UI, server-side loaders/actions
+app/tracker/     The time-tracking screen (also used by admins for someone else's day)
+app/offline/     Outbox, sync engine, device copies, offline loaders
+src/             Server-side modules (SQLite, auth flows, time, approval, reports, sync)
+src/accounting/  Accounting backends and the qbXML encoder
+src/testing/     Test helpers: the software passkey authenticator, a pretend QuickBooks and bridge
+src/cli/         Operator commands (`bun run admin-link`)
+e2e/             Playwright end-to-end tests (three app instances: standalone, bridge, Web Connector)
+docs/            Contracts with other systems
+public/          Service worker and icons served at the site root
+scripts/         Build steps
+plans/           The living plan for this project — read this first
 ```
 
-`src/` is externalized from the SSR bundle and copied into the runtime image
-separately, which is why runtime-only code belongs there rather than in `app/`.
+`src/` is bundled into the server build like `app/` (so a change there needs a
+rebuild before `bun run start` sees it), and is also copied into the image because
+the operator commands run from source.
 
 **Keep server code out of the browser.** `src/db.server.ts` and
 `src/config.server.ts` carry the `.server` suffix, so the build fails if any page

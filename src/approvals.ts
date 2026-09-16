@@ -11,8 +11,9 @@ import { UserInputError } from "./users.ts";
  * Approving copies the rate in effect onto each entry, so later rate changes
  * never rewrite approved time. Running timers can't be approved — they're
  * skipped and reported, and approving again after they stop picks them up.
- * Reopening puts approved time back to draft so it can be corrected; time
- * already recorded in the accounting system can't be reopened here.
+ * Reopening puts approved time back to draft so it can be corrected. Time
+ * already sent keeps its link to the accounting system's record: approving it
+ * again amends that record, and deleting it removes it there (sync.ts).
  */
 
 export interface Selection {
@@ -86,7 +87,8 @@ export function approveEntries(sel: Selection & { actorUserId: number; now?: num
       db()
         .query(
           `UPDATE time_entries
-              SET status = 'approved', approved_at = ?, approved_by = ?, rate_snapshot = ?, updated_at = ?
+              SET status = 'approved', approved_at = ?, approved_by = ?, rate_snapshot = ?, updated_at = ?,
+                  sync_error = NULL, sync_failures = 0, sync_next_at = NULL
             WHERE id = ?`,
         )
         .run(now, sel.actorUserId, hourlyRate, now, row.id);
@@ -122,7 +124,8 @@ export function reopenEntries(sel: Selection & { actorUserId: number; now?: numb
       db()
         .query(
           `UPDATE time_entries
-              SET status = 'draft', approved_at = NULL, approved_by = NULL, rate_snapshot = NULL, updated_at = ?
+              SET status = 'draft', approved_at = NULL, approved_by = NULL, rate_snapshot = NULL, updated_at = ?,
+                  sync_error = NULL, sync_failures = 0, sync_next_at = NULL
             WHERE id = ?`,
         )
         .run(now, row.id);

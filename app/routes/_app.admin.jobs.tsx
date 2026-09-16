@@ -1,9 +1,8 @@
-import { Badge, Button, Card, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
+import { Anchor, Badge, Button, Card, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
-import { useFetcher } from "react-router";
+import { Link, useFetcher } from "react-router";
 
-import { accountingBackend } from "../../src/accounting/index.ts";
-import { BackendUnavailableError } from "../../src/accounting/types.ts";
+import { accountingBackendOrError } from "../../src/accounting/index.ts";
 import { config } from "../../src/config.server.ts";
 import { createJob, listJobs, updateJob } from "../../src/jobs.ts";
 import { JOB_NAME_MAX_LENGTH } from "../../src/limits.ts";
@@ -20,19 +19,12 @@ import type { Route } from "./+types/_app.admin.jobs";
 export async function loader({ request, context }: Route.LoaderArgs) {
   requireAdmin(context, request);
 
-  let backend: { kind: string; ok: boolean; detail: string };
-  try {
-    const b = accountingBackend();
-    backend = { kind: b.kind, ...(await b.health()) };
-  } catch (err) {
-    // A selected-but-unimplemented backend throws on construction by design
-    // (src/accounting/index.ts). Report it rather than failing the page.
-    backend = {
-      kind: config.accounting.kind,
-      ok: false,
-      detail: err instanceof BackendUnavailableError ? err.message : String(err),
-    };
-  }
+  // A backend missing its settings throws on construction by design
+  // (src/accounting/index.ts); report that rather than failing the page.
+  const resolved = accountingBackendOrError();
+  const backend = resolved.backend
+    ? { kind: resolved.backend.kind, ...(await resolved.backend.health()) }
+    : { kind: config.accounting.kind, ok: false, detail: resolved.error };
 
   return {
     backend,
@@ -45,6 +37,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       active: j.active,
       requiresNote: j.requiresNote,
       provisional: j.provisional,
+      remote: j.remoteId != null,
+      remoteActive: j.remoteActive,
     })),
   };
 }
@@ -90,6 +84,9 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
   const { backend, jobs, requireNoteOnStop, timezone } = loaderData;
   const settings = useFetcher();
   useActionFeedback(settings.data);
+  // Shared by the rows: opening or closing a job moves its row between lists.
+  const rows = useFetcher<typeof action>();
+  useActionFeedback(rows.data);
   const open = jobs.filter((j) => j.active);
   const closed = jobs.filter((j) => !j.active);
 
@@ -103,6 +100,16 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
             <Text fw={500}>Accounting backend</Text>
             <Badge color={backend.ok ? "green" : "yellow"}>{backend.kind}</Badge>
           </Group>
+          {backend.kind !== "none" && (
+            <Text size="sm">
+              Jobs come from QuickBooks and keep their QuickBooks names. Jobs made here are linked or created there on
+              the{" "}
+              <Anchor component={Link} to="/admin/accounting#jobs">
+                Accounting page
+              </Anchor>
+              .
+            </Text>
+          )}
           <Text size="sm" c="dimmed">
             {backend.detail}
           </Text>
@@ -135,7 +142,7 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
         {open.length === 0 ? (
           <Text c="dimmed">No jobs yet. Add one above, or people can create them as they track time.</Text>
         ) : (
-          open.map((j) => <JobRow key={j.id} job={j} />)
+          open.map((j) => <JobRow key={j.id} job={j} fetcher={rows} />)
         )}
       </Stack>
 
@@ -146,7 +153,7 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
             Closed jobs keep their history but can't take new time.
           </Text>
           {closed.map((j) => (
-            <JobRow key={j.id} job={j} />
+            <JobRow key={j.id} job={j} fetcher={rows} />
           ))}
         </Stack>
       )}
@@ -179,9 +186,7 @@ function NewJobForm() {
 
 type JobItem = Route.ComponentProps["loaderData"]["jobs"][number];
 
-function JobRow({ job }: { job: JobItem }) {
-  const fetcher = useFetcher();
-  useActionFeedback(fetcher.data);
+function JobRow({ job, fetcher }: { job: JobItem; fetcher: ReturnType<typeof useFetcher<typeof action>> }) {
   const [renaming, setRenaming] = useState(false);
   const busy = fetcher.state !== "idle";
   const submit = (intent: string, value: string) =>
@@ -215,15 +220,22 @@ function JobRow({ job }: { job: JobItem }) {
           <Group justify="space-between" wrap="nowrap">
             <Group gap="xs">
               <Text fw={500}>{job.fullName}</Text>
-              {job.provisional && (
-                <Badge size="sm" color="yellow" variant="light">
-                  not yet linked
+              {job.provisional && !job.remote && (
+                <Badge size="sm" color="yellow" variant="light" component={Link} to="/admin/accounting#jobs" style={{ cursor: "pointer" }}>
+                  not in QuickBooks yet
+                </Badge>
+              )}
+              {job.remote && !job.remoteActive && (
+                <Badge size="sm" color="gray" variant="light">
+                  inactive in QuickBooks
                 </Badge>
               )}
             </Group>
-            <Button size="compact-xs" variant="subtle" onClick={() => setRenaming(true)}>
-              Rename
-            </Button>
+            {!job.remote && (
+              <Button size="compact-xs" variant="subtle" onClick={() => setRenaming(true)}>
+                Rename
+              </Button>
+            )}
           </Group>
         )}
         <Group gap="lg">

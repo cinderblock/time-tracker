@@ -29,6 +29,14 @@ function backendKind(): AccountingBackendKind {
   return raw as AccountingBackendKind;
 }
 
+function nonNegativeInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a whole number of seconds (got ${JSON.stringify(raw)})`);
+  return value;
+}
+
 function currencyCode(raw: string): string {
   const code = raw.trim().toUpperCase();
   try {
@@ -83,8 +91,14 @@ export const config = {
      */
     bridgeBaseUrl: process.env.QB_BRIDGE_URL ?? null,
     bridgeApiKey: process.env.QB_BRIDGE_API_KEY ?? null,
-    /** Shared secret the QuickBooks Web Connector authenticates with. */
-    webConnectorPassword: process.env.QBWC_PASSWORD ?? null,
+    /**
+     * How often approved time is sent through the bridge, in seconds. 0 turns
+     * the automatic loop off: time goes only when an admin presses Send now.
+     */
+    syncEverySeconds: nonNegativeInt("ACCOUNTING_SYNC_EVERY_SECONDS", 60),
+    /** Credentials the QuickBooks Web Connector authenticates with. */
+    webConnectorUsername: process.env.QBWC_USERNAME || "time-tracker",
+    webConnectorPassword: process.env.QBWC_PASSWORD || null,
   },
 
   push: {

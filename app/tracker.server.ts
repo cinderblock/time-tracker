@@ -1,6 +1,6 @@
 import { config } from "../src/config.server.ts";
 import { type Entry, getOpenEntry, listEntriesForDate, noteRequiredFor, totalsByDate } from "../src/entries.ts";
-import { listJobs, recentJobIds } from "../src/jobs.ts";
+import { isBookable, listJobs, recentJobIds } from "../src/jobs.ts";
 import { listNotesForDate } from "../src/notes.ts";
 import { requireNoteOnStop, weekStartsOn } from "../src/settings.ts";
 import { addDays, today, weekStartOf } from "../src/time.ts";
@@ -44,7 +44,13 @@ export function loadDay(userId: number, workDate: string): DayModel {
   const jobMap = new Map<string, JobView>(
     allJobs.map((j) => [
       j.id,
-      { id: j.id, fullName: j.fullName, requiresNote: j.requiresNote, active: j.active, provisional: j.provisional },
+      {
+        id: j.id,
+        fullName: j.fullName,
+        requiresNote: j.requiresNote,
+        active: isBookable(j),
+        provisional: j.provisional,
+      },
     ]),
   );
 

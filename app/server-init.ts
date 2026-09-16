@@ -2,10 +2,12 @@ import type { MiddlewareFunction } from "react-router";
 
 import { ensureBootstrapLink } from "../src/bootstrap.ts";
 import { initDb } from "../src/db.server.ts";
+import { startSyncWorker } from "../src/sync-worker.ts";
 
 /**
- * One-shot startup: open (and migrate) the database, then print the first-run
- * setup link if no admin exists yet.
+ * One-shot startup: open (and migrate) the database, print the first-run
+ * setup link if no admin exists yet, and start sending time to the
+ * accounting system if one is connected.
  *
  * There is no "server started" hook in a React Router app, so this runs from
  * the first middleware on the first request. The flag lives on globalThis
@@ -20,6 +22,7 @@ export function ensureServerInit(): void {
   if (g[KEY]) return;
   initDb();
   ensureBootstrapLink();
+  startSyncWorker();
   g[KEY] = true;
 }
 

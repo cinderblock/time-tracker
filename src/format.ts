@@ -43,11 +43,11 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["minute", 60_000],
 ];
 
-/** "3 days ago", "in 2 hours", "just now" */
+/** "3 days ago", "in 2 hours", "just now", "in under a minute" */
 export function formatRelative(ms: number, now: number = Date.now()): string {
   const diff = ms - now;
   const abs = Math.abs(diff);
-  if (abs < 60_000) return "just now";
+  if (abs < 60_000) return diff > 0 ? "in under a minute" : "just now";
   for (const [unit, size] of UNITS) {
     if (abs >= size) return relative.format(Math.round(diff / size), unit);
   }

@@ -32,8 +32,8 @@ ENV TZ=UTC
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./package.json
-# src/ holds runtime-only server modules (SQLite, accounting backends) that
-# Vite externalizes from the SSR bundle, so they must exist at runtime.
+# The server build already contains src/; the operator commands
+# (`bun run admin-link`) run from source, so it's copied too.
 COPY --from=builder /app/src ./src
 
 VOLUME ["/data"]

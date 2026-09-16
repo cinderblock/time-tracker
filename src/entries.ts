@@ -248,7 +248,7 @@ export function startTimer(args: {
   clientTime: number;
   now: number;
 }): Entry {
-  requireBookableJob(args.jobId);
+  const jobId = requireBookableJob(args.jobId).id;
   if (getEntry(args.entryId)) throw new OpError("conflict", "That entry already exists.");
 
   // Starting while another timer is open is a switch: the old one stops at
@@ -266,7 +266,7 @@ export function startTimer(args: {
     .run(
       args.entryId,
       args.userId,
-      args.jobId,
+      jobId,
       workDateOf(args.at),
       cleanNote(args.note) ?? null,
       args.deviceId,
@@ -351,7 +351,7 @@ export function createManualEntry(args: {
   clientTime: number;
   now: number;
 }): Entry {
-  requireBookableJob(args.jobId);
+  const jobId = requireBookableJob(args.jobId).id;
   if (getEntry(args.entryId)) throw new OpError("conflict", "That entry already exists.");
 
   const spanned = args.startedAt != null && args.endedAt != null;
@@ -369,7 +369,7 @@ export function createManualEntry(args: {
     .run(
       args.entryId,
       args.userId,
-      args.jobId,
+      jobId,
       workDate,
       seconds,
       cleanNote(args.note) ?? null,
@@ -420,7 +420,8 @@ export function updateEntry(args: {
   const before = snapshot(entry);
   const hasTimes = entry.segments.length > 0;
 
-  if (args.jobId !== undefined && args.jobId !== entry.jobId) requireBookableJob(args.jobId);
+  const jobId =
+    args.jobId === undefined || args.jobId === entry.jobId ? args.jobId : requireBookableJob(args.jobId).id;
 
   if ((args.workDate !== undefined || args.durationSeconds !== undefined) && hasTimes) {
     throw new OpError("invalid", "This entry has start and end times; change those instead.");
@@ -467,8 +468,8 @@ export function updateEntry(args: {
     }
   }
 
-  if (args.jobId !== undefined) {
-    db().query("UPDATE time_entries SET job_id = ? WHERE id = ?").run(args.jobId, entry.id);
+  if (jobId !== undefined) {
+    db().query("UPDATE time_entries SET job_id = ? WHERE id = ?").run(jobId, entry.id);
   }
   const note = cleanNote(args.note);
   if (note !== undefined) {
