@@ -20,7 +20,7 @@ deployer, not here.
 | Repo | `cinderblock/time-tracker` (public), primary branch `master` |
 | Runtime | Bun 1.4.2+ (`bun.lock`), React Router 8 SSR, SQLite (`bun:sqlite`) |
 | Accounting | The [QB Bridge](https://github.com/cinderblock/quickbooks-desktop-sdk-bridge) (commit `599e5d1` or later), or the QuickBooks Web Connector |
-| Deployment | Docker image on GHCR; `deploy.sh` run by a self-hosted runner on the host; a reverse proxy in front (the container binds to `127.0.0.1`) |
+| Deployment | CI publishes `ghcr.io/cinderblock/time-tracker:<sha>` and `:latest`; running it is the deployer's job (example `docker-compose.yml`; a reverse proxy in front, the container on `127.0.0.1`) |
 | Deployment notes | Kept privately by the deployer |
 
 ## Decisions already made (don't re-ask)
@@ -51,6 +51,12 @@ deployer, not here.
 9. **Hosting shape:** the app runs where it can reach the bridge over the LAN (plain
    HTTP to the bridge machine's IPv4 address) and is itself served over HTTPS (the
    Web Connector refuses anything else).
+10. **This repo publishes an image; it doesn't deploy** (2026-09-16). Deployment
+    belongs to the deployer's own infrastructure (for the first deployment, an
+    infrastructure-as-code repo with its own runner). So: no deploy job, no
+    `deploy.sh`, no self-hosted runner here. What `deploy.sh` used to check
+    before a deploy, the app now checks at startup, and the image has its own
+    health check.
 
 ## Stack
 
@@ -64,7 +70,7 @@ deployer, not here.
 - **`@simplewebauthn/server` + `/browser`** for passkeys.
 - **`idb`** (thin IndexedDB promise wrapper) for the client cache + outbox.
 - **`fast-xml-parser`** for qbXML and the Web Connector's SOAP.
-- **Docker** image to GHCR, deployed by a repo-scoped self-hosted runner.
+- **Docker** image to GHCR, published by CI (no deploy step here).
 
 ## Architecture
 
@@ -456,17 +462,13 @@ own phase; they are properties of the entry UI, not separate features.
   private source addresses and checks that *before* the API key; a hostname that
   resolves to a public IPv6 address sends traffic out and back over the internet and
   the refusal (`403 FORBIDDEN_IP`) looks like an auth failure.
-- **Deploy runners: keep the admin token off the box.** A self-hosted runner for this
-  repo is registered with a short-lived registration token minted by a hosted job
-  that alone holds the admin PAT; only that token reaches the server. Never treat a
-  transient GitHub API error as "the runner is gone".
 - **GitHub holds a workflow that hands `toJSON(secrets)` to a step** (2026-09-16).
   The first push to the public repo produced a Deploy run with no jobs, conclusion
   `action_required`, and on its page: "GitHub detected that this workflow file may
   be malicious. It will not run until someone with write access approves it." The
   deploy step got every secret as one JSON blob, on a self-hosted runner — the
-  shape of an exfiltration. It's also more than the step needs, so secrets are now
-  passed one by one; only non-secret variables still arrive as `ALL_VARS`. The
+  shape of an exfiltration. It was also more than the step needs, so secrets were
+  passed one by one (the deploy job has since been removed — decision 10). The
   REST endpoint for approving a run only works for fork pull requests (403).
 - **Bind the container to `127.0.0.1` only.** The reverse proxy
   must be the sole ingress or any `X-Forwarded-For` trust is unsound.
@@ -815,6 +817,12 @@ own phase; they are properties of the entry UI, not separate features.
       colour's own shade. Verified: 250 unit tests, 55 Playwright e2e.
 - [x] 2026-09-16 — **Published.** History cleaned of deployment-specific notes; this
       plan made generic.
+- [x] 2026-09-16 — **Publish only; MIT.** The deploy job, `deploy.sh` and the
+      runner design are gone; the workflow is `publish.yml`. The app checks
+      `PUBLIC_BASE_URL` (just the origin) and a QuickBooks backend's credentials at
+      startup and logs its resolved settings; the image has a `HEALTHCHECK`
+      (verified: exit 0 on a live server's 302, 1 when it's down).
+      `docker-compose.yml` is a generic example. Licensed MIT.
 - [ ] Phase 7 — first deployment (deployer's notes). ⬅️
 
 ## Open questions for the user
@@ -838,10 +846,9 @@ to import history — belong to that deployment's notes.
 - **Don't deploy by hand.** Everything ships through CI.
 - **Don't pass the whole `secrets` context to a step** (`toJSON(secrets)`). Name
   each secret; GitHub blocks the workflow otherwise (see gotchas).
-- **Don't register a self-hosted runner before fork pull requests need approval.**
-  The repo is public; a fork's pull request can bring a workflow that targets the
-  runner's labels (README, Deployment).
-- **Don't treat a transient GitHub API error as a missing runner** (see gotchas).
+- **Don't add a deploy step or a self-hosted runner to this repo.** It's public:
+  a fork's pull request can bring a workflow that targets a runner's labels.
+  Deployment lives with the deployer (decision 10).
 - **Don't import from `src/` into a page component unless the module is
   dependency-free.** Server modules in the browser break hydration without an
   error you'd see; the `.server.ts` suffix on `db`/`config` makes the build catch

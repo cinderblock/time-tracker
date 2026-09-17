@@ -1,7 +1,7 @@
 # Normalise text in the repository, and pin LF for anything that is executed by
-# a Linux box. deploy.sh runs on the deploy host and sw.js is served to browsers
-# from the container; a CRLF working copy on Windows is fine for both, but they
-# must never be committed with CRLF.
+# a Linux box: the image is built on Linux and sw.js is served to browsers from
+# it. A CRLF working copy on Windows is fine, but nothing may be committed with
+# CRLF.
 * text=auto eol=lf
 
 *.sh      text eol=lf

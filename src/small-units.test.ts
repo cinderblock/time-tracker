@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { ensureBootstrapLink } from "./bootstrap.ts";
+import { publicOrigin } from "./config.server.ts";
 import { formatRelative } from "./format.ts";
 import { findUsableRegistration } from "./registrations.ts";
 import { safeRedirectPath } from "./safe-redirect.ts";
@@ -17,6 +18,58 @@ describe("formatRelative", () => {
     expect(formatRelative(now + 90_000, now)).toBe("in 2 minutes");
     expect(formatRelative(now - 3 * 3600_000, now)).toBe("3 hours ago");
     expect(formatRelative(now - 24 * 3600_000, now)).toBe("yesterday");
+  });
+});
+
+describe("publicOrigin", () => {
+  test("takes an origin as browsers write it", () => {
+    for (const ok of ["https://time.example.com", "http://localhost:3000", "https://10.0.0.5:8443"]) {
+      expect(publicOrigin(ok)).toBe(ok);
+    }
+  });
+
+  test("refuses anything passkeys would trip over", () => {
+    for (const bad of [
+      "https://time.example.com/",
+      "https://time.example.com/app",
+      "https://Time.example.com",
+      "https://time.example.com:443",
+      "time.example.com",
+      "ftp://time.example.com",
+      "",
+    ]) {
+      expect(() => publicOrigin(bad)).toThrow("PUBLIC_BASE_URL must be just the origin");
+    }
+  });
+});
+
+describe("configuration at startup", () => {
+  /** Load the config module in a fresh process with these settings. */
+  const load = (env: Record<string, string>) => {
+    const base: Record<string, string | undefined> = { ...process.env, PUBLIC_BASE_URL: "http://localhost:3000", SESSION_SECRET: "x" };
+    for (const key of ["ACCOUNTING_BACKEND", "QB_BRIDGE_URL", "QB_BRIDGE_API_KEY", "QBWC_PASSWORD"]) delete base[key];
+    const run = Bun.spawnSync([process.execPath, "-e", "await import('./src/config.server.ts')"], {
+      cwd: `${import.meta.dir}/..`,
+      env: { ...base, ...env },
+    });
+    return { code: run.exitCode, stderr: run.stderr.toString() };
+  };
+
+  test("a QuickBooks backend without its credentials stops the app", () => {
+    const bridge = load({ ACCOUNTING_BACKEND: "qb-bridge", QB_BRIDGE_URL: "http://10.0.0.1:8743" });
+    expect(bridge.code).not.toBe(0);
+    expect(bridge.stderr).toContain("ACCOUNTING_BACKEND=qb-bridge needs QB_BRIDGE_URL and QB_BRIDGE_API_KEY.");
+    const qbwc = load({ ACCOUNTING_BACKEND: "qb-webconnector" });
+    expect(qbwc.stderr).toContain("ACCOUNTING_BACKEND=qb-webconnector needs QBWC_PASSWORD.");
+
+    expect(load({ ACCOUNTING_BACKEND: "qb-bridge", QB_BRIDGE_URL: "http://10.0.0.1:8743", QB_BRIDGE_API_KEY: "k" }).code).toBe(0);
+    expect(load({}).code).toBe(0);
+  });
+
+  test("so does a public address with a path", () => {
+    const run = load({ PUBLIC_BASE_URL: "https://time.example.com/" });
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toContain("PUBLIC_BASE_URL must be just the origin");
   });
 });
 

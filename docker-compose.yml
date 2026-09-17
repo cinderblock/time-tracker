@@ -1,30 +1,30 @@
-# Runtime composition for the deployed app.
+# An example of running the published image. This repo builds and publishes
+# ghcr.io/cinderblock/time-tracker; how and where it runs is up to whoever
+# deploys it.
 #
-# Every knob comes from the deploy `.env` that deploy.sh writes next to this
-# file (compose auto-loads it), so a deploy is fully determined by that file
-# rather than drifting with an implicit "latest". App secrets are NOT here —
-# deploy.sh materializes them into the `env_file` below from CI secrets.
+# Settings come from ./.env (start from .env.example). Set TIME_TRACKER_TAG to a
+# commit sha to run an exact build rather than whatever `latest` is today.
 services:
   app:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-cinderblock/time-tracker}:${APP_TAG:-latest}
-    container_name: ${CONTAINER_NAME:-time-tracker}
+    image: ghcr.io/cinderblock/time-tracker:${TIME_TRACKER_TAG:-latest}
+    container_name: time-tracker
     restart: unless-stopped
 
-    # Bind to host loopback ONLY: the reverse proxy must be the sole ingress.
-    # Anything that can reach the app directly would bypass TLS and make any
-    # X-Forwarded-For reasoning unsound.
+    # Host loopback ONLY: a reverse proxy with TLS must be the sole way in.
+    # Passkeys and the QuickBooks Web Connector both need HTTPS, and anything
+    # that reached the app directly would make X-Forwarded-For untrustworthy.
     ports:
       - "127.0.0.1:${APP_PORT:-9020}:3000"
 
-    # Runtime config + secrets, rewritten fresh on every deploy by deploy.sh.
     env_file:
-      - ${APP_ENV_FILE:-./app.env}
+      - .env
 
-    # Fixed inside the container regardless of the host env file, so the
-    # published port mapping and DB path cannot be accidentally moved.
+    # Fixed inside the container whatever .env says, so the port mapping and
+    # the database's place on the volume can't drift.
     environment:
       - PORT=3000
       - DATABASE_PATH=/data/time-tracker.db
 
+    # The SQLite database. Back this up.
     volumes:
-      - ${APP_DATA_DIR:-/srv/time-tracker-data}:/data
+      - ${APP_DATA_DIR:-./data}:/data

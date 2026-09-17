@@ -37,6 +37,26 @@ function nonNegativeInt(name: string, fallback: number): number {
   return value;
 }
 
+/**
+ * PUBLIC_BASE_URL must be exactly the origin browsers see — scheme and host,
+ * no path, no trailing slash, no default port, lower case — because passkeys
+ * are bound to it and a near miss fails as an opaque browser error.
+ */
+export function publicOrigin(raw: string): string {
+  let url: URL | null = null;
+  try {
+    url = new URL(raw);
+  } catch {
+    // reported below
+  }
+  if (!url || (url.protocol !== "https:" && url.protocol !== "http:") || url.origin !== raw) {
+    throw new Error(
+      `PUBLIC_BASE_URL must be just the origin, like https://time.example.com — no path or trailing slash (got ${JSON.stringify(raw)})`,
+    );
+  }
+  return raw;
+}
+
 function currencyCode(raw: string): string {
   const code = raw.trim().toUpperCase();
   try {
@@ -64,7 +84,7 @@ export const config = {
    * the WebAuthn Relying Party origin and the base for one-time invite URLs, so
    * a wrong value silently breaks passkey registration.
    */
-  publicBaseUrl: required("PUBLIC_BASE_URL"),
+  publicBaseUrl: publicOrigin(required("PUBLIC_BASE_URL")),
 
   /** Where the SQLite file lives. The container bind-mounts /data. */
   databasePath: process.env.DATABASE_PATH ?? "./data/time-tracker.db",
@@ -117,7 +137,28 @@ export const config = {
   sessionSecret: required("SESSION_SECRET"),
 } as const;
 
-/** True when the configured accounting backend needs network credentials. */
+/**
+ * The resolved settings that aren't secret, for the log at startup. TZ in
+ * particular can be inherited from wherever the container runs, and a wrong
+ * one books evening work onto the next day — better seen in the log than at
+ * payroll.
+ */
+export function describeConfig(): string {
+  const a = config.accounting;
+  const lines = [
+    "Configuration:",
+    `  PUBLIC_BASE_URL     ${config.publicBaseUrl}`,
+    `  TZ                  ${config.timezone}`,
+    `  APP_CURRENCY        ${config.currency}`,
+    `  ACCOUNTING_BACKEND  ${a.kind}`,
+  ];
+  if (a.kind === "qb-bridge") lines.push(`  QB_BRIDGE_URL       ${a.bridgeBaseUrl ?? "(unset)"}`);
+  if (a.kind === "qb-webconnector") lines.push(`  QBWC_USERNAME       ${a.webConnectorUsername}`);
+  lines.push(`  web push            ${config.push.vapidPublicKey && config.push.vapidPrivateKey ? "on" : "off"}`);
+  return lines.join("\n");
+}
+
+/** True when the configured accounting backend has the credentials it needs. */
 export function accountingConfigured(): boolean {
   switch (config.accounting.kind) {
     case "none":
@@ -127,4 +168,12 @@ export function accountingConfigured(): boolean {
     case "qb-webconnector":
       return Boolean(config.accounting.webConnectorPassword);
   }
+}
+
+// A deployment that asked for QuickBooks and quietly got nothing would look
+// fine right up until payroll, so it doesn't start — like a missing
+// PUBLIC_BASE_URL or SESSION_SECRET.
+if (!accountingConfigured()) {
+  const needs = config.accounting.kind === "qb-bridge" ? "QB_BRIDGE_URL and QB_BRIDGE_API_KEY" : "QBWC_PASSWORD";
+  throw new Error(`ACCOUNTING_BACKEND=${config.accounting.kind} needs ${needs}.`);
 }

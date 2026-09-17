@@ -39,4 +39,11 @@ COPY --from=builder /app/src ./src
 VOLUME ["/data"]
 EXPOSE 3000
 
+# Any answer below 500 means the server is up (signed out, / redirects). The
+# first request also starts the app — migrations, the first-run setup link in
+# the log, the accounting send loop — so this gets that done without waiting
+# for a visitor.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["bun", "-e", "const r = await fetch(`http://127.0.0.1:${process.env.PORT ?? 3000}/`, { redirect: 'manual' }); process.exit(r.status < 500 ? 0 : 1)"]
+
 CMD ["bun", "run", "start"]

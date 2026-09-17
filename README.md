@@ -148,10 +148,10 @@ annotated list. The ones worth calling out:
 
 | Variable | Why it matters |
 | --- | --- |
-| `PUBLIC_BASE_URL` | **Required.** The WebAuthn Relying Party origin. If it doesn't match how the browser actually reaches the app, passkey registration fails. No trailing slash. |
+| `PUBLIC_BASE_URL` | **Required.** The WebAuthn Relying Party origin. If it doesn't match how the browser actually reaches the app, passkey registration fails. Just the origin — no path or trailing slash; the app won't start otherwise. |
 | `SESSION_SECRET` | **Required.** Signs session cookies. There is no default on purpose — a generated-at-boot fallback would log everyone out on every deploy. |
 | `TZ` | The wall-clock zone that decides which day a piece of work belongs to. QuickBooks stores a bare date with no zone, so a wrong value books evening work onto the following day. |
-| `ACCOUNTING_BACKEND` | `none` (default), `qb-bridge`, or `qb-webconnector`. A QuickBooks backend without its settings stops the app at start rather than quietly running standalone. |
+| `ACCOUNTING_BACKEND` | `none` (default), `qb-bridge`, or `qb-webconnector`. A QuickBooks backend without its credentials stops the app at start rather than quietly sending nothing. |
 | `QB_BRIDGE_URL`, `QB_BRIDGE_API_KEY` | For `qb-bridge`. Use the bridge machine's IPv4 address: bridges that only accept private addresses refuse a hostname that resolves to public IPv6. |
 | `ACCOUNTING_SYNC_EVERY_SECONDS` | For `qb-bridge`: how often approved time is sent (default 60). `0` sends only when an admin presses Send now. |
 | `QBWC_USERNAME`, `QBWC_PASSWORD` | For `qb-webconnector`: what the Web Connector signs in with. The password is typed into the Web Connector once. |
@@ -186,25 +186,25 @@ plus a duration — so they live here and are never read back out.
 
 ## Deployment
 
-The image is built and published by CI on every push to `master`, then deployed
-to a host by a repo-scoped self-hosted runner (labels `self-hosted`,
-`time-tracker`) running [`deploy.sh`](deploy.sh). Never deploy by hand. The
-deploy job only runs once the repo variable `PUBLIC_BASE_URL` is set, so a fork
-or a copy without a deployment just builds.
+CI builds the image on every push to `master` — after typecheck, unit and
+end-to-end tests pass — and publishes it as
+`ghcr.io/cinderblock/time-tracker:<commit sha>` and `:latest`. Where and how it
+runs is up to whoever deploys it: this repo has no deploy step and no
+self-hosted runner.
 
-**A self-hosted runner on a public repository runs code from pull requests.** A
-fork's pull request can add a workflow that targets your runner's labels. Before
-registering one, set *Settings → Actions → General → Fork pull request
-workflows* to require approval for all external contributors, and read every
-such pull request's workflow changes before approving a run.
+[`docker-compose.yml`](docker-compose.yml) is an example: settings from `.env`,
+the SQLite database on a volume at `/data` (back it up), and the port bound to
+`127.0.0.1` so that a reverse proxy with TLS is the only way in — passkeys and
+the Web Connector both need HTTPS. Set `TIME_TRACKER_TAG` to a commit sha to run
+an exact build.
 
-`deploy.sh` materializes the container's env file fresh on every run from repo
-secrets and variables, so no secrets file is ever hand-placed on a host. Set
-them with `gh secret set` / `gh variable set`; the script lists exactly what it
-needs and fails loudly when something required is absent.
-
-The container binds to `127.0.0.1` only — a reverse proxy is expected to be the
-sole ingress.
+At startup the app logs its resolved settings (never the secrets) and, until an
+admin exists, a one-time setup link. It refuses to start when a required setting
+is missing or wrong: `PUBLIC_BASE_URL`, `SESSION_SECRET`, or the credentials of
+the chosen QuickBooks backend. The image's health check makes the first request,
+so all of that happens without waiting for a visitor.
+`docker exec time-tracker bun run admin-link` prints a fresh admin link at any
+time.
 
 ## Layout
 
