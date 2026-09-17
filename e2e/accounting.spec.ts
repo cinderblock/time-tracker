@@ -36,7 +36,13 @@ async function choose(select: Locator, option: string) {
 }
 
 async function sendNow(result: string | RegExp) {
+  // Wait for this send's own answer: a toast left by an earlier send can say
+  // the same thing, and would pass the check before this send is done.
+  const answer = page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname.startsWith("/admin/accounting"),
+  );
   await page.getByRole("button", { name: "Send now" }).click();
+  expect(await (await answer).text()).toMatch(result);
   await expect(toast(result)).toBeVisible();
 }
 

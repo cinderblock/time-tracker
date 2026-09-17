@@ -693,6 +693,11 @@ own phase; they are properties of the entry UI, not separate features.
   - *`provisional` is stored from the config at creation*, so tests with an
     injected backend but `ACCOUNTING_BACKEND=none` create non-provisional jobs.
     Readiness uses `remote_id`, which is what matters.
+  - *A toast is not proof that this click finished.* On GitHub's runner the
+    linking test's "Send now" check was satisfied by the previous test's
+    identical "Sent 1 request." toast, still on screen, and the bridge showed one
+    record instead of two (passed locally, where the old toast had faded).
+    `sendNow` now waits for its own POST answer and checks the message in it.
   - *fast-xml-parser leaves numeric character references alone* unless
     `htmlEntities: true`; QuickBooks uses them for non-ASCII.
   - *Harness traps:* the Bash tool rewrites `\t`, `\b` and similar escapes even
