@@ -68,16 +68,21 @@ export function closeDb(): void {
   g.__timeTrackerDb__ = undefined;
 }
 
+/**
+ * A migration is SQL text, not code: the runner records a hash of it, and a
+ * hash has to mean the same thing in the bundled server and in a CLI running
+ * from source. A string literal survives bundling byte for byte; a function's
+ * source does not (that mistake cost an afternoon — see plans).
+ */
 interface Migration {
   name: string;
-  up: (db: Database) => void;
+  sql: string;
 }
 
 const migrations: Migration[] = [
   {
     name: "001_initial",
-    up: (db) => {
-      db.exec(`
+    sql: `
         ---------------------------------------------------------------- people
         -- Groups of people ("Field", "Shop") for filtering and default rates.
         -- A category's rate lives in the rates table (scope 'category'), with the
@@ -409,10 +414,23 @@ const migrations: Migration[] = [
           key   TEXT PRIMARY KEY,
           value TEXT NOT NULL
         );
-      `);
-    },
+    `,
   },
 ];
+
+/**
+ * What a migration did, as a short hash of the code that did it.
+ *
+ * A migration runs once per database, ever. Editing one that has already run
+ * therefore changes nothing on that database: it silently keeps the old schema
+ * while the code expects the new one. Recording this lets the next start say so
+ * instead of failing later in some unrelated query. Editing a migration before
+ * it has run anywhere is fine and normal — that's how `001_initial` is built
+ * while there is no database.
+ */
+function fingerprint(migration: Migration): string {
+  return new Bun.CryptoHasher("sha256").update(migration.sql).digest("hex").slice(0, 16);
+}
 
 function runMigrations(db: Database, log: (line: string) => void): void {
   db.exec(`
@@ -421,19 +439,43 @@ function runMigrations(db: Database, log: (line: string) => void): void {
       applied_at  INTEGER NOT NULL
     );
   `);
+  // Added after the first databases existed, so it arrives by ALTER rather than
+  // by editing the CREATE TABLE above — which is the very thing it guards.
+  const columns = db.query<{ name: string }, []>("PRAGMA table_info(migrations)").all();
+  if (!columns.some((c) => c.name === "fingerprint")) {
+    db.exec("ALTER TABLE migrations ADD COLUMN fingerprint TEXT");
+  }
 
-  const applied = new Set(
-    db.query<{ name: string }, []>("SELECT name FROM migrations").all().map((r) => r.name),
+  const applied = new Map(
+    db
+      .query<{ name: string; fingerprint: string | null }, []>("SELECT name, fingerprint FROM migrations")
+      .all()
+      .map((r) => [r.name, r.fingerprint] as const),
   );
 
   for (const migration of migrations) {
-    if (applied.has(migration.name)) continue;
+    const mark = fingerprint(migration);
+    if (applied.has(migration.name)) {
+      const was = applied.get(migration.name);
+      if (was == null) {
+        // Applied before fingerprints existed: adopt what is there now.
+        db.query("UPDATE migrations SET fingerprint = ? WHERE name = ?").run(mark, migration.name);
+      } else if (was !== mark) {
+        throw new Error(
+          `Migration ${migration.name} has been edited since this database applied it ` +
+            `(${was} → ${mark}). It will not run again, so this database still has the old ` +
+            `schema. Put the change in a new migration instead, and restore ${migration.name}.`,
+        );
+      }
+      continue;
+    }
     log(`[db] applying migration ${migration.name}`);
     db.transaction(() => {
-      migration.up(db);
-      db.query("INSERT INTO migrations (name, applied_at) VALUES (?, ?)").run(
+      db.exec(migration.sql);
+      db.query("INSERT INTO migrations (name, applied_at, fingerprint) VALUES (?, ?, ?)").run(
         migration.name,
         Date.now(),
+        mark,
       );
     })();
   }
