@@ -1,0 +1,106 @@
+name: Deploy
+
+# Push to master → check, build the image, push it to GHCR, then deploy that
+# exact sha via the self-hosted runner on the target box. workflow_dispatch
+# re-runs a deploy by hand.
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      # Gate quality before anything is published. A broken build must never
+      # become a tag someone can deploy.
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
+
+      - name: Install Chromium for the end-to-end tests
+        run: bunx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: bun run test:e2e
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          # A pinnable sha tag for reproducible deploys, plus a moving latest.
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    # Only where a deployment is configured. deploy.sh can't run without
+    # PUBLIC_BASE_URL, and without this a fork or a fresh copy would queue a
+    # job for a runner that doesn't exist until GitHub gives up a day later.
+    if: vars.PUBLIC_BASE_URL != ''
+    # A self-hosted runner on the target box, registered to this repo with the
+    # label time-tracker by the deployer's own infrastructure (which keeps the
+    # admin token that registers it). On a personal account runners are per
+    # repo, so another repo's runner can't serve this one. This repo is
+    # public: fork pull requests must need approval before such a runner
+    # exists (README, Deployment).
+    runs-on:
+      - self-hosted
+      - time-tracker
+    concurrency:
+      group: deploy-host
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Deploy
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          APP_TAG: ${{ github.sha }}
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Secrets one by one: the step only ever sees the ones deploy.sh
+          # uses. deploy.sh writes them, and the variables it reads from
+          # ALL_VARS, into the compose env_file.
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          QB_BRIDGE_API_KEY: ${{ secrets.QB_BRIDGE_API_KEY }}
+          QBWC_PASSWORD: ${{ secrets.QBWC_PASSWORD }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: bash deploy.sh

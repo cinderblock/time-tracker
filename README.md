@@ -186,25 +186,38 @@ plus a duration — so they live here and are never read back out.
 
 ## Deployment
 
-CI builds the image on every push to `master` — after typecheck, unit and
-end-to-end tests pass — and publishes it as
-`ghcr.io/cinderblock/time-tracker:<commit sha>` and `:latest`. Where and how it
-runs is up to whoever deploys it: this repo has no deploy step and no
-self-hosted runner.
+On every push to `master`, CI typechecks, runs the unit and end-to-end tests,
+publishes the image as `ghcr.io/cinderblock/time-tracker:<commit sha>` and
+`:latest`, and then deploys that exact sha with [`deploy.sh`](deploy.sh) on a
+self-hosted runner registered to the repo with the label `time-tracker`. Never
+deploy by hand. The deploy job only runs once the repo variable
+`PUBLIC_BASE_URL` is set, so a fork or a copy without a deployment just builds.
 
-[`docker-compose.yml`](docker-compose.yml) is an example: settings from `.env`,
-the SQLite database on a volume at `/data` (back it up), and the port bound to
-`127.0.0.1` so that a reverse proxy with TLS is the only way in — passkeys and
-the Web Connector both need HTTPS. Set `TIME_TRACKER_TAG` to a commit sha to run
-an exact build.
+The runner itself is the deployer's to provision, from their own
+infrastructure, which keeps the admin token that registers it.
+
+**A self-hosted runner on a public repository runs code from pull requests.** A
+fork's pull request can add a workflow that targets your runner's labels. Before
+registering one, set *Settings → Actions → General → Fork pull request
+workflows* to require approval for all external contributors, and read every
+such pull request's workflow changes before approving a run.
+
+`deploy.sh` writes the container's env file fresh on every run from the repo's
+secrets (passed to it one by one) and variables, so no secrets file is ever
+hand-placed on a host. Set them with `gh secret set` / `gh variable set`; the
+script lists exactly what it needs and stops before touching the running app
+when something required is absent. It then waits for the new container to
+answer.
+
+The container binds to `127.0.0.1` only — a reverse proxy with TLS is expected
+to be the sole way in (passkeys and the Web Connector both need HTTPS). The
+database is the volume at `/data`; back it up.
 
 At startup the app logs its resolved settings (never the secrets) and, until an
 admin exists, a one-time setup link. It refuses to start when a required setting
 is missing or wrong: `PUBLIC_BASE_URL`, `SESSION_SECRET`, or the credentials of
-the chosen QuickBooks backend. The image's health check makes the first request,
-so all of that happens without waiting for a visitor.
-`docker exec time-tracker bun run admin-link` prints a fresh admin link at any
-time.
+the chosen QuickBooks backend. The image's health check makes the first request
+within seconds, so that happens without waiting for a visitor.
 
 ## Layout
 
