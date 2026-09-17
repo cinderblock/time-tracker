@@ -56,6 +56,23 @@ describe("uuidv7", () => {
     expect(uuidv7Time(a)).toBe(NINE);
     expect(a < b).toBe(true);
   });
+
+  test("ids made in the same millisecond sort in the order they were made", () => {
+    const ids = Array.from({ length: 500 }, () => uuidv7(NINE + 5));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect([...ids].sort()).toEqual(ids);
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(uuidv7Time(id)).toBe(NINE + 5);
+    }
+  });
+
+  test("an earlier time is kept as given", () => {
+    uuidv7(NINE + 10);
+    const earlier = uuidv7(NINE + 9);
+    expect(uuidv7Time(earlier)).toBe(NINE + 9);
+    expect(earlier < uuidv7(NINE + 10)).toBe(true);
+  });
 });
 
 describe("timers", () => {

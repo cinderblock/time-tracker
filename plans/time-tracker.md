@@ -698,6 +698,13 @@ own phase; they are properties of the entry UI, not separate features.
     identical "Sent 1 request." toast, still on screen, and the bridge showed one
     record instead of two (passed locally, where the old toast had faded).
     `sendNow` now waits for its own POST answer and checks the message in it.
+  - *UUID v7 ids made in the same millisecond sorted at random.* The rest of the
+    id was fresh randomness, so "v7 sorts by creation time" only held across
+    milliseconds: 4,980 of 10,000 same-millisecond pairs came out reversed.
+    Sending (`ORDER BY work_date, id`) and the untimed-entry order depend on it;
+    a Web Connector test that assumed the first-made entry goes first failed on
+    GitHub's faster runner. `uuidv7()` now counts up by a random step within a
+    millisecond (RFC 9562 §6.2); a time passed in is always kept as given.
   - *fast-xml-parser leaves numeric character references alone* unless
     `htmlEntities: true`; QuickBooks uses them for non-ASCII.
   - *Harness traps:* the Bash tool rewrites `\t`, `\b` and similar escapes even
