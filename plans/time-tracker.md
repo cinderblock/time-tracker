@@ -326,8 +326,10 @@ Passkey-only. Details below are the Phase 1 design.
 - **Everything security-relevant is audited** — person created, role/active changes,
   passkey added/removed/renamed, sessions revoked, links minted/revoked/consumed.
 - **Migration `001_initial` is edited in place for this**, not followed by a `002`:
-  nothing has been deployed, so there is no database to migrate. **From the first
-  deploy onward, `001` is frozen.**
+  nothing has been deployed, so there is no database to migrate. Once a database
+  has applied it, editing it is refused — the runner records a hash of each
+  migration's SQL and stops at startup if it no longer matches (2026-09-17). So
+  "freeze `001` before the first deploy" is not a step anyone has to remember.
 
 ### Admin (Phase 4, as built)
 
@@ -452,9 +454,10 @@ As built:
   linking UI, Accounting page; the bridge's time-tracking support is published.
 - **Phase 6 — Web Connector.** ✅ *done.*
 - **Phase 7 — First deployment.** ⬅️ *current.* Deployment-specific; tracked in the
-  deployer's notes. Freeze migration `001_initial` before a production database
-  exists. Unverified until then: a real QuickBooks company file, and passkeys in
-  an installed PWA on a real iPhone (17.4+ recommended; 16.4+ for push).
+  deployer's notes. Unverified until then: passkeys in an installed PWA on a real
+  iPhone (17.4+ recommended; 16.4+ for push). The QuickBooks side has now been
+  exercised against a real company file through the bridge (read, and a refused
+  write), though no time has been sent yet.
 
 Location capture and note-taking are folded into phases 2–3 rather than being their
 own phase; they are properties of the entry UI, not separate features.
@@ -721,6 +724,12 @@ own phase; they are properties of the entry UI, not separate features.
     tool turns `\uXXXX` into the literal character. Edit files with the Edit tool
     or scripts written with Write, use `String.fromCharCode` for odd characters,
     and scan for control characters before committing.
+- **A hash of a *function's* source is not stable across the build.** The
+  migration guard first fingerprinted `migration.up.toString()`; the server runs
+  the bundled build while `bun run admin-link` runs from source, so the two
+  disagreed and every e2e run's CLI died with "001_initial has been edited".
+  Migrations are SQL text now, and a string literal survives bundling byte for
+  byte. Anything compared across those two worlds must be data, not code.
 - **React inserts `<!-- -->` between adjacent JSX text expressions.** Grepping
   rendered HTML for `computed in America/Los_Angeles` finds nothing, because the
   markup is `computed in <!-- -->America/Los_Angeles`. Not a bug — but it will fool
@@ -885,5 +894,6 @@ to import history — belong to that deployment's notes.
   write time, add customers. It's what limits a leaked key.
 - **Don't give a row its own fetcher if the change can remove the row.** Use the
   parent's (see Phase 5–6 findings).
-- **Don't edit migration `001_initial` after the first deploy.** It was edited in
-  place during Phase 1 only because no database existed anywhere yet.
+- **Don't edit a migration a database has already applied** — put the change in a
+  new one. The runner refuses to start otherwise; don't "fix" that by rewriting
+  the stored hash.
