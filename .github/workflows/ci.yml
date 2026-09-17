@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches-ignore:
-      # master is covered by the deploy workflow, which runs the same checks
+      # master is covered by the build workflow, which runs the same checks
       # before it builds. Running both would just duplicate the work.
       - master
 

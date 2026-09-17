@@ -187,37 +187,34 @@ plus a duration — so they live here and are never read back out.
 ## Deployment
 
 On every push to `master`, CI typechecks, runs the unit and end-to-end tests,
-publishes the image as `ghcr.io/cinderblock/time-tracker:<commit sha>` and
-`:latest`, and then deploys that exact sha with [`deploy.sh`](deploy.sh) on a
-self-hosted runner registered to the repo with the label `time-tracker`. Never
-deploy by hand. The deploy job only runs once the repo variable
-`PUBLIC_BASE_URL` is set, so a fork or a copy without a deployment just builds.
+and publishes the image as `ghcr.io/cinderblock/time-tracker:<commit sha>` and
+`:latest`, labelled with the commit it was built from
+(`org.opencontainers.image.revision`). **That is all this repo does.** It has no
+deploy step, no self-hosted runner and no access to any host — a public
+repository's Actions logs are public, and anything that can land a commit on
+`master` runs in its CI.
 
-The runner itself is the deployer's to provision, from their own
-infrastructure, which keeps the admin token that registers it.
+Deploying is the deployer's, and wants three things:
 
-**A self-hosted runner on a public repository runs code from pull requests.** A
-fork's pull request can add a workflow that targets your runner's labels. Before
-registering one, set *Settings → Actions → General → Fork pull request
-workflows* to require approval for all external contributors, and read every
-such pull request's workflow changes before approving a run.
-
-`deploy.sh` writes the container's env file fresh on every run from the repo's
-secrets (passed to it one by one) and variables, so no secrets file is ever
-hand-placed on a host. Set them with `gh secret set` / `gh variable set`; the
-script lists exactly what it needs and stops before touching the running app
-when something required is absent. It then waits for the new container to
-answer.
-
-The container binds to `127.0.0.1` only — a reverse proxy with TLS is expected
-to be the sole way in (passkeys and the Web Connector both need HTTPS). The
-database is the volume at `/data`; back it up.
+- **Pin a digest, not a tag.** `ghcr.io/cinderblock/time-tracker@sha256:…` is a
+  specific build; a tag can be moved by anyone who can push packages. Verify the
+  image's `revision` label against the commit you meant to ship, and roll back
+  by pinning the previous digest.
+- **Put the reverse proxy in front.** Bind the container to `127.0.0.1` and
+  terminate TLS there: passkeys and the Web Connector both need HTTPS, and
+  anything that reaches the app directly makes `X-Forwarded-For` untrustworthy.
+- **Keep the settings and the database with the deployment**, not here. The
+  container reads its configuration from the environment
+  ([`.env.example`](.env.example) lists it) and keeps its SQLite database in the
+  volume at `/data`; back that up.
 
 At startup the app logs its resolved settings (never the secrets) and, until an
 admin exists, a one-time setup link. It refuses to start when a required setting
 is missing or wrong: `PUBLIC_BASE_URL`, `SESSION_SECRET`, or the credentials of
 the chosen QuickBooks backend. The image's health check makes the first request
 within seconds, so that happens without waiting for a visitor.
+`docker exec <container> bun run admin-link` prints a fresh admin link at any
+time.
 
 ## Layout
 

@@ -20,7 +20,7 @@ deployer, not here.
 | Repo | `cinderblock/time-tracker` (public), primary branch `master` |
 | Runtime | Bun 1.4.2+ (`bun.lock`), React Router 8 SSR, SQLite (`bun:sqlite`) |
 | Accounting | The [QB Bridge](https://github.com/cinderblock/quickbooks-desktop-sdk-bridge) (commit `599e5d1` or later), or the QuickBooks Web Connector |
-| Deployment | CI publishes `ghcr.io/cinderblock/time-tracker:<sha>` and `:latest`, then `deploy.sh` runs on a self-hosted runner labelled `time-tracker` that the deployer's own infrastructure registers to this repo; a reverse proxy in front (the container binds to `127.0.0.1`) |
+| Deployment | CI publishes `ghcr.io/cinderblock/time-tracker:<sha>` and `:latest`, labelled with the commit. Deploying is the deployer's: they pin a digest and run it behind a reverse proxy (the container binds to `127.0.0.1`) |
 | Deployment notes | Kept privately by the deployer |
 
 ## Decisions already made (don't re-ask)
@@ -51,17 +51,19 @@ deployer, not here.
 9. **Hosting shape:** the app runs where it can reach the bridge over the LAN (plain
    HTTP to the bridge machine's IPv4 address) and is itself served over HTTPS (the
    Web Connector refuses anything else).
-10. **Deploys run from this repo, on a runner the deployer provisions**
-    (2026-09-16). The deployer's own infrastructure holds the admin token and
-    registers a runner to this repo (label `time-tracker`); this repo's CI
-    deploys through it with `deploy.sh` and its own secrets. (A publish-only
-    design was tried and reverted the same day: the deployer's other apps all
-    work this way.) The app also checks its settings at startup, and the image
-    has its own health check, so a bad deploy fails however it's run.
-    **Under review (2026-09-17):** GitHub recommends self-hosted runners only for
-    private repositories, and a public repo's Actions logs are public. A
-    pull-based deploy (the host fetches what CI published, told by a signed
-    webhook) would need no runner here at all.
+10. **This repo builds a candidate; it never deploys** (settled 2026-09-17).
+    The workflow is `build.yml`: test, build, push a sha-tagged image labelled
+    `org.opencontainers.image.revision`, and print a ready-to-paste pin. What
+    actually runs somewhere is decided there, by pinning this image's **digest**
+    (a tag is mutable by anyone who can push packages) — so a deployment keeps
+    its own settings, secrets and logs, reviews each version, and rolls back by
+    re-pinning. No deploy job, no `deploy.sh`, no self-hosted runner, no host
+    credential here: this repo is public, its Actions logs are public, and
+    anything that can land a commit on `master` runs in its CI. (Two earlier
+    designs — a runner registered to this repo, and a publish-only repo with the
+    deployment improvised — were tried and dropped; this is the deployer's
+    established model.) The app also checks its settings at startup and the
+    image has a health check, so a bad build fails wherever it runs.
 
 ## Stack
 
@@ -75,7 +77,7 @@ deployer, not here.
 - **`@simplewebauthn/server` + `/browser`** for passkeys.
 - **`idb`** (thin IndexedDB promise wrapper) for the client cache + outbox.
 - **`fast-xml-parser`** for qbXML and the Web Connector's SOAP.
-- **Docker** image to GHCR, deployed by CI through a self-hosted runner.
+- **Docker** image to GHCR, published by CI; deployments pin its digest.
 
 ## Architecture
 
@@ -828,7 +830,9 @@ own phase; they are properties of the entry UI, not separate features.
       2 s start interval (verified locally: exit 0 on a live server's 302, 1 when
       it's down; and in the published image's config). Licensed MIT. A
       publish-only design (no deploy job) was tried and reverted (decision 10).
-- [ ] Settle how deploys work for a public repo (decision 10). ⬅️
+- [x] 2026-09-17 — **Build-only.** `deploy.yml` → `build.yml` (image labelled
+      with its commit, pin printed in the run summary); `deploy.sh` and the
+      deploy `docker-compose.yml` removed. Settles decision 10.
 - [ ] Phase 7 — first deployment (deployer's notes).
 
 ## Open questions for the user
@@ -852,9 +856,11 @@ to import history — belong to that deployment's notes.
 - **Don't deploy by hand.** Everything ships through CI.
 - **Don't pass the whole `secrets` context to a step** (`toJSON(secrets)`). Name
   each secret; GitHub blocks the workflow otherwise (see gotchas).
-- **Don't register a self-hosted runner before fork pull requests need approval.**
-  The repo is public; a fork's pull request can bring a workflow that targets the
-  runner's labels (README, Deployment).
+- **Don't give this repo a deploy step, a self-hosted runner or a host
+  credential.** It's public: its Actions logs are public, and a fork's pull
+  request can bring a workflow that targets a runner's labels. It publishes an
+  image; deployments pin a digest (decision 10).
+- **Don't pin by tag.** Only a digest names one build.
 - **Don't import from `src/` into a page component unless the module is
   dependency-free.** Server modules in the browser break hydration without an
   error you'd see; the `.server.ts` suffix on `db`/`config` makes the build catch

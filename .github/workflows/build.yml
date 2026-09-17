@@ -1,0 +1,104 @@
+name: Build image
+
+# Push to master → check, build the image, push it to GHCR. That is the whole
+# job: this repo publishes a *candidate*, it does not deploy.
+#
+# Which build actually runs is decided where the app is deployed, by pinning
+# this image's digest there. Shipping is therefore two steps:
+#
+#   1. push here → CI publishes ghcr.io/<owner>/time-tracker:<sha>
+#   2. point the deployment at that digest
+#
+# This repo has no self-hosted runner and no access to any host. A public
+# repository's Actions logs are public and anything that can land a commit on
+# master runs in CI, so a deploy step here would put a host's privileges — and
+# a deployment's details — on the wrong side of the fence.
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      # Gate quality before anything is published. A broken build must never
+      # become a tag someone can deploy.
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
+
+      - name: Install Chromium for the end-to-end tests
+        run: bunx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: bun run test:e2e
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          # A pinnable sha tag for reproducible deploys, plus a moving latest.
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
+          # A deployment can verify this label against the commit its pin
+          # claims, so a mistyped digest can't quietly ship a different build.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summarize how to deploy this build
+        run: |
+          {
+            echo "### Image published"
+            echo
+            echo '```json'
+            echo '{'
+            echo '  "image": "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}",'
+            echo '  "digest": "${{ steps.push.outputs.digest }}",'
+            echo '  "source": {'
+            echo '    "repo": "${{ github.repository }}",'
+            echo '    "commit": "${{ github.sha }}"'
+            echo '  }'
+            echo '}'
+            echo '```'
+            echo
+            echo "Nothing runs this build until a deployment pins that digest."
+          } >> "$GITHUB_STEP_SUMMARY"
+

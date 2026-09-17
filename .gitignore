@@ -3,12 +3,6 @@
 .env.local
 .env.*.local
 
-# local deploy override (real one is per-host; the .example is committed)
-deploy.env
-
-# app env file materialized by deploy.sh from GitHub secrets (holds secrets)
-app.env
-
 # deps / build
 node_modules/
 dist/
