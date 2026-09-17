@@ -69,9 +69,13 @@ jobs:
 
   deploy:
     needs: build-and-push
-    # A repo-scoped self-hosted runner on the target box, provisioned by the
-    # ops repo (see plans/time-tracker.md, phase 7). Runners are repo-scoped on
-    # a personal account, so the ops runner cannot serve this repo.
+    # Only where a deployment is configured. deploy.sh can't run without
+    # PUBLIC_BASE_URL, and without this a fork or a fresh copy would queue a
+    # job for a runner that doesn't exist until GitHub gives up a day later.
+    if: vars.PUBLIC_BASE_URL != ''
+    # A repo-scoped self-hosted runner on the target box, labelled
+    # time-tracker. On a personal account runners are per repo, so another
+    # repo's runner can't serve this one.
     runs-on:
       - self-hosted
       - time-tracker

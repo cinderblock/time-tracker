@@ -3,9 +3,9 @@ import { XMLParser } from "fast-xml-parser";
 import type { FoundTime, RemoteItem, RemoteJob, RemotePerson, SyncFailure, SyncRequest, SyncResult, TimeRecord } from "./types.ts";
 
 /**
- * qbXML: the request/response language of QuickBooks Desktop, spoken by both
- * the Web Connector and (through its /qbxml endpoint) the QB Bridge. Only
- * the QuickBooks backends use this module.
+ * qbXML: the request/response language of QuickBooks Desktop. The Web
+ * Connector backend speaks it directly; the QB Bridge backend lets the bridge
+ * write it, and uses only the helpers here (durations, status codes).
  *
  * Written against qbXML 13.0, which every QuickBooks Desktop since 2014
  * understands. Element order matters to QuickBooks — it rejects a request
@@ -307,19 +307,3 @@ export function parseResponse(req: SyncRequest, xml: string): SyncResult {
     }
   }
 }
-
-/** The request types a pull or push can send — what a bridge must allow, and nothing more. */
-export const QBXML_REQUEST_TYPES = [
-  "HostQueryRq",
-  "CustomerQueryRq",
-  "EmployeeQueryRq",
-  "VendorQueryRq",
-  "OtherNameQueryRq",
-  "ItemServiceQueryRq",
-  "PayrollItemWageQueryRq",
-  "TimeTrackingAddRq",
-  "TimeTrackingModRq",
-  "TimeTrackingQueryRq",
-  "TxnDelRq (TxnDelType TimeTracking only)",
-  "CustomerAddRq",
-] as const;

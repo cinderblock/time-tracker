@@ -1,11 +1,12 @@
 import {
   ColorSchemeScript,
   MantineProvider,
+  type MantineColorShade,
   type MantineColorsTuple,
   createTheme,
   mantineHtmlProps,
 } from "@mantine/core";
-import { generateColors } from "@mantine/colors-generator";
+import { generateColorsMap } from "@mantine/colors-generator";
 import { Notifications } from "@mantine/notifications";
 import { useEffect, useMemo } from "react";
 import {
@@ -27,6 +28,7 @@ import "@mantine/core/styles.css";
 import "@mantine/dates/styles.css";
 import "@mantine/notifications/styles.css";
 
+import { branding } from "../src/branding.ts";
 import { config } from "../src/config.server.ts";
 import { authMiddleware } from "./auth.server.ts";
 import { initMiddleware } from "./server-init.ts";
@@ -37,18 +39,24 @@ export const middleware: Route.MiddlewareFunction[] = [initMiddleware, authMiddl
 
 /**
  * Branding reaches the client through the root loader rather than being
- * compiled in, so one image serves any deployment. Nothing secret goes here.
+ * compiled in, so one image serves any organisation, and admins can change it
+ * (Settings). Nothing secret goes here.
  *
  * The ten-shade ramp is generated on the server so the colour library stays
  * out of the browser bundle.
  */
 export function loader() {
+  const brand = branding();
+  const ramp = generateColorsMap(brand.themeColor);
   return {
     branding: {
-      name: config.branding.name,
-      shortName: config.branding.shortName,
-      themeColor: config.branding.themeColor,
-      palette: [...generateColors(config.branding.themeColor)],
+      name: brand.name,
+      shortName: brand.shortName,
+      themeColor: brand.themeColor,
+      palette: ramp.colors.map((c) => c.hex()),
+      // The shade the chosen colour itself landed on: filled buttons use it,
+      // so a dark or light brand colour shows as picked rather than shade 6.
+      primaryShade: ramp.baseColorIndex,
     },
     timezone: config.timezone,
   } satisfies RootCopy;
@@ -117,7 +125,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
-  const { palette } = loaderData.branding;
+  const { palette, primaryShade } = loaderData.branding;
 
   useEffect(() => rootCopy.write(loaderData), [loaderData]);
 
@@ -126,6 +134,8 @@ export default function App({ loaderData }: Route.ComponentProps) {
       createTheme({
         primaryColor: "brand",
         colors: { brand: palette as unknown as MantineColorsTuple },
+        // Older device copies (before primaryShade was stored) fall back to Mantine's default.
+        primaryShade: (primaryShade ?? 6) as MantineColorShade,
         // Pick black or white text per shade, so a light brand colour still
         // produces readable buttons.
         autoContrast: true,
@@ -134,7 +144,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
           Button: { defaultProps: { size: "md" } },
         },
       }),
-    [palette],
+    [palette, primaryShade],
   );
 
   useEffect(() => {

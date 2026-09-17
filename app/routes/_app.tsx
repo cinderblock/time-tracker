@@ -66,6 +66,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           { to: "/admin/jobs", label: "Jobs" },
           { to: "/admin/rates", label: "Rates & categories" },
           { to: "/admin/accounting", label: "Accounting" },
+          { to: "/admin/settings", label: "Settings" },
         ]
       : [];
   const isActive = (to: string) =>

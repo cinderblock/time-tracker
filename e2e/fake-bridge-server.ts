@@ -6,7 +6,7 @@ import { LostAnswer, sampleCompany } from "../src/testing/fake-quickbooks.ts";
  * playwright.config.ts). `/__test/*` lets a test look inside and misbehave:
  *
  *   GET  /__test/state   the pretend company file's time records and customers
- *   POST /__test/down    { down: boolean } — answer 503 as if QuickBooks were closed
+ *   POST /__test/down    { down: boolean } — answer as the bridge does when it can't open QuickBooks
  *   POST /__test/fail    { code, message } — refuse the next request
  */
 
@@ -33,7 +33,10 @@ Bun.serve({
       return Response.json({ ok: true });
     }
     if (down) {
-      return Response.json({ ok: false, error: { code: "QB_UNAVAILABLE", message: "QuickBooks is not open" } }, { status: 503 });
+      return Response.json(
+        { ok: false, error: { code: "QBConnectionError", message: "Could not open the company file", qb_status_code: null } },
+        { status: 502 },
+      );
     }
     try {
       return await bridgeResponse(qb, { apiKey }, request);

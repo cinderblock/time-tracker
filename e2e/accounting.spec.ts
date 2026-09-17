@@ -89,7 +89,7 @@ test("set up: the first admin, and QuickBooks' lists", async ({ browser }) => {
 
   await page.getByRole("link", { name: "Accounting" }).click();
   await expect(page.getByText("QuickBooks, through the QB Bridge")).toBeVisible();
-  await expect(page.getByText("Connected to QuickBooks Pretend Edition.")).toBeVisible();
+  await expect(page.getByText("Connected to QuickBooks (Pretend Company).")).toBeVisible();
   await expect(page.getByText("Approved time is sent when you press Send now.")).toBeVisible();
   await expect(page.getByText("The lists haven't been fetched yet.")).toBeVisible();
   await expect(page.getByText("Fetch the lists from QuickBooks first.")).toBeVisible();
@@ -184,7 +184,7 @@ test("while QuickBooks is closed nothing is lost, and it goes once it's back", a
   await bridgeControl("down", { down: true });
   await page.goto("/admin/accounting");
   await expect(page.getByText("not connected now")).toBeVisible();
-  await sendNow(/The QB Bridge refused the request \(QB_UNAVAILABLE\)/);
+  await sendNow(/The QB Bridge couldn't do it \(QBConnectionError: Could not open the company file\)/);
   await expect(stat("Refused")).toContainText("0"); // not the time's fault
   expect((await bridge()).records).toHaveLength(2);
 

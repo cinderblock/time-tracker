@@ -39,7 +39,7 @@ function takeKeptCopyMarker(): boolean {
 
 /** Root loader data as the root route returns it. */
 export interface RootCopy {
-  branding: { name: string; shortName: string; themeColor: string; palette: string[] };
+  branding: { name: string; shortName: string; themeColor: string; palette: string[]; primaryShade?: number };
   timezone: string;
 }
 

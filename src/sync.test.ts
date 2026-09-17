@@ -52,7 +52,7 @@ beforeEach(() => {
   backend = new QbBridgeBackend({
     baseUrl: "http://bridge.test",
     apiKey: "secret",
-    fetch: fakeBridgeFetch(qb, { apiKey: "secret", down: () => down, noEndpoint: () => noEndpoint }),
+    fetch: fakeBridgeFetch(qb, { apiKey: "secret", down: () => down, noTimeTracking: () => noEndpoint }),
   });
   admin = createUser({ name: "Ada", role: "admin", actorUserId: null }).id;
   alice = createUser({ name: "Alice", role: "employee", actorUserId: admin }).id;
@@ -485,21 +485,21 @@ describe("corrections and failures", () => {
     expect(getEntry(id)!.status).toBe("synced");
   });
 
-  test("a bridge without the endpoint, or with the wrong key, is unreachable — not a failure of the time", async () => {
+  test("an older bridge, or the wrong key, is unreachable — not a failure of the time", async () => {
     await connected();
     const id = work(alice, jobByRemote("C-ACME").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     noEndpoint = true;
-    expect((await sync()).detail).toContain("no /api/v1/qbxml endpoint");
+    expect((await sync()).detail).toContain("The QB Bridge has no /api/v1/time-tracking — it needs updating");
     noEndpoint = false;
     const wrongKey = new QbBridgeBackend({
       baseUrl: "http://bridge.test",
       apiKey: "wrong",
       fetch: fakeBridgeFetch(qb, { apiKey: "secret" }),
     });
-    expect((await runSync(wrongKey, () => now)).detail).toContain("UNAUTHORIZED");
+    expect((await runSync(wrongKey, () => now)).detail).toContain("INVALID_API_KEY");
     expect(await wrongKey.health()).toMatchObject({ ok: false });
-    expect(await backend.health()).toEqual({ ok: true, detail: "Connected to QuickBooks Pretend Edition." });
+    expect(await backend.health()).toEqual({ ok: true, detail: "Connected to QuickBooks (Pretend Company)." });
     expect(getEntry(id)!.status).toBe("approved");
     await sync();
     expect(getEntry(id)!.status).toBe("synced");

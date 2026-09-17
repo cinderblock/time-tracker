@@ -23,9 +23,8 @@ import { CATEGORY_NAME_MAX_LENGTH, MAX_HOURLY_RATE } from "../../src/limits.ts";
 import { formatRate } from "../../src/money.ts";
 import { RATE_SCOPES, type RateScope } from "../../src/rate-scopes.ts";
 import { type Rate, listRates, parseHourlyRate, removeRate, setRate } from "../../src/rates.ts";
-import { setWeekStartsOn, weekStartsOn } from "../../src/settings.ts";
 import { formatWorkDate, today } from "../../src/time.ts";
-import { UserInputError, listUsers } from "../../src/users.ts";
+import { listUsers } from "../../src/users.ts";
 import { handleForm, intField, stringField } from "../actions.server.ts";
 import { requireAdmin } from "../auth.server.ts";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
@@ -33,8 +32,8 @@ import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/_app.admin.rates";
 
 /**
- * Organisation pay settings: hourly rates, employee categories, and the day
- * weeks start on.
+ * Hourly rates and employee categories. (The day weeks start on is under
+ * Settings.)
  */
 
 const SCOPE_LABELS: Record<RateScope, string> = {
@@ -44,8 +43,6 @@ const SCOPE_LABELS: Record<RateScope, string> = {
   job: "A job",
   user_job: "A person on a job",
 };
-
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 type RateState = "current" | "upcoming" | "past";
 
@@ -89,7 +86,6 @@ export function loader({ request, context }: Route.LoaderArgs) {
   return {
     today: todayDate,
     currency: config.currency,
-    weekStartsOn: weekStartsOn(),
     categories,
     rates: rates
       .map((r) => ({
@@ -123,12 +119,6 @@ export async function action({ request, context }: Route.ActionArgs) {
   const actorUserId = user.id;
   const optionalId = (form: FormData, name: string) => (stringField(form, name) ? intField(form, name) : null);
   return handleForm(request, {
-    "week-start": (form) => {
-      const day = Number(stringField(form, "day"));
-      if (!Number.isInteger(day) || day < 0 || day > 6) throw new UserInputError("Pick a day.");
-      setWeekStartsOn(day, actorUserId);
-      return { ok: true, message: `Weeks now start on ${WEEKDAYS[day]}.` };
-    },
     "rate-set": (form) => {
       const rate = setRate({
         scope: stringField(form, "scope") as RateScope,
@@ -171,7 +161,6 @@ export default function Rates({ loaderData }: Route.ComponentProps) {
       <Title order={2}>Rates &amp; categories</Title>
       <RatesCard data={loaderData} />
       <CategoriesCard data={loaderData} />
-      <WeekStartCard weekStartsOn={loaderData.weekStartsOn} />
     </Stack>
   );
 }
@@ -452,27 +441,5 @@ function CategoryRow({
         </Stack>
       </Modal>
     </Card>
-  );
-}
-
-function WeekStartCard({ weekStartsOn }: { weekStartsOn: number }) {
-  const fetcher = useFetcher<typeof action>();
-  useActionFeedback(fetcher.data);
-  return (
-    <Stack gap="sm">
-      <Title order={3}>Weeks</Title>
-      <Card withBorder>
-        <Select
-          label="Weeks start on"
-          description="Timesheets, the calendar and everyone's week strip use this. Match your payroll week."
-          data={WEEKDAYS.map((label, value) => ({ value: String(value), label }))}
-          value={String(weekStartsOn)}
-          allowDeselect={false}
-          disabled={fetcher.state !== "idle"}
-          onChange={(v) => v != null && fetcher.submit({ intent: "week-start", day: v }, { method: "post" })}
-          maw={260}
-        />
-      </Card>
-    </Stack>
   );
 }

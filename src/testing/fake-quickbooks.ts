@@ -184,6 +184,8 @@ export class FakeQuickBooks {
     switch (name) {
       case "HostQueryRq":
         return ok("<HostRet><ProductName>QuickBooks Pretend Edition</ProductName></HostRet>");
+      case "CompanyQueryRq":
+        return ok("<CompanyRet><CompanyName>Pretend Company</CompanyName><LegalCompanyName>Pretend Company</LegalCompanyName></CompanyRet>");
       case "CustomerQueryRq":
         return this.customers.length ? ok(this.customers.map(customerRet).join("")) : status(1, "No match");
       case "EmployeeQueryRq":

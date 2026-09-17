@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { XMLParser } from "fast-xml-parser";
 
+import { branding } from "../branding.ts";
 import { config } from "../config.server.ts";
 import { randomToken } from "../crypto.ts";
 import { syncState } from "../settings.ts";
@@ -150,7 +151,7 @@ export function handleWebConnectorCall(xml: string, now: number = Date.now()): S
 
   switch (method) {
     case "serverVersion":
-      return { body: reply(method, xmlText(`${config.branding.name} (time tracker)`)) };
+      return { body: reply(method, xmlText(`${branding().name} (time tracker)`)) };
 
     case "clientVersion":
       // Any Web Connector version is fine.
@@ -243,7 +244,7 @@ export function handleWebConnectorCall(xml: string, now: number = Date.now()): S
 export function qwcFile(ids: { ownerId: string; fileId: string }): string {
   const base = config.publicBaseUrl.replace(/\/+$/, "");
   const fields: [string, string][] = [
-    ["AppName", config.branding.name],
+    ["AppName", branding().name],
     ["AppID", ""],
     ["AppURL", `${base}/qbwc`],
     ["AppDescription", "Sends approved time to QuickBooks, and keeps its job, people and item lists."],

@@ -1,6 +1,6 @@
 import { accountingBackendOrError } from "../../src/accounting/index.ts";
 import { xmlText } from "../../src/accounting/qbxml.ts";
-import { config } from "../../src/config.server.ts";
+import { branding } from "../../src/branding.ts";
 
 /**
  * /qbwc/support — the support page the .qwc file points at. The Web
@@ -11,7 +11,7 @@ export function loader() {
   if (accountingBackendOrError().backend?.kind !== "qb-webconnector") {
     return new Response("Not Found", { status: 404 });
   }
-  const name = xmlText(config.branding.name);
+  const name = xmlText(branding().name);
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${name} · QuickBooks Web Connector</title>

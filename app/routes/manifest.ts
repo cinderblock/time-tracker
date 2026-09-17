@@ -1,17 +1,18 @@
-import { config } from "../../src/config.server.ts";
+import { branding } from "../../src/branding.ts";
 
 /**
- * The PWA manifest, generated from the deployment's branding config.
+ * The PWA manifest, generated from the organisation's branding (Settings).
  *
  * Icons are intentionally referenced by fixed paths under /icons/. A
  * deployment that wants its own logo bind-mounts them there; the repo ships
  * generic placeholders so an unbranded install is still installable.
  */
 export function loader() {
+  const brand = branding();
   const manifest = {
-    name: config.branding.name,
-    short_name: config.branding.shortName,
-    description: `${config.branding.name} — track time, on or offline.`,
+    name: brand.name,
+    short_name: brand.shortName,
+    description: `${brand.name} — track time, on or offline.`,
     start_url: "/",
     scope: "/",
     display: "standalone",
@@ -19,7 +20,7 @@ export function loader() {
     // better in landscape on a tablet.
     orientation: "any",
     background_color: "#ffffff",
-    theme_color: config.branding.themeColor,
+    theme_color: brand.themeColor,
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },

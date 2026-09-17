@@ -22,6 +22,7 @@ export default [
       route("people/:userId/time/:date?", "routes/_app.admin.people.$userId.time.tsx"),
       route("rates", "routes/_app.admin.rates.tsx"),
       route("accounting", "routes/_app.admin.accounting.tsx"),
+      route("settings", "routes/_app.admin.settings.tsx"),
     ]),
   ]),
 

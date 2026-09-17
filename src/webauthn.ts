@@ -10,6 +10,7 @@ import {
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
 
+import { branding } from "./branding.ts";
 import { config } from "./config.server.ts";
 import { randomToken } from "./crypto.ts";
 import type { Role } from "./users.ts";
@@ -39,7 +40,7 @@ export interface RpParams {
  */
 export function rpParams(): RpParams {
   const url = new URL(config.publicBaseUrl);
-  return { rpID: url.hostname, origin: url.origin, rpName: config.branding.name };
+  return { rpID: url.hostname, origin: url.origin, rpName: branding().name };
 }
 
 // ---- ceremony store ------------------------------------------------------------

@@ -279,7 +279,7 @@ test("reopening a week unlocks it again", async () => {
 
 test("weeks can start on another day", async () => {
   const { page } = admin;
-  await page.goto("/admin/rates");
+  await page.goto("/admin/settings");
   await choose(page, "Weeks start on", "Monday");
   await expect(toast(page, "Weeks now start on Monday.")).toBeVisible();
   await page.goto("/admin/timesheets");
@@ -288,16 +288,43 @@ test("weeks can start on another day", async () => {
   ).toHaveAttribute("aria-label", /^Eddie Employee, Mon, /);
 
   // Put it back for the specs that follow.
-  await page.goto("/admin/rates");
+  await page.goto("/admin/settings");
   await choose(page, "Weeks start on", "Sunday");
   await expect(toast(page, "Weeks now start on Sunday.")).toBeVisible();
+});
+
+test("the app's name and colour are set by an admin", async () => {
+  const { page } = admin;
+  await page.getByRole("link", { name: "Settings" }).click();
+  const name = page.getByRole("textbox", { name: "Name", exact: true });
+  await expect(name).toHaveValue("E2E Time");
+  await name.fill("Crew Hours");
+  await page.getByRole("textbox", { name: "Short name" }).fill("Hours");
+  await page.getByRole("textbox", { name: "Colour" }).fill("#0ca678");
+  await page.keyboard.press("Tab"); // leaving the field closes the colour picker
+  await expect(page.locator(".mantine-Badge-root", { hasText: "Crew Hours" })).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator(".mantine-Notification-root", { hasText: "Saved." })).toBeVisible();
+
+  // Everywhere the name appears, it's the new one.
+  await page.reload();
+  await expect(page.getByRole("banner").getByRole("link", { name: "Crew Hours" })).toBeVisible();
+  await expect(page).toHaveTitle("Settings · Crew Hours");
+  const manifest = await (await page.request.get("/manifest.webmanifest")).json();
+  expect(manifest).toMatchObject({ name: "Crew Hours", short_name: "Hours", theme_color: "#0ca678" });
+  await shot(page, "settings");
+
+  // Back to the deployment's defaults, for the specs that follow.
+  await page.getByRole("button", { name: /^Use the defaults/ }).click();
+  await expect(page.getByRole("banner").getByRole("link", { name: "E2E Time" })).toBeVisible();
+  expect((await (await page.request.get("/manifest.webmanifest")).json()).name).toBe("E2E Time");
 });
 
 test("on a phone, the admin pages fit", async ({ browser }) => {
   test.skip(!process.env.E2E_SCREENSHOTS, "screenshots only");
   const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, storageState: await admin.context.storageState() });
   const page = await phone.newPage();
-  for (const path of ["timesheets", "calendar", "reports", "rates"]) {
+  for (const path of ["timesheets", "calendar", "reports", "rates", "settings"]) {
     await page.goto(`/admin/${path}`);
     await shot(page, `phone-${path}`);
   }

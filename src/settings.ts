@@ -19,6 +19,10 @@ function write(key: string, value: string, actorUserId: number | null): void {
   audit({ actorUserId, entity: "setting", entityId: key, action: "set", before, after: value });
 }
 
+/** For modules that own a setting of their own (branding.ts). Empty means unset. */
+export const readSetting = (key: string): string => read(key) ?? "";
+export const writeSetting = write;
+
 /** Whether stopping any timer requires a note. Default off. */
 export function requireNoteOnStop(): boolean {
   return read("require_note_on_stop") === "1";

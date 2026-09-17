@@ -25,7 +25,7 @@
 #   PUBLIC_BASE_URL     public origin                (VAR,    REQUIRED)
 #   SESSION_SECRET      signs session cookies        (SECRET, REQUIRED)
 #   TZ                  wall-clock zone for workdays (VAR,    default UTC)
-#   APP_NAME            branding                     (VAR,    default "Time Tracker")
+#   APP_NAME            branding until set in the app (VAR,   default "Time Tracker")
 #   APP_SHORT_NAME      branding                     (VAR,    default "Time")
 #   APP_THEME_COLOR     branding                     (VAR,    default #1c7ed6)
 #   APP_CURRENCY        ISO 4217 display currency    (VAR,    default USD)

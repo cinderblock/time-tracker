@@ -5,13 +5,14 @@ offline, and pushes approved time into your accounting system.
 
 Built to replace a per-seat SaaS time tracker. It is deliberately **generic** —
 no organisation's name, hostname, colour or job list appears anywhere in this
-repository. All of that is deployment configuration.
+repository. All of that is deployment configuration or an admin setting.
 
-> **Status: phases 5–6 (QuickBooks) built; not yet deployed.** Passkey sign-in,
-> people management, time tracking (online or off), approval, rates, reports and
-> sending approved time to QuickBooks Desktop work end to end — through the Web
-> Connector today, and through the QB Bridge once the bridge has the one endpoint
-> described in [`docs/qb-bridge-qbxml.md`](docs/qb-bridge-qbxml.md). See
+> **Status: feature-complete, not yet in production.** Passkey sign-in, people
+> management, time tracking (online or off), approval, rates, reports and sending
+> approved time to QuickBooks Desktop (through the
+> [QB Bridge](https://github.com/cinderblock/quickbooks-desktop-sdk-bridge) or the
+> QuickBooks Web Connector) work end to end against a pretend QuickBooks; the
+> first real deployment is under way. See
 > [`plans/time-tracker.md`](plans/time-tracker.md) for the full plan, the
 > decisions already taken, and the gotchas found along the way.
 
@@ -59,6 +60,9 @@ repository. All of that is deployment configuration.
   (and its sub-jobs) or a person on a job — the most specific wins — each starting
   on a date, so a raise doesn't rewrite earlier work. Categories group people for
   filtering and rates. Weeks start on whichever day your payroll week does.
+- **Settings.** Admins name the app and pick its colour (the header, the browser tab,
+  passkey prompts and the home-screen icon all follow), and choose the first day of
+  the week.
 
 - **Sends approved time to QuickBooks Desktop.** Jobs, people and service and
   payroll items come from QuickBooks; each approved entry becomes one QuickBooks
@@ -151,7 +155,7 @@ annotated list. The ones worth calling out:
 | `QB_BRIDGE_URL`, `QB_BRIDGE_API_KEY` | For `qb-bridge`. Use the bridge machine's IPv4 address: bridges that only accept private addresses refuse a hostname that resolves to public IPv6. |
 | `ACCOUNTING_SYNC_EVERY_SECONDS` | For `qb-bridge`: how often approved time is sent (default 60). `0` sends only when an admin presses Send now. |
 | `QBWC_USERNAME`, `QBWC_PASSWORD` | For `qb-webconnector`: what the Web Connector signs in with. The password is typed into the Web Connector once. |
-| `APP_NAME`, `APP_SHORT_NAME`, `APP_THEME_COLOR` | Branding. Drives the UI theme and the generated PWA manifest. |
+| `APP_NAME`, `APP_SHORT_NAME`, `APP_THEME_COLOR` | The name and colour until an admin sets them under Settings (they drive the UI theme and the generated PWA manifest). |
 | `APP_CURRENCY` | ISO 4217 code rates and costs are shown in (default `USD`). Display only. |
 
 ## Accounting backends
@@ -163,13 +167,15 @@ jobs, people, service items and pushing approved time — never about qbXML.
 | Kind | Status | Notes |
 | --- | --- | --- |
 | `none` | ✅ working | Standalone. Jobs live here, nothing is pushed anywhere. |
-| `qb-bridge` | ✅ built; needs the bridge endpoint | Posts qbXML to a REST bridge running beside QuickBooks Desktop, every `ACCOUNTING_SYNC_EVERY_SECONDS`. The bridge needs one endpoint: [`docs/qb-bridge-qbxml.md`](docs/qb-bridge-qbxml.md). |
+| `qb-bridge` | ✅ built | Uses the [QB Bridge](https://github.com/cinderblock/quickbooks-desktop-sdk-bridge)'s REST routes (a version with time tracking), every `ACCOUNTING_SYNC_EVERY_SECONDS`. Endpoints and the API key's permissions: [`docs/qb-bridge.md`](docs/qb-bridge.md). |
 | `qb-webconnector` | ✅ working | `/qbwc` is the SOAP endpoint the QuickBooks Web Connector polls; admins download the `.qwc` file from the Accounting page. Needs HTTPS (the Web Connector refuses anything else except `localhost`). |
 
-Both QuickBooks backends speak qbXML 13.0 through one encoder
-([`src/accounting/qbxml.ts`](src/accounting/qbxml.ts)); the sending logic
+The Web Connector backend speaks qbXML 13.0 through
+[`src/accounting/qbxml.ts`](src/accounting/qbxml.ts); the bridge writes its own. The
+sending logic
 ([`src/sync.ts`](src/sync.ts)) derives its work from the database each time rather
-than keeping a queue, and is tested against a pretend QuickBooks that answers qbXML
+than keeping a queue, and is tested through both backends against a pretend
+QuickBooks that answers qbXML
 ([`src/testing/fake-quickbooks.ts`](src/testing/fake-quickbooks.ts)). Every
 attempt, with the full request and answer, is kept for 90 days.
 
@@ -181,8 +187,16 @@ plus a duration — so they live here and are never read back out.
 ## Deployment
 
 The image is built and published by CI on every push to `master`, then deployed
-to a host by a repo-scoped self-hosted runner running [`deploy.sh`](deploy.sh).
-Never deploy by hand.
+to a host by a repo-scoped self-hosted runner (labels `self-hosted`,
+`time-tracker`) running [`deploy.sh`](deploy.sh). Never deploy by hand. The
+deploy job only runs once the repo variable `PUBLIC_BASE_URL` is set, so a fork
+or a copy without a deployment just builds.
+
+**A self-hosted runner on a public repository runs code from pull requests.** A
+fork's pull request can add a workflow that targets your runner's labels. Before
+registering one, set *Settings → Actions → General → Fork pull request
+workflows* to require approval for all external contributors, and read every
+such pull request's workflow changes before approving a run.
 
 `deploy.sh` materializes the container's env file fresh on every run from repo
 secrets and variables, so no secrets file is ever hand-placed on a host. Set
