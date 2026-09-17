@@ -58,6 +58,10 @@ deployer, not here.
     design was tried and reverted the same day: the deployer's other apps all
     work this way.) The app also checks its settings at startup, and the image
     has its own health check, so a bad deploy fails however it's run.
+    **Under review (2026-09-17):** GitHub recommends self-hosted runners only for
+    private repositories, and a public repo's Actions logs are public. A
+    pull-based deploy (the host fetches what CI published, told by a signed
+    webhook) would need no runner here at all.
 
 ## Stack
 
@@ -824,7 +828,8 @@ own phase; they are properties of the entry UI, not separate features.
       2 s start interval (verified locally: exit 0 on a live server's 302, 1 when
       it's down; and in the published image's config). Licensed MIT. A
       publish-only design (no deploy job) was tried and reverted (decision 10).
-- [ ] Phase 7 — first deployment (deployer's notes). ⬅️
+- [ ] Settle how deploys work for a public repo (decision 10). ⬅️
+- [ ] Phase 7 — first deployment (deployer's notes).
 
 ## Open questions for the user
 
