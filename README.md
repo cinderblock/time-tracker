@@ -234,3 +234,7 @@ component reaches them — even indirectly. Code the browser shares
 `src/uuid.ts`, `src/entry-status.ts`, `src/rate-scopes.ts`, `src/money.ts`) must
 not import them. Typecheck doesn't catch a violation; `bun run build` does. (Without that guard, a leaked
 import shows up only as a page that renders but never becomes interactive.)
+
+## License
+
+[MIT](LICENSE)
