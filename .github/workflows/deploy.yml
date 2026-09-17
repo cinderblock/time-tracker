@@ -92,8 +92,12 @@ jobs:
           APP_TAG: ${{ github.sha }}
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # deploy.sh pulls what it needs out of these blobs and materializes
-          # the compose env_file. GITHUB_TOKEN rides along unused.
-          ALL_SECRETS: ${{ toJSON(secrets) }}
+          # Secrets one by one: the step only ever sees the ones deploy.sh
+          # uses. deploy.sh writes them, and the variables it reads from
+          # ALL_VARS, into the compose env_file.
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          QB_BRIDGE_API_KEY: ${{ secrets.QB_BRIDGE_API_KEY }}
+          QBWC_PASSWORD: ${{ secrets.QBWC_PASSWORD }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           ALL_VARS: ${{ toJSON(vars) }}
         run: bash deploy.sh

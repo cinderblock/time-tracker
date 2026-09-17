@@ -20,8 +20,9 @@
 #   REGISTRY_USERNAME Registry login user           (optional; skips login if unset)
 #   REGISTRY_TOKEN    Registry login token          (optional; skips login if unset)
 #
-# App config + secrets (materialized into the compose env_file). In CI these
-# arrive as the ALL_SECRETS / ALL_VARS JSON blobs (toJSON(secrets|vars)):
+# App config + secrets (materialized into the compose env_file). In CI, each
+# secret is passed by name — never the whole secrets context — and variables
+# arrive as the ALL_VARS JSON blob (toJSON(vars)):
 #   PUBLIC_BASE_URL     public origin                (VAR,    REQUIRED)
 #   SESSION_SECRET      signs session cookies        (SECRET, REQUIRED)
 #   TZ                  wall-clock zone for workdays (VAR,    default UTC)
@@ -67,8 +68,8 @@ fi
 IMAGE="${REGISTRY}/${IMAGE_PREFIX}:${APP_TAG}"
 echo "=== Deploying ${IMAGE} ==="
 
-# jq is only needed to parse the CI JSON blobs.
-if [ -n "${ALL_SECRETS:-}" ] || [ -n "${ALL_VARS:-}" ]; then
+# jq is only needed to parse the CI variables blob.
+if [ -n "${ALL_VARS:-}" ]; then
 	if ! command -v jq > /dev/null 2>&1; then
 		echo "Installing jq..."
 		sudo apt-get update -qq
@@ -84,11 +85,12 @@ json_get() { # $1=json blob  $2=key  -> value (empty if blob empty or key absent
 	printf '%s' "$1" | jq -r --arg k "$2" '.[$k] // empty'
 }
 
-# Secrets: prefer an already-exported value (manual run), else ALL_SECRETS (CI).
-SESSION_SECRET="${SESSION_SECRET:-$(json_get "${ALL_SECRETS:-}" SESSION_SECRET)}"
-QB_BRIDGE_API_KEY="${QB_BRIDGE_API_KEY:-$(json_get "${ALL_SECRETS:-}" QB_BRIDGE_API_KEY)}"
-QBWC_PASSWORD="${QBWC_PASSWORD:-$(json_get "${ALL_SECRETS:-}" QBWC_PASSWORD)}"
-VAPID_PRIVATE_KEY="${VAPID_PRIVATE_KEY:-$(json_get "${ALL_SECRETS:-}" VAPID_PRIVATE_KEY)}"
+# Secrets: only ever exported by name (CI's deploy step, or deploy.env). A new
+# secret needs a line here and in the workflow's env.
+SESSION_SECRET="${SESSION_SECRET:-}"
+QB_BRIDGE_API_KEY="${QB_BRIDGE_API_KEY:-}"
+QBWC_PASSWORD="${QBWC_PASSWORD:-}"
+VAPID_PRIVATE_KEY="${VAPID_PRIVATE_KEY:-}"
 
 # Non-secret config: exported value -> repo Variable (ALL_VARS) -> default.
 var_or() { # $1=name  $2=default

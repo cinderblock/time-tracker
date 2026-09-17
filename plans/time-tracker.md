@@ -460,6 +460,14 @@ own phase; they are properties of the entry UI, not separate features.
   repo is registered with a short-lived registration token minted by a hosted job
   that alone holds the admin PAT; only that token reaches the server. Never treat a
   transient GitHub API error as "the runner is gone".
+- **GitHub holds a workflow that hands `toJSON(secrets)` to a step** (2026-09-16).
+  The first push to the public repo produced a Deploy run with no jobs, conclusion
+  `action_required`, and on its page: "GitHub detected that this workflow file may
+  be malicious. It will not run until someone with write access approves it." The
+  deploy step got every secret as one JSON blob, on a self-hosted runner — the
+  shape of an exfiltration. It's also more than the step needs, so secrets are now
+  passed one by one; only non-secret variables still arrive as `ALL_VARS`. The
+  REST endpoint for approving a run only works for fork pull requests (403).
 - **Bind the container to `127.0.0.1` only.** The reverse proxy
   must be the sole ingress or any `X-Forwarded-For` trust is unsound.
 - **iOS PWA limitations that shape the design** (all need verification on a real
@@ -816,6 +824,8 @@ to import history — belong to that deployment's notes.
 - **Don't add `title=` attributes for tooltips.** They are invisible on touch, and
   this is a phone-first app. Put the information inline or use a tap-to-expand.
 - **Don't deploy by hand.** Everything ships through CI.
+- **Don't pass the whole `secrets` context to a step** (`toJSON(secrets)`). Name
+  each secret; GitHub blocks the workflow otherwise (see gotchas).
 - **Don't register a self-hosted runner before fork pull requests need approval.**
   The repo is public; a fork's pull request can bring a workflow that targets the
   runner's labels (README, Deployment).
