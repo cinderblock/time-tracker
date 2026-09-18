@@ -842,7 +842,12 @@ own phase; they are properties of the entry UI, not separate features.
 - [x] 2026-09-17 — **Build-only.** `deploy.yml` → `build.yml` (image labelled
       with its commit, pin printed in the run summary); `deploy.sh` and the
       deploy `docker-compose.yml` removed. Settles decision 10.
-- [ ] Phase 7 — first deployment (deployer's notes).
+- [x] 2026-09-18 — **Phase 7: first deployment live** (the deployer's notes have
+      the where). Deployed by pinning the image digest published for `912b6ab`;
+      the container reported healthy, the startup log showed the resolved
+      settings and the setup link, and the site served over HTTPS. One thing the
+      log showed: `/favicon.ico` has no route, so each request for it logs a
+      full stack trace — worth a static favicon.
 
 ## Open questions for the user
 
