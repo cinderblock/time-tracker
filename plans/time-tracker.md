@@ -730,6 +730,26 @@ own phase; they are properties of the entry UI, not separate features.
   disagreed and every e2e run's CLI died with "001_initial has been edited".
   Migrations are SQL text now, and a string literal survives bundling byte for
   byte. Anything compared across those two worlds must be data, not code.
+- **First real pull: the bridge answered `/items/service` as a single item**
+  (2026-09-18). The bridge registered its `items` entity — with its
+  `/items/{entity_id}` route — before `items/service`, so Starlette matched
+  "service" as an item id: 404 bare, `UNKNOWN_QUERY_PARAM … Allowed: (none)`
+  with any query. The pretend bridge never had that bug, so nothing caught it.
+  Fixed in the bridge (`bb47e24`: longest route first, two tests). App side:
+  service items are an optional list now — an old bridge skips them with a
+  "needs updating" note in the attempt log, and jobs and people still arrive —
+  and a skipped list keeps what an earlier pull stored.
+- **The first bridge call after QuickBooks launches can exceed the bridge's 60 s
+  request timeout**, and QuickBooks then sat wedged ("a modal dialog box is
+  showing", though no window existed) for ~30 min before recovering on its own.
+  The app's 5-minute pull retry rode it out. Not fixed; noted.
+- **A refused form was invisible in the log.** A user's invite came back 400
+  twice and nothing said what was refused, or from what browser. `handleForm`
+  now logs the path, intent, message and user agent of every refusal. (Their
+  page also showed the error boundary rather than a message; a plain 400 does
+  not do that in Chromium at phone size — unexplained until the log says more.)
+- **Running the bridge's Python suite alongside the e2e suite made one e2e test
+  time out** (a button stuck "loading"); alone it passes. Load, not a bug.
 - **React inserts `<!-- -->` between adjacent JSX text expressions.** Grepping
   rendered HTML for `computed in America/Los_Angeles` finds nothing, because the
   markup is `computed in <!-- -->America/Los_Angeles`. Not a bug — but it will fool

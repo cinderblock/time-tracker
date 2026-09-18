@@ -24,16 +24,20 @@ export async function handleForm<Extra extends object>(
   assertSameOrigin(request);
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
+  // A refusal is the form's answer, not an error — but when someone reports
+  // "it didn't work" the log should still say what was refused, and from what.
+  const refused = (error: string) => {
+    console.warn(
+      `[form] ${new URL(request.url).pathname} ${intent || "(no intent)"} refused: ${error} — ${request.headers.get("user-agent") ?? "?"}`,
+    );
+    return data<ActionResult<Extra>>({ ok: false, error }, { status: 400 });
+  };
   const handler = handlers[intent];
-  if (!handler) {
-    return data<ActionResult<Extra>>({ ok: false, error: "Unknown action." }, { status: 400 });
-  }
+  if (!handler) return refused("Unknown action.");
   try {
     return data<ActionResult<Extra>>(await handler(form));
   } catch (err) {
-    if (err instanceof UserInputError) {
-      return data<ActionResult<Extra>>({ ok: false, error: err.message }, { status: 400 });
-    }
+    if (err instanceof UserInputError) return refused(err.message);
     throw err;
   }
 }

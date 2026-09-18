@@ -68,7 +68,11 @@ export function applyPull(lists: PulledLists, now: number): { jobsAdded: number 
     );
     for (const i of lists.items) upsertItem.run(i.remoteId, i.kind, i.name, i.fullName, i.active ? 1 : 0, now);
     // A list that couldn't be read keeps its cached copy.
-    const skippedKinds = lists.skipped.includes("wages") ? ["payroll_wage"] : [];
+    // A skipped list keeps whatever an earlier pull stored, rather than being emptied.
+    const skippedKinds = [
+      ...(lists.skipped.includes("wages") ? ["payroll_wage"] : []),
+      ...(lists.skipped.includes("services") ? ["service"] : []),
+    ];
     db()
       .query(
         `UPDATE remote_items SET active = 0 WHERE synced_at < ?

@@ -110,6 +110,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content={shortName} />
         <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="icon" type="image/png" href="/icons/icon-192.png" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
         <ColorSchemeScript defaultColorScheme="auto" />
         <Meta />

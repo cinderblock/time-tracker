@@ -17,6 +17,12 @@ export interface FakeBridgeOptions {
   down?: () => boolean;
   /** An older bridge, from before time tracking. */
   noTimeTracking?: () => boolean;
+  /**
+   * A bridge from before its route order was fixed (2026-09-18): /items/service
+   * is answered by /items/{id} with id "service" — a 404 bare, and
+   * UNKNOWN_QUERY_PARAM with any query string.
+   */
+  shadowedServiceItems?: () => boolean;
 }
 
 type Json = Record<string, unknown>;
@@ -100,6 +106,11 @@ export async function bridgeResponse(qb: FakeQuickBooks, opts: FakeBridgeOptions
     .sort((a, b) => b.length - a.length)
     .find((p) => rest === p || rest.startsWith(`${p}/`));
   if (!segment || (opts.noTimeTracking?.() && NEW_ENTITIES.has(segment))) return json(404, { detail: "Not Found" });
+  if (segment === "items/service" && rest === segment && opts.shadowedServiceItems?.()) {
+    const sent = [...url.searchParams.keys()];
+    if (sent.length === 0) return json(404, { detail: { ok: false, error: { code: "NOT_FOUND", message: "ItemService 'service' not found" } } });
+    return json(400, { detail: { ok: false, error: { code: "UNKNOWN_QUERY_PARAM", message: `Unknown query parameter(s): ${sent.join(", ")}. Allowed: (none).` } } });
+  }
   const entity = ENTITIES[segment]!;
   const id = rest.length > segment.length ? decodeURIComponent(rest.slice(segment.length + 1)) : null;
   const idField = entity.txn ? "TxnID" : "ListID";

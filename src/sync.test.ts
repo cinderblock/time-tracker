@@ -35,6 +35,7 @@ const DAY = "2026-09-16";
 let qb: FakeQuickBooks;
 let down = false;
 let noEndpoint = false;
+let shadowed = false;
 let now = NINE;
 let backend: QbBridgeBackend;
 let admin = 0;
@@ -48,11 +49,17 @@ beforeEach(() => {
   qb = sampleCompany();
   down = false;
   noEndpoint = false;
+  shadowed = false;
   now = NINE;
   backend = new QbBridgeBackend({
     baseUrl: "http://bridge.test",
     apiKey: "secret",
-    fetch: fakeBridgeFetch(qb, { apiKey: "secret", down: () => down, noTimeTracking: () => noEndpoint }),
+    fetch: fakeBridgeFetch(qb, {
+      apiKey: "secret",
+      down: () => down,
+      noTimeTracking: () => noEndpoint,
+      shadowedServiceItems: () => shadowed,
+    }),
   });
   admin = createUser({ name: "Ada", role: "admin", actorUserId: null }).id;
   alice = createUser({ name: "Alice", role: "employee", actorUserId: admin }).id;
@@ -483,6 +490,27 @@ describe("corrections and failures", () => {
     now += MIN;
     await sync();
     expect(getEntry(id)!.status).toBe("synced");
+  });
+
+  test("an older bridge that can't list service items still supplies jobs and people", async () => {
+    // Before its route order was fixed (2026-09-18), the bridge answered
+    // /items/service as a single item called "service". Everything that lets
+    // people link themselves and their jobs must not wait on that.
+    shadowed = true;
+    expect((await sync()).reached).toBe(true);
+    expect(jobByRemote("C-ACME")).toBeTruthy();
+    expect(listRemotePeople().length).toBeGreaterThan(0);
+    expect(listRemoteItems("service")).toEqual([]);
+    const attempt = db().query<{ request: string }, []>("SELECT request FROM sync_attempts ORDER BY id DESC LIMIT 1").get();
+    expect(attempt!.request).toContain("services skipped: The QB Bridge answered /api/v1/items/service as a single record");
+
+    // The bridge gets updated: the next pull fills the items in and keeps the rest.
+    shadowed = false;
+    now += 60_000;
+    requestPull(now);
+    expect((await sync()).reached).toBe(true);
+    expect(listRemoteItems("service").map((i) => i.remoteId)).toContain("I-LABOR");
+    expect(jobByRemote("C-ACME")).toBeTruthy();
   });
 
   test("an older bridge, or the wrong key, is unreachable — not a failure of the time", async () => {

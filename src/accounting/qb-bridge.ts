@@ -163,6 +163,14 @@ export class QbBridgeBackend implements AccountingBackend {
     if (error?.qbStatus != null && !UNREACHABLE_QB_ERRORS.has(error.code)) {
       return qbFailure(error.qbStatus, error.message || `QuickBooks error ${error.qbStatus}`);
     }
+    if (answer.status === 400 && error?.code === "UNKNOWN_QUERY_PARAM") {
+      // A bridge from before 2026-09-18 answered /items/service with its
+      // get-one-item route (id "service"), which takes no query string.
+      return {
+        ...qbFailure(-3, `The QB Bridge answered ${path.split("?")[0]} as a single record — it needs updating (route order fixed in the bridge on 2026-09-18).`),
+        retryable: false,
+      };
+    }
     if (answer.status === 400 && error) {
       // Our request was malformed: a bug here, not an outage. Show it; don't retry soon.
       return { ...qbFailure(-3, `The QB Bridge rejected the request: ${error.message}`), retryable: false };
@@ -218,7 +226,9 @@ export class QbBridgeBackend implements AccountingBackend {
           ["employees", "/api/v1/employees", false, false],
           ["vendors", "/api/v1/vendors", true, false],
           ["others", "/api/v1/other-names", false, true],
-          ["services", "/api/v1/items/service", true, false],
+          // Optional: an older bridge can't list them (see refusal), and the
+          // lists that let people link jobs and themselves shouldn't wait on it.
+          ["services", "/api/v1/items/service", true, true],
           ["wages", "/api/v1/payroll-items/wage", false, true],
         ];
         for (const [key, path, iterator, optional] of sources) {
@@ -231,6 +241,7 @@ export class QbBridgeBackend implements AccountingBackend {
           // QuickBooks' refusal there doesn't stop the rest.
           if (optional && !got.failed.ok) {
             skipped.push(key);
+            log.push(`${key} skipped: ${got.failed.message}`);
             lists[key] = [];
             continue;
           }

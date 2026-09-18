@@ -26,6 +26,9 @@ export default [
     ]),
   ]),
 
+  // Browsers ask for this whether or not the page names an icon.
+  route("favicon.ico", "routes/favicon.ts"),
+
   // Report downloads (no page chrome).
   route("admin/reports.csv", "routes/admin.reports.csv.ts"),
   route("admin/accounting.qwc", "routes/admin.accounting.qwc.ts"),
