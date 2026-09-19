@@ -889,6 +889,15 @@ own phase; they are properties of the entry UI, not separate features.
       log showed: `/favicon.ico` has no route, so each request for it logs a
       full stack trace — worth a static favicon.
 
+- [x] 2026-09-18 — **First-deploy fixes.** Service items optional on pull with a
+      clear note for an old bridge (bridge route order fixed upstream);
+      refused forms logged with user agent; `/favicon.ico` route. 260 unit,
+      53 e2e.
+- [x] 2026-09-18 — **Forms behind a reverse proxy.** `server.ts` (Express: trust
+      proxy, `allowedActionOrigins` from `PUBLIC_BASE_URL`) replaces
+      `react-router-serve`; `e2e/proxied.spec.ts` and a fourth e2e instance
+      cover it. 58 e2e. Verified against the deployment: a form action from the
+      public origin is answered by the app; a foreign origin still gets 400.
 ## Open questions for the user
 
 None block the code. Questions about a particular deployment — which people are
