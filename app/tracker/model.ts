@@ -1,13 +1,21 @@
+import type { TrackingMode } from "../../src/tracking-mode.ts";
+
 /**
  * The shapes the tracking screen works with. Shared by the server loader and
  * the browser, so this module must stay free of server imports.
  */
 
+/** A customer (no parent) or a job (under one), as the tracking screen sees it. */
 export interface JobView {
   id: string;
+  name: string;
+  /** "Customer:Job" path. */
   fullName: string;
+  parentId: string | null;
+  /** Stopping a timer here needs a note — its own rule or its customer's. */
   requiresNote: boolean;
-  active: boolean;
+  /** Time can be booked here: a job under an open customer. A customer is listed for grouping only. */
+  bookable: boolean;
   provisional: boolean;
 }
 
@@ -58,12 +66,21 @@ export interface DayModel {
   workDate: string;
   today: string;
   timezone: string;
+  /** How this person records time: timers, or notes turned into time later. */
+  mode: TrackingMode;
+  /**
+   * In notes mode: the latest earlier day whose notes haven't been turned into
+   * time. Until that's done, this day can't take notes.
+   */
+  notesToRollUp: { date: string; count: number } | null;
   requireNoteOnStop: boolean;
   /** The person's open timer, whichever day it belongs to. */
   open: EntryView | null;
   entries: EntryView[];
   notes: NoteView[];
+  /** Every open customer and job — customers for grouping and for making new jobs under. */
   jobs: JobView[];
+  /** Bookable jobs the person booked most recently, newest first. */
   recentJobIds: string[];
   week: { date: string; seconds: number }[];
 }

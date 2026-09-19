@@ -1,8 +1,18 @@
 import { execFileSync } from "node:child_process";
 
-import { type Browser, type BrowserContext, type Locator, type Page, expect, test } from "@playwright/test";
+import {
+  type APIRequestContext,
+  type Browser,
+  type BrowserContext,
+  type Locator,
+  type Page,
+  expect,
+  test,
+} from "@playwright/test";
 
 import { e2eEnv } from "../playwright.config.ts";
+import type { OpPayload, OpType } from "../src/ops-schema.ts";
+import { uuidv7 } from "../src/uuid.ts";
 
 /**
  * Time tracking through the real UI: timers (start, pause, switch, discard
@@ -54,6 +64,16 @@ async function pickJob(input: Locator, name: string) {
   await page.getByRole("option", { name, exact: true }).click();
 }
 
+/** A change made straight through the API, as another device of the same person would. */
+async function send<T extends OpType>(request: APIRequestContext, type: T, payload: OpPayload<T>) {
+  const response = await request.post("/api/ops", {
+    headers: { Origin: e2eEnv.PUBLIC_BASE_URL, "Content-Type": "application/json" },
+    data: { ops: [{ opId: uuidv7(), type, deviceId: "e2e-other-device", clientTime: Date.now(), payload }] },
+  });
+  const body = await response.json();
+  expect(body.results[0], JSON.stringify(body)).toMatchObject({ ok: true });
+}
+
 const timerCard = () => page.locator(".mantine-Card-root", { has: page.getByRole("button", { name: "Stop" }) });
 const entryRows = () =>
   page.locator(".mantine-Card-root", { has: page.getByRole("button", { name: /^Edit / }) });
@@ -62,14 +82,19 @@ test.afterAll(async () => {
   await ctx?.close();
 });
 
-test("set up: a person and two jobs", async ({ browser }) => {
+test("set up: a person, a customer and two jobs under it", async ({ browser }) => {
   ({ context: ctx, page } = await signUp(browser, "Tess Tracker"));
   await page.getByRole("link", { name: "Jobs" }).click();
+  await page.getByLabel("New customer").fill("Riverside");
+  await page.getByRole("button", { name: "Add customer" }).click();
+  const customer = page.getByRole("group", { name: "Riverside", exact: true });
+  await expect(customer).toBeVisible();
+  await expect(page.getByLabel("New customer")).toHaveValue("");
   for (const name of ["Alpha Site", "Bravo Site"]) {
-    await page.getByLabel("New job").fill(name);
-    await page.getByRole("button", { name: "Add job" }).click();
-    await expect(page.getByText(name, { exact: true })).toBeVisible();
-    await expect(page.getByLabel("New job")).toHaveValue("");
+    await customer.getByRole("button", { name: "Add a job" }).click();
+    await customer.getByLabel("New job for Riverside").fill(name);
+    await customer.getByRole("button", { name: "Add job", exact: true }).click();
+    await expect(page.getByRole("group", { name: `Riverside:${name}` })).toBeVisible();
   }
 });
 
@@ -80,6 +105,7 @@ test("start, pause and resume a timer", async () => {
 
   const card = timerCard();
   await expect(card.getByRole("heading", { name: "Alpha Site" })).toBeVisible();
+  await expect(card.getByText("Riverside", { exact: true })).toBeVisible();
   await expect(card.getByText("running", { exact: true })).toBeVisible();
   await expect(card.getByText(/^00:0\d$/)).toBeVisible(); // ticking elapsed time
 
@@ -101,6 +127,15 @@ test("switch jobs in one step; the first timer stops as the second starts", asyn
   await timerCard().getByRole("button", { name: "Alpha Site" }).click();
   await expect(timerCard().getByRole("heading", { name: "Alpha Site" })).toBeVisible();
   await expect(entryRows().filter({ hasText: "Bravo Site" })).toHaveCount(1);
+
+  // The picker lists recent jobs first (by full path), then each customer's jobs by name.
+  await page.getByPlaceholder("Another job — type to search").click();
+  await expect(page.getByText("Recent", { exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Riverside:Bravo Site", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Bravo Site", exact: true })).toBeVisible();
+  // A customer is a heading, never a choice.
+  await expect(page.getByRole("option", { name: "Riverside", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 });
 
 test("an accidental timer is discarded without a question, and undo brings it back", async () => {
@@ -115,7 +150,7 @@ test("a job that needs a note won't stop without one", async () => {
   // Turn the requirement on for Alpha, in another tab.
   const admin = await ctx.newPage();
   await admin.goto("/admin/jobs");
-  const alphaRow = admin.locator(".mantine-Card-root", { hasText: "Alpha Site" });
+  const alphaRow = admin.getByRole("group", { name: "Riverside:Alpha Site" });
   await alphaRow.getByRole("switch", { name: "Needs a note" }).click({ force: true });
   await expect(alphaRow.getByRole("switch", { name: "Needs a note" })).toBeChecked();
   await admin.close();
@@ -197,7 +232,36 @@ test("move to the previous day and back", async () => {
   await page.goto("/");
 });
 
-test("jot notes through the day, then turn them into time", async () => {
+test("create a job on the spot while starting a timer, at a customer that's new too", async () => {
+  await page.getByRole("button", { name: "New job…" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "New job" });
+  // The known customers are offered; this work is for a new one.
+  await expect(dialog.getByRole("combobox", { name: /^Customer/ })).toBeVisible();
+  await dialog.getByText("New customer", { exact: true }).click();
+  await dialog.getByLabel("Customer name").fill("Delta Homes");
+  await dialog.getByLabel("Job name").fill("Charlie Emergency");
+  await dialog.getByRole("button", { name: "Create job" }).click();
+  const card = timerCard();
+  await expect(card.getByRole("heading", { name: "Charlie Emergency" })).toBeVisible();
+  await expect(card.getByText("Delta Homes", { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Stop" }).click();
+  await expect(entryRows().filter({ hasText: "Delta Homes:Charlie Emergency" })).toHaveCount(1);
+
+  // Both are provisional, grouped on the Jobs page like any other.
+  await page.goto("/admin/jobs");
+  const customer = page.getByRole("group", { name: "Delta Homes", exact: true });
+  await expect(customer.getByText("Charlie Emergency", { exact: true })).toBeVisible();
+  await page.goto("/");
+});
+
+test("switch to notes mode: no timer is offered; notes are jotted, then turned into time", async () => {
+  await page.goto("/account");
+  await page.getByRole("radio", { name: "Notes through the day" }).check();
+  await expect(page.locator(".mantine-Notification-root").filter({ hasText: "You'll jot notes" })).toBeVisible();
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Start a timer" })).toHaveCount(0);
+  await expect(page.getByText(/You track with notes/)).toBeVisible();
   const noteBox = page.getByPlaceholder("What are you working on now?");
   await noteBox.fill("Measuring the east wall");
   await pickJob(page.getByPlaceholder("Job (optional)").first(), "Bravo Site");
@@ -225,12 +289,32 @@ test("jot notes through the day, then turn them into time", async () => {
   await expect(page.getByRole("button", { name: /Turn \d+ notes? into time/ })).toHaveCount(0);
 });
 
-test("create a job on the spot while starting a timer", async () => {
-  await page.getByRole("button", { name: "New job…" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "New job" });
-  await dialog.getByLabel("Job name").fill("Charlie Emergency");
-  await dialog.getByRole("button", { name: "Create job" }).click();
-  await expect(timerCard().getByRole("heading", { name: "Charlie Emergency" })).toBeVisible();
-  await timerCard().getByRole("button", { name: "Stop" }).click();
-  await expect(entryRows().filter({ hasText: "Charlie Emergency" })).toHaveCount(1);
+test("in notes mode, yesterday's notes have to become time before today's can start", async () => {
+  // A note left on yesterday, as a phone that synced late would leave it.
+  const at = Date.now() - 86_400_000;
+  const yesterday = new Date(at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+  await send(ctx.request, "note.create", { noteId: uuidv7(), at, text: "Left over from yesterday" });
+
+  await page.reload();
+  const held = page.getByRole("alert").filter({ hasText: "isn't finished" });
+  await expect(held).toContainText("Turn its note into time before today's notes start.");
+  await expect(page.getByPlaceholder("What are you working on now?")).toHaveCount(0);
+  await held.getByRole("link", { name: /^Go to / }).click();
+  await expect(page).toHaveURL(new RegExp(`/day/${yesterday}$`));
+  await expect(page.getByText("Left over from yesterday")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next day" })).toBeDisabled();
+  await expect(page.getByText("Turn this day's notes into time to move on.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Turn 1 note into time" }).click();
+  const review = page.getByRole("dialog", { name: "Turn notes into time" });
+  await pickJob(review.getByPlaceholder("Pick a job"), "Alpha Site");
+  await review.getByLabel("From").fill("13:00");
+  await review.getByLabel("Last note runs until").fill("14:00");
+  await review.getByRole("button", { name: "Add 1 entry" }).click();
+  await expect(review).toBeHidden();
+
+  // The way forward opens, and today takes notes again.
+  await page.getByRole("link", { name: "Next day" }).click();
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+  await expect(page.getByPlaceholder("What are you working on now?")).toBeVisible();
 });

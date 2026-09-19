@@ -41,6 +41,7 @@ let backend: QbBridgeBackend;
 let admin = 0;
 let alice = 0; // an Employee in QuickBooks
 let bob = 0; // a Vendor
+let walkIn = "";
 let local = "";
 
 beforeEach(() => {
@@ -64,8 +65,11 @@ beforeEach(() => {
   admin = createUser({ name: "Ada", role: "admin", actorUserId: null }).id;
   alice = createUser({ name: "Alice", role: "employee", actorUserId: admin }).id;
   bob = createUser({ name: "Bob", role: "employee", actorUserId: admin }).id;
+  // A customer and a job made here, ahead of the accounting system.
+  walkIn = uuidv7();
   local = uuidv7();
-  ok(send(admin, "job.create", { jobId: local, name: "Walk-in repair" }));
+  ok(send(admin, "job.create", { jobId: walkIn, name: "Walk-in" }));
+  ok(send(admin, "job.create", { jobId: local, name: "Repair", parentId: walkIn }));
 });
 
 const sync = () => runSync(backend, () => now);
@@ -103,7 +107,7 @@ describe("pulling lists", () => {
     const acme = jobByRemote("C-ACME");
     expect(jobByRemote("C-ACME-2")).toMatchObject({ fullName: "Acme:Phase 2", parentId: acme.id, provisional: false });
     expect(jobByRemote("C-OLD")).toMatchObject({ remoteActive: false });
-    expect(listJobs().map((j) => j.fullName)).toEqual(["Acme", "Acme:Phase 2", "Walk-in repair"]);
+    expect(listJobs().map((j) => j.fullName)).toEqual(["Acme", "Acme:Phase 2", "Walk-in", "Walk-in:Repair"]);
     expect(getJob(local)).toMatchObject({ remoteId: null });
     expect(listRemotePeople().map((p) => [p.name, p.kind, p.active])).toEqual([
       ["Alice A", "employee", true],
@@ -136,7 +140,7 @@ describe("pulling lists", () => {
   test("renaming a job that comes from the accounting system is refused; booking on an inactive one too", async () => {
     await sync();
     const { updateJob } = await import("./jobs.ts");
-    expect(() => updateJob({ id: jobByRemote("C-ACME").id, name: "Acme Corp", actorUserId: admin })).toThrow("Rename it there");
+    expect(() => updateJob({ id: jobByRemote("C-ACME").id, name: "Acme Corp", actorUserId: admin })).toThrow("Change it there");
     expect(send(alice, "entry.create", { entryId: uuidv7(), jobId: jobByRemote("C-OLD").id, workDate: DAY, durationSeconds: 600 })).toMatchObject({
       ok: false,
       code: "conflict",
@@ -201,29 +205,32 @@ describe("sending time", () => {
     expect(send(alice, "entry.update", { entryId: id, note: "x" })).toMatchObject({ ok: false, code: "conflict" });
   });
 
-  test("items: a job's own service item wins, sub-jobs inherit it, and only Employees get payroll items", async () => {
+  test("items: a job's own service item wins, jobs inherit their customer's, and only Employees get payroll items", async () => {
     await connected();
-    setJobServiceItem({ jobId: jobByRemote("C-ACME").id, itemId: "I-DESIGN", actorUserId: admin });
     const field = createCategory({ name: "Field", actorUserId: admin });
     setUserCategory({ userId: alice, categoryId: field.id, actorUserId: admin });
     qb.wages.push({ id: "W-FIELD", name: "Field rate", active: true });
+    qb.customers.push({ id: "C-ACME-3", name: "Phase 3", parent: "C-ACME", active: true });
     now += MIN;
     requestPull(now);
     await sync();
     setCategoryPayrollItem({ categoryId: field.id, itemId: "W-FIELD", actorUserId: admin });
+    // The customer's item, and one job's own.
+    setJobServiceItem({ jobId: jobByRemote("C-ACME").id, itemId: "I-DESIGN", actorUserId: admin });
+    setJobServiceItem({ jobId: jobByRemote("C-ACME-3").id, itemId: "I-LABOR", actorUserId: admin });
 
     const a = work(alice, jobByRemote("C-ACME-2").id, 30, null);
-    const b = work(bob, jobByRemote("C-ACME").id, 60, "Sub work");
+    const b = work(bob, jobByRemote("C-ACME-3").id, 60, "Sub work");
     approveEntries({ userId: alice, from: DAY, to: DAY, actorUserId: admin });
     approveEntries({ userId: bob, from: DAY, to: DAY, actorUserId: admin });
     await sync();
     const byNote = (ref: string) => qb.summary().find((r) => r.notes.endsWith(ref))!;
     expect(byNote(entryRef(a))).toMatchObject({ item: "I-DESIGN", payrollItem: "W-FIELD", notes: entryRef(a) });
-    expect(byNote(entryRef(b))).toMatchObject({ entity: "V-SUB", item: "I-DESIGN", payrollItem: null });
+    expect(byNote(entryRef(b))).toMatchObject({ entity: "V-SUB", item: "I-LABOR", payrollItem: null });
 
     // A person's own payroll item beats their category's.
     setPersonPayrollItem({ userId: alice, itemId: "W-HOURLY", actorUserId: admin });
-    const c = work(alice, jobByRemote("C-ACME").id, 15);
+    const c = work(alice, jobByRemote("C-ACME-2").id, 15);
     approveEntries({ userId: alice, entryIds: [c], actorUserId: admin });
     await sync();
     expect(byNote(entryRef(c)).payrollItem).toBe("W-HOURLY");
@@ -232,7 +239,7 @@ describe("sending time", () => {
   test("with no service item anywhere, time goes as not billable", async () => {
     await sync();
     linkPerson({ userId: alice, remoteId: "E-ALICE", actorUserId: admin });
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     await sync();
     expect(qb.summary()[0]).toMatchObject({ item: null, payrollItem: null, billable: "NotBillable" });
@@ -240,18 +247,18 @@ describe("sending time", () => {
 
   test("what can't be sent says why", async () => {
     await connected();
-    const zero = work(alice, jobByRemote("C-ACME").id, 0.2);
+    const zero = work(alice, jobByRemote("C-ACME-2").id, 0.2);
     const provisional = work(alice, local, 30);
     const unlinked = createUser({ name: "Carol", role: "employee", actorUserId: admin }).id;
-    const carols = work(unlinked, jobByRemote("C-ACME").id, 30);
+    const carols = work(unlinked, jobByRemote("C-ACME-2").id, 30);
     linkPerson({ userId: bob, remoteId: "O-GONE", actorUserId: admin }); // an inactive name
-    const bobs = work(bob, jobByRemote("C-ACME").id, 30);
+    const bobs = work(bob, jobByRemote("C-ACME-2").id, 30);
     for (const u of [alice, unlinked, bob]) approveEntries({ userId: u, from: DAY, to: DAY, actorUserId: admin });
 
     const reasons = Object.fromEntries(syncOverview(now).blocked.map((b) => [b.entryId, [b.fix, b.reason]]));
     expect(reasons).toEqual({
       [zero]: ["entry", "Less than a minute of time: nothing to send. Delete it or fix its times."],
-      [provisional]: ["job", "The job “Walk-in repair” was made here and isn't in the accounting system yet."],
+      [provisional]: ["job", "The job “Walk-in:Repair” was made here and isn't in the accounting system yet."],
       [carols]: ["person", "Carol isn't linked to a name in the accounting system."],
       [bobs]: ["person", "Bob's name (Former Helper) is inactive in the accounting system."],
     });
@@ -272,44 +279,55 @@ describe("provisional jobs", () => {
     ok(send(alice, "note.create", { noteId, at: NINE, text: "arrived", jobId: local }));
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     const acme = jobByRemote("C-ACME").id;
+    const phase2 = jobByRemote("C-ACME-2").id;
 
     expect(() => linkJob({ jobId: local, targetId: local, actorUserId: admin })).toThrow("Pick a job from the accounting system");
-    linkJob({ jobId: local, targetId: acme, actorUserId: admin });
-    expect(getEntry(id)!.jobId).toBe(acme);
-    expect(getJob(local)).toMatchObject({ mergedInto: acme, active: false });
-    expect(resolveJob(local)!.id).toBe(acme);
-    expect(getJob(sub)!.parentId).toBe(acme);
-    expect(listJobs().map((j) => j.fullName)).toEqual(["Acme", "Acme:Back room", "Acme:Phase 2"]);
+    // A job's time has to land on a job there, never on a customer.
+    expect(() => linkJob({ jobId: local, targetId: acme, actorUserId: admin })).toThrow("is a customer");
+    linkJob({ jobId: local, targetId: phase2, actorUserId: admin });
+    expect(getEntry(id)!.jobId).toBe(phase2);
+    expect(getJob(local)).toMatchObject({ mergedInto: phase2, active: false });
+    expect(resolveJob(local)!.id).toBe(phase2);
+    expect(getJob(sub)!.parentId).toBe(phase2);
+    expect(listJobs().map((j) => j.fullName)).toEqual(["Acme", "Acme:Phase 2", "Acme:Phase 2:Back room", "Walk-in"]);
 
     // A phone that still has the old id offline books to the real job.
     const later = uuidv7();
     ok(send(alice, "timer.start", { entryId: later, jobId: local, at: NINE + 60 * MIN }));
-    expect(getEntry(later)!.jobId).toBe(acme);
+    expect(getEntry(later)!.jobId).toBe(phase2);
 
     await sync();
-    expect(qb.summary()).toMatchObject([{ customer: "C-ACME", duration: "PT0H45M0S" }]);
+    expect(qb.summary()).toMatchObject([{ customer: "C-ACME-2", duration: "PT0H45M0S" }]);
+
+    // The customer made here links to a real customer, and what's left under it follows.
+    ok(send(alice, "job.create", { jobId: uuidv7(), name: "Front room", parentId: walkIn }));
+    linkJob({ jobId: walkIn, targetId: acme, actorUserId: admin });
+    expect(listJobs().map((j) => j.fullName)).toEqual(["Acme", "Acme:Front room", "Acme:Phase 2", "Acme:Phase 2:Back room"]);
   });
 
   test("creating one in the accounting system, then sending its time", async () => {
     await connected();
     const id = work(alice, local, 30);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
-    const child = uuidv7();
-    ok(send(admin, "job.create", { jobId: child, name: "Upstairs", parentId: local }));
-    expect(() => requestJobCreation({ jobId: child, create: true, actorUserId: admin })).toThrow("parent job isn't in the accounting system");
+    // The customer has to be there before the job can be.
+    expect(() => requestJobCreation({ jobId: local, create: true, actorUserId: admin })).toThrow("parent job isn't in the accounting system");
 
-    requestJobCreation({ jobId: local, create: true, actorUserId: admin });
+    requestJobCreation({ jobId: walkIn, create: true, actorUserId: admin });
     expect(listWork(now).map((w) => w.kind)).toEqual(["job.add"]);
     await sync();
-    const created = qb.customers.find((c) => c.name === "Walk-in repair")!;
+    const customer = qb.customers.find((c) => c.name === "Walk-in")!;
+    expect(getJob(walkIn)).toMatchObject({ remoteId: customer.id, provisional: false, createRequestedAt: null });
+    // The time still waits: its job isn't there yet.
+    expect(qb.summary()).toHaveLength(0);
+
+    // Now the job can go too, under it, and its time follows.
+    requestJobCreation({ jobId: local, create: true, actorUserId: admin });
+    await sync();
+    const created = qb.customers.find((c) => c.name === "Repair")!;
+    expect(created).toMatchObject({ parent: customer.id });
+    expect(qb.fullNameOf(created.id)).toBe("Walk-in:Repair");
     expect(getJob(local)).toMatchObject({ remoteId: created.id, provisional: false, createRequestedAt: null });
     expect(qb.summary()).toMatchObject([{ customer: created.id }]);
-
-    // Now the child can go too, under it.
-    requestJobCreation({ jobId: child, create: true, actorUserId: admin });
-    await sync();
-    expect(qb.customers.find((c) => c.name === "Upstairs")).toMatchObject({ parent: created.id });
-    expect(qb.fullNameOf(qb.customers.at(-1)!.id)).toBe("Walk-in repair:Upstairs");
   });
 
   test("a name the accounting system already has, or one that's too long, is reported", async () => {
@@ -339,7 +357,7 @@ describe("provisional jobs", () => {
 describe("corrections and failures", () => {
   test("reopened, edited and approved again: the same record is amended", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     await sync();
     const txnId = qb.records[0]!.txnId;
@@ -360,7 +378,7 @@ describe("corrections and failures", () => {
 
   test("reopened and deleted: the record is removed there too", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     await sync();
     reopenEntries({ userId: alice, entryIds: [id], actorUserId: admin });
@@ -381,7 +399,7 @@ describe("corrections and failures", () => {
 
   test("an answer lost in transit doesn't cause a duplicate", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     qb.loseNextAnswer();
     expect(await sync()).toMatchObject({ reached: false });
@@ -397,7 +415,7 @@ describe("corrections and failures", () => {
 
   test("unreachable before anything was sent: found missing, then sent once", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     down = true;
     const summary = await sync();
@@ -414,7 +432,7 @@ describe("corrections and failures", () => {
 
   test("changed in QuickBooks meanwhile: its current version is fetched, then it's amended", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     await sync();
     qb.touch(qb.records[0]!.txnId);
@@ -429,7 +447,7 @@ describe("corrections and failures", () => {
 
   test("deleted in QuickBooks meanwhile: sent again", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     await sync();
     const first = qb.records[0]!.txnId;
@@ -444,7 +462,7 @@ describe("corrections and failures", () => {
 
   test("a refusal backs off and is shown; retry now sends it again", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     qb.failNext(3140, "There is an invalid reference to QuickBooks Customer.");
     expect(await sync()).toMatchObject({ reached: true, done: 1 });
@@ -470,7 +488,7 @@ describe("corrections and failures", () => {
     expect(syncOverview(now).failed).toEqual([]);
 
     // Backoff doubles with each failure.
-    const again = work(alice, jobByRemote("C-ACME").id, 30);
+    const again = work(alice, jobByRemote("C-ACME-2").id, 30);
     approveEntries({ userId: alice, entryIds: [again], actorUserId: admin });
     for (const wait of [MIN, 2 * MIN, 4 * MIN]) {
       qb.failNext(3140);
@@ -482,7 +500,7 @@ describe("corrections and failures", () => {
 
   test("a busy record is retried a minute later", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     qb.failNext(3175, "The record is in use.");
     await sync();
@@ -515,7 +533,7 @@ describe("corrections and failures", () => {
 
   test("an older bridge, or the wrong key, is unreachable — not a failure of the time", async () => {
     await connected();
-    const id = work(alice, jobByRemote("C-ACME").id, 60);
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     noEndpoint = true;
     expect((await sync()).detail).toContain("The QB Bridge has no /api/v1/time-tracking — it needs updating");

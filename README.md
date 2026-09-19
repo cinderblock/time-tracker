@@ -25,18 +25,22 @@ repository. All of that is deployment configuration or an admin setting.
   signs them out everywhere), remove a lost phone's passkey, and see each person's
   devices and history. Everyone can manage their own passkeys and signed-in devices.
 
-- **Three ways to record time.**
+- **Two ways to record time**, each person's own choice (Account → How you
+  track time):
   - *Timers* — start, pause, resume, stop. Switching jobs is one tap on a recent
-    job and stops the old timer at the same instant. A job (or the whole
-    organisation) can require a note before a timer stops.
+    job and stops the old timer at the same instant. A job, a customer (for all
+    its jobs) or the whole organisation can require a note before a timer stops.
   - *Notes* — jot what you're doing as you go; at the end of the day (or the next
-    morning) review them as proposed time entries, fix them up, and add them.
-  - *Manual entry* — a start and end time (overnight shifts included) or just a
-    duration, on any past day.
+    morning) review them as proposed time entries, fix them up, and add them. A
+    day's notes have to become time before the next day's can start.
+  - *Manual entry*, either way — a start and end time (overnight shifts included)
+    or just a duration, on any past day.
 - **No "are you sure?".** Discarding an accidental timer or deleting an entry is
   one tap, with an Undo. Nothing is ever really deleted.
-- **Jobs** can be created on the spot while tracking; admins open, close and
-  rename them and choose which need notes.
+- **Jobs belong to customers.** Time is booked to a job, never to a customer
+  itself; the picker lists the jobs used most recently first, then each
+  customer's jobs. Jobs — and customers — can be created on the spot while
+  tracking; admins open, close and rename them and choose which need notes.
 - **Location**, if a person turns it on for their device, is recorded with timer
   starts, stops and notes — samples at those moments, not a trail.
 

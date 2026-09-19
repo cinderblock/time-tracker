@@ -1,4 +1,4 @@
-import { Anchor, Badge, Button, Card, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
+import { Anchor, Badge, Box, Button, Card, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { Link, useFetcher } from "react-router";
 
@@ -14,6 +14,7 @@ import { handleForm, stringField } from "../actions.server.ts";
 import { requireAdmin } from "../auth.server.ts";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
 import { pageTitle } from "../meta.ts";
+import { nameWithin } from "../tracker/job-groups.ts";
 import type { Route } from "./+types/_app.admin.jobs";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -34,8 +35,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       id: j.id,
       name: j.name,
       fullName: j.fullName,
+      parentId: j.parentId,
+      customerId: j.customerId,
       active: j.active,
       requiresNote: j.requiresNote,
+      noteRequired: j.noteRequired,
       provisional: j.provisional,
       remote: j.remoteId != null,
       remoteActive: j.remoteActive,
@@ -51,9 +55,15 @@ export async function action({ request, context }: Route.ActionArgs) {
   const { user } = requireAdmin(context, request);
   const flag = (form: FormData, name: string) => stringField(form, name) === "true";
   return handleForm(request, {
+    // A customer when there's no parent, a job under one otherwise.
     create: (form) => {
       try {
-        const job = createJob({ id: uuidv7(), name: stringField(form, "name"), actorUserId: user.id });
+        const job = createJob({
+          id: uuidv7(),
+          name: stringField(form, "name"),
+          parentId: stringField(form, "parentId") || null,
+          actorUserId: user.id,
+        });
         return { ok: true, message: `Added “${job.fullName}”.` };
       } catch (err) {
         // createJob speaks the op dialect; this is a form.
@@ -80,15 +90,24 @@ export async function action({ request, context }: Route.ActionArgs) {
   });
 }
 
+type JobItem = Route.ComponentProps["loaderData"]["jobs"][number];
+type RowsFetcher = ReturnType<typeof useFetcher<typeof action>>;
+
 export default function Jobs({ loaderData }: Route.ComponentProps) {
   const { backend, jobs, requireNoteOnStop, timezone } = loaderData;
   const settings = useFetcher();
   useActionFeedback(settings.data);
-  // Shared by the rows: opening or closing a job moves its row between lists.
+  // Shared by the rows: opening or closing moves things between the lists.
   const rows = useFetcher<typeof action>();
   useActionFeedback(rows.data);
-  const open = jobs.filter((j) => j.active);
-  const closed = jobs.filter((j) => !j.active);
+
+  // Customers with their jobs (nested ones included, by full name).
+  const customers = jobs
+    .filter((j) => j.parentId == null)
+    .map((customer) => ({ customer, jobs: jobs.filter((j) => j.customerId === customer.id && j.id !== customer.id) }));
+  const isOpen = (c: JobItem) => c.active && c.remoteActive;
+  const open = customers.filter((c) => isOpen(c.customer));
+  const closed = customers.filter((c) => !isOpen(c.customer));
 
   return (
     <Stack gap="xl" maw={760}>
@@ -100,10 +119,14 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
             <Text fw={500}>Accounting backend</Text>
             <Badge color={backend.ok ? "green" : "yellow"}>{backend.kind}</Badge>
           </Group>
+          <Text size="sm">
+            Time is booked to jobs, and every job belongs to a customer. A customer groups its jobs and can't take time
+            itself.
+          </Text>
           {backend.kind !== "none" && (
             <Text size="sm">
-              Jobs come from QuickBooks and keep their QuickBooks names. Jobs made here are linked or created there on
-              the{" "}
+              Customers and jobs come from QuickBooks and keep their QuickBooks names. Ones made here are linked or
+              created there on the{" "}
               <Anchor component={Link} to="/admin/accounting#jobs">
                 Accounting page
               </Anchor>
@@ -130,30 +153,32 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
             }
           />
           <Text size="xs" c="dimmed">
-            You can also require notes for individual jobs below.
+            You can also require notes for a customer's jobs, or for single jobs, below.
           </Text>
         </Stack>
       </Card>
 
-      <NewJobForm />
+      <NewCustomerForm />
 
       <Stack gap="sm">
-        <Title order={3}>Open jobs</Title>
+        <Title order={3}>Customers</Title>
         {open.length === 0 ? (
-          <Text c="dimmed">No jobs yet. Add one above, or people can create them as they track time.</Text>
+          <Text c="dimmed">
+            No customers yet. Add one above and its jobs under it — or people can make them as they track time.
+          </Text>
         ) : (
-          open.map((j) => <JobRow key={j.id} job={j} fetcher={rows} />)
+          open.map((c) => <CustomerCard key={c.customer.id} customer={c.customer} jobs={c.jobs} fetcher={rows} />)
         )}
       </Stack>
 
       {closed.length > 0 && (
         <Stack gap="sm">
-          <Title order={3}>Closed jobs</Title>
+          <Title order={3}>Closed customers</Title>
           <Text size="sm" c="dimmed">
-            Closed jobs keep their history but can't take new time.
+            A closed customer's jobs keep their history but can't take new time.
           </Text>
-          {closed.map((j) => (
-            <JobRow key={j.id} job={j} fetcher={rows} />
+          {closed.map((c) => (
+            <CustomerCard key={c.customer.id} customer={c.customer} jobs={c.jobs} fetcher={rows} />
           ))}
         </Stack>
       )}
@@ -161,11 +186,11 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
   );
 }
 
-function NewJobForm() {
+function NewCustomerForm() {
   const fetcher = useFetcher<typeof action>();
   useActionFeedback(fetcher.data);
   const form = useRef<HTMLFormElement>(null);
-  // Clear the field once the job exists, ready for the next one.
+  // Clear the field once the customer exists, ready for the next one.
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) form.current?.reset();
   }, [fetcher.state, fetcher.data]);
@@ -174,70 +199,71 @@ function NewJobForm() {
       <fetcher.Form method="post" ref={form}>
         <input type="hidden" name="intent" value="create" />
         <Group align="end" gap="xs">
-          <TextInput name="name" label="New job" maxLength={JOB_NAME_MAX_LENGTH} required style={{ flex: 1 }} />
+          <TextInput name="name" label="New customer" maxLength={JOB_NAME_MAX_LENGTH} required style={{ flex: 1 }} />
           <Button type="submit" loading={fetcher.state !== "idle"}>
-            Add job
+            Add customer
           </Button>
         </Group>
       </fetcher.Form>
+      <Text size="xs" c="dimmed" mt="xs">
+        Jobs are added under their customer, below.
+      </Text>
     </Card>
   );
 }
 
-type JobItem = Route.ComponentProps["loaderData"]["jobs"][number];
-
-function JobRow({ job, fetcher }: { job: JobItem; fetcher: ReturnType<typeof useFetcher<typeof action>> }) {
-  const [renaming, setRenaming] = useState(false);
+function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: JobItem[]; fetcher: RowsFetcher }) {
   const busy = fetcher.state !== "idle";
   const submit = (intent: string, value: string) =>
-    fetcher.submit({ intent, jobId: job.id, value }, { method: "post" });
+    fetcher.submit({ intent, jobId: customer.id, value }, { method: "post" });
+  const open = customer.active && customer.remoteActive;
 
   return (
-    <Card withBorder padding="sm" opacity={job.active ? 1 : 0.7}>
-      <Stack gap="xs">
-        {renaming ? (
-          <fetcher.Form method="post" onSubmit={() => setRenaming(false)}>
-            <input type="hidden" name="intent" value="rename" />
-            <input type="hidden" name="jobId" value={job.id} />
-            <Group align="end" gap="xs">
-              <TextInput
-                name="name"
-                label="Name"
-                defaultValue={job.name}
-                maxLength={JOB_NAME_MAX_LENGTH}
-                required
-                style={{ flex: 1 }}
-              />
-              <Button type="submit" size="sm">
-                Save
-              </Button>
-              <Button variant="subtle" size="sm" onClick={() => setRenaming(false)}>
-                Cancel
-              </Button>
-            </Group>
-          </fetcher.Form>
-        ) : (
-          <Group justify="space-between" wrap="nowrap">
-            <Group gap="xs">
-              <Text fw={500}>{job.fullName}</Text>
-              {job.provisional && !job.remote && (
-                <Badge size="sm" color="yellow" variant="light" component={Link} to="/admin/accounting#jobs" style={{ cursor: "pointer" }}>
-                  not in QuickBooks yet
-                </Badge>
-              )}
-              {job.remote && !job.remoteActive && (
-                <Badge size="sm" color="gray" variant="light">
-                  inactive in QuickBooks
-                </Badge>
-              )}
-            </Group>
-            {!job.remote && (
-              <Button size="compact-xs" variant="subtle" onClick={() => setRenaming(true)}>
-                Rename
-              </Button>
-            )}
-          </Group>
-        )}
+    <Card withBorder padding="sm" opacity={open ? 1 : 0.7} role="group" aria-label={customer.fullName}>
+      <Stack gap="sm">
+        <NameLine job={customer} label={customer.fullName} fetcher={fetcher} />
+        <Group gap="lg">
+          <Switch
+            size="sm"
+            label="Open"
+            checked={customer.active}
+            disabled={busy}
+            onChange={(e) => submit("active", String(e.currentTarget.checked))}
+          />
+          <Switch
+            size="sm"
+            label="Its jobs need a note"
+            checked={customer.requiresNote}
+            disabled={busy}
+            onChange={(e) => submit("requires-note", String(e.currentTarget.checked))}
+          />
+        </Group>
+        <Stack gap="sm" pl="md" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }}>
+          {jobs.length === 0 && (
+            <Text size="sm" c="dimmed">
+              No jobs yet. Time can't be booked to a customer itself.
+            </Text>
+          )}
+          {jobs.map((job) => (
+            <JobRow key={job.id} job={job} customer={customer} fetcher={fetcher} />
+          ))}
+          <AddJobForm customer={customer} />
+        </Stack>
+      </Stack>
+    </Card>
+  );
+}
+
+function JobRow({ job, customer, fetcher }: { job: JobItem; customer: JobItem; fetcher: RowsFetcher }) {
+  const busy = fetcher.state !== "idle";
+  const submit = (intent: string, value: string) => fetcher.submit({ intent, jobId: job.id, value }, { method: "post" });
+  // The rule comes from above: the job's own switch can't turn it off.
+  const inherited = job.noteRequired && !job.requiresNote;
+
+  return (
+    <Box role="group" aria-label={job.fullName} opacity={job.active ? 1 : 0.6}>
+      <Stack gap={4}>
+        <NameLine job={job} label={nameWithin(job, customer)} fetcher={fetcher} />
         <Group gap="lg">
           <Switch
             size="sm"
@@ -248,13 +274,119 @@ function JobRow({ job, fetcher }: { job: JobItem; fetcher: ReturnType<typeof use
           />
           <Switch
             size="sm"
-            label="Needs a note"
-            checked={job.requiresNote}
-            disabled={busy}
+            label={inherited ? "Needs a note (the customer's rule)" : "Needs a note"}
+            checked={job.noteRequired}
+            disabled={busy || inherited}
             onChange={(e) => submit("requires-note", String(e.currentTarget.checked))}
           />
         </Group>
       </Stack>
-    </Card>
+    </Box>
+  );
+}
+
+/** The name, what's known about it in the accounting system, and Rename for names made here. */
+function NameLine({ job, label, fetcher }: { job: JobItem; label: string; fetcher: RowsFetcher }) {
+  const [renaming, setRenaming] = useState(false);
+
+  if (renaming) {
+    return (
+      <fetcher.Form method="post" onSubmit={() => setRenaming(false)}>
+        <input type="hidden" name="intent" value="rename" />
+        <input type="hidden" name="jobId" value={job.id} />
+        <Group align="end" gap="xs">
+          <TextInput
+            name="name"
+            label="Name"
+            defaultValue={job.name}
+            maxLength={JOB_NAME_MAX_LENGTH}
+            required
+            style={{ flex: 1 }}
+          />
+          <Button type="submit" size="sm">
+            Save
+          </Button>
+          <Button variant="subtle" size="sm" onClick={() => setRenaming(false)}>
+            Cancel
+          </Button>
+        </Group>
+      </fetcher.Form>
+    );
+  }
+
+  return (
+    <Group justify="space-between" wrap="nowrap">
+      <Group gap="xs">
+        <Text fw={500}>{label}</Text>
+        {job.provisional && !job.remote && (
+          <Badge
+            size="sm"
+            color="yellow"
+            variant="light"
+            component={Link}
+            to="/admin/accounting#jobs"
+            style={{ cursor: "pointer" }}
+          >
+            not in QuickBooks yet
+          </Badge>
+        )}
+        {job.remote && !job.remoteActive && (
+          <Badge size="sm" color="gray" variant="light">
+            inactive in QuickBooks
+          </Badge>
+        )}
+      </Group>
+      {!job.remote && (
+        <Button size="compact-xs" variant="subtle" onClick={() => setRenaming(true)}>
+          Rename
+        </Button>
+      )}
+    </Group>
+  );
+}
+
+/** "Add a job" inside a customer: a name, and the customer is implied. */
+function AddJobForm({ customer }: { customer: JobItem }) {
+  const fetcher = useFetcher<typeof action>();
+  useActionFeedback(fetcher.data);
+  const [open, setOpen] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.ok) {
+      form.current?.reset();
+      setOpen(false);
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  if (!open) {
+    return (
+      <Group>
+        <Button size="compact-sm" variant="subtle" onClick={() => setOpen(true)}>
+          Add a job
+        </Button>
+      </Group>
+    );
+  }
+  return (
+    <fetcher.Form method="post" ref={form}>
+      <input type="hidden" name="intent" value="create" />
+      <input type="hidden" name="parentId" value={customer.id} />
+      <Group align="end" gap="xs">
+        <TextInput
+          name="name"
+          label={`New job for ${customer.fullName}`}
+          maxLength={JOB_NAME_MAX_LENGTH}
+          required
+          autoFocus
+          style={{ flex: 1 }}
+        />
+        <Button type="submit" size="sm" loading={fetcher.state !== "idle"}>
+          Add job
+        </Button>
+        <Button variant="subtle" size="sm" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </Group>
+    </fetcher.Form>
   );
 }

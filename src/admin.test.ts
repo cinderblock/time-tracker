@@ -28,6 +28,7 @@ let bob = 0;
 let acme = "";
 let acmeInstall = "";
 let other = "";
+let otherJob = "";
 
 beforeEach(() => {
   process.env.TZ = "America/Los_Angeles";
@@ -35,12 +36,15 @@ beforeEach(() => {
   admin = createUser({ name: "Ada Admin", role: "admin", actorUserId: null }).id;
   alice = createUser({ name: "Alice", role: "employee", actorUserId: admin }).id;
   bob = createUser({ name: "Bob", role: "employee", actorUserId: admin }).id;
+  // Two customers; time goes on the jobs under them.
   acme = uuidv7();
   acmeInstall = uuidv7();
   other = uuidv7();
+  otherJob = uuidv7();
   ok(send(admin, "job.create", { jobId: acme, name: "Acme" }));
   ok(send(admin, "job.create", { jobId: acmeInstall, name: "Install", parentId: acme }));
   ok(send(admin, "job.create", { jobId: other, name: "Other Co" }));
+  ok(send(admin, "job.create", { jobId: otherJob, name: "Service", parentId: other }));
 });
 
 function send<T extends OpType>(as: number | { userId: number; actorUserId: number }, type: T, payload: OpPayload<T>, opId = uuidv7()): OpResult {
@@ -199,11 +203,11 @@ describe("rates", () => {
 describe("approval", () => {
   test("approving a week locks the entries, freezes the rate, and skips running timers", () => {
     setRate({ scope: "user", userId: alice, hourlyRate: 40, effectiveFrom: "2026-01-01", actorUserId: admin });
-    const monday = worked(alice, acme, NINE - 2 * 24 * HOUR, 60);
-    const wednesday = worked(alice, other, NINE, 30);
+    const monday = worked(alice, acmeInstall, NINE - 2 * 24 * HOUR, 60);
+    const wednesday = worked(alice, otherJob, NINE, 30);
     const running = uuidv7();
-    ok(send(alice, "timer.start", { entryId: running, jobId: acme, at: NINE + HOUR }));
-    const bobs = worked(bob, acme, NINE, 60);
+    ok(send(alice, "timer.start", { entryId: running, jobId: acmeInstall, at: NINE + HOUR }));
+    const bobs = worked(bob, acmeInstall, NINE, 60);
 
     const result = approveEntries({ userId: alice, from: SUN, to: "2026-09-19", actorUserId: admin, now: NINE + 2 * HOUR });
     expect(result).toEqual({ changed: 2, unchanged: 0, skipped: 1 });
@@ -228,7 +232,7 @@ describe("approval", () => {
   });
 
   test("approved time can't be changed or deleted — not even by an admin — until reopened", () => {
-    const id = worked(alice, acme, NINE, 60);
+    const id = worked(alice, acmeInstall, NINE, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
 
     const edit = send(alice, "entry.update", { entryId: id, note: "late edit" });
@@ -251,7 +255,7 @@ describe("approval", () => {
   });
 
   test("time already sent to accounting is locked, and reopens keeping its link there", () => {
-    const id = worked(alice, acme, NINE, 60);
+    const id = worked(alice, acmeInstall, NINE, 60);
     db().query("UPDATE time_entries SET status = 'synced', remote_txn_id = 'T1' WHERE id = ?").run(id);
     const locked = send(alice, "entry.update", { entryId: id, note: "x" });
     expect(!locked.ok && locked.error).toContain("sent to accounting");
@@ -264,10 +268,10 @@ describe("approval", () => {
   });
 
   test("deleted entries and entries of other people aren't selected by id", () => {
-    const mine = worked(alice, acme, NINE, 60);
-    const gone = worked(alice, acme, NINE + HOUR, 60);
+    const mine = worked(alice, acmeInstall, NINE, 60);
+    const gone = worked(alice, acmeInstall, NINE + HOUR, 60);
     ok(send(alice, "entry.delete", { entryId: gone, at: NINE }));
-    const bobs = worked(bob, acme, NINE, 60);
+    const bobs = worked(bob, acmeInstall, NINE, 60);
     const result = approveEntries({ userId: alice, entryIds: [mine, gone, bobs], actorUserId: admin });
     expect(result.changed).toBe(1);
     expect(getEntry(bobs)!.status).toBe("draft");
@@ -282,7 +286,7 @@ describe("acting for someone", () => {
     ok(
       send({ userId: alice, actorUserId: admin }, "entry.create", {
         entryId,
-        jobId: acme,
+        jobId: acmeInstall,
         workDate: WED,
         durationSeconds: 3600,
       }, opId),
@@ -322,9 +326,9 @@ describe("reports", () => {
     const approved = worked(alice, acmeInstall, NINE, 90);
     approveEntries({ userId: alice, entryIds: [approved], actorUserId: admin });
     setRate({ scope: "user", userId: alice, hourlyRate: 50, effectiveFrom: "2026-01-01", actorUserId: admin });
-    worked(alice, other, NINE + 2 * HOUR, 30);
+    worked(alice, otherJob, NINE + 2 * HOUR, 30);
     const running = uuidv7();
-    ok(send(bob, "timer.start", { entryId: running, jobId: acme, at: NINE }));
+    ok(send(bob, "timer.start", { entryId: running, jobId: acmeInstall, at: NINE }));
 
     const lines = reportLines({ from: SUN, to: "2026-09-19" }, NINE + 45 * MIN);
     expect(lines).toHaveLength(3);
@@ -341,14 +345,15 @@ describe("reports", () => {
       rateFrom: "approval",
       cost: 60,
     });
-    expect(second).toMatchObject({ jobName: "Other Co", hourlyRate: 50, rateFrom: "user", cost: 25 });
+    expect(second).toMatchObject({ jobName: "Other Co:Service", customerName: "Other Co", hourlyRate: 50, rateFrom: "user", cost: 25 });
     expect(third).toMatchObject({ userName: "Bob", status: "open", seconds: 45 * 60, cost: null, endedAt: null });
     expect(third!.runningSince).toBe(NINE);
 
     expect(reportLines({ from: SUN, to: "2026-09-19", categoryId: field.id }, NINE)).toHaveLength(2);
+    // Filtering by the customer covers its jobs.
     expect(reportLines({ from: SUN, to: "2026-09-19", jobId: acme }, NINE).map((l) => l.jobName)).toEqual([
       "Acme:Install",
-      "Acme",
+      "Acme:Install",
     ]);
     expect(reportLines({ from: SUN, to: "2026-09-19", userIds: [bob] }, NINE)).toHaveLength(1);
     expect(reportLines({ from: "2026-09-17", to: "2026-09-19" }, NINE)).toHaveLength(0);
@@ -365,27 +370,27 @@ describe("reports", () => {
   });
 
   test("CSV quotes what needs quoting and defuses formulas", () => {
-    const id = worked(alice, acme, NINE, 90);
+    const id = worked(alice, acmeInstall, NINE, 90);
     ok(send(alice, "entry.update", { entryId: id, note: '=HYPERLINK("x"), then "quotes"\nand a line' }));
     const csv = linesToCsv(reportLines({ from: WED, to: WED }, NINE), "America/Los_Angeles");
     const [header, row] = csv.split("\r\n");
     expect(header).toBe("Date,Person,Category,Customer,Job,Start,End,Hours,Status,Rate,Cost,Note,Entry ID");
-    expect(csv).toContain(`2026-09-16,Alice,,Acme,Acme,9:00 AM,10:30 AM,1.5,Not approved,,,"'=HYPERLINK(""x""), then ""quotes""\nand a line",${id}`);
+    expect(csv).toContain(`2026-09-16,Alice,,Acme,Acme:Install,9:00 AM,10:30 AM,1.5,Not approved,,,"'=HYPERLINK(""x""), then ""quotes""\nand a line",${id}`);
     expect(row!.startsWith("2026-09-16,Alice")).toBe(true);
     expect(csv.endsWith("\r\n")).toBe(true);
   });
 
   test("timesheet: everyone active, plus anyone deactivated who has time that week", () => {
     const carol = createUser({ name: "carol", role: "employee", actorUserId: admin }).id;
-    worked(carol, acme, NINE, 60);
+    worked(carol, acmeInstall, NINE, 60);
     updateUserAccess({ userId: carol, active: false, actorUserId: admin });
     const dave = createUser({ name: "Dave", role: "employee", actorUserId: admin }).id;
     updateUserAccess({ userId: dave, active: false, actorUserId: admin });
 
-    const a = worked(alice, acme, NINE, 60);
-    worked(alice, acme, NINE - 24 * HOUR, 30);
+    const a = worked(alice, acmeInstall, NINE, 60);
+    worked(alice, acmeInstall, NINE - 24 * HOUR, 30);
     approveEntries({ userId: alice, entryIds: [a], actorUserId: admin });
-    ok(send(bob, "timer.start", { entryId: uuidv7(), jobId: acme, at: NINE }));
+    ok(send(bob, "timer.start", { entryId: uuidv7(), jobId: acmeInstall, at: NINE }));
 
     const sheet = timesheet(SUN, {}, NINE + 30 * MIN);
     expect(sheet.days).toEqual(datesBetween(SUN, "2026-09-19"));
@@ -404,10 +409,10 @@ describe("reports", () => {
 
   test("calendar: a block per segment, typed-in durations apart", () => {
     const id = uuidv7();
-    ok(send(alice, "timer.start", { entryId: id, jobId: acme, at: NINE }));
+    ok(send(alice, "timer.start", { entryId: id, jobId: acmeInstall, at: NINE }));
     ok(send(alice, "timer.pause", { entryId: id, at: NINE + 30 * MIN }));
     ok(send(alice, "timer.resume", { entryId: id, at: NINE + HOUR }));
-    ok(send(bob, "entry.create", { entryId: uuidv7(), jobId: other, workDate: WED, durationSeconds: 7200 }));
+    ok(send(bob, "entry.create", { entryId: uuidv7(), jobId: otherJob, workDate: WED, durationSeconds: 7200 }));
 
     const week = calendarWeek(SUN, {}, NINE + 2 * HOUR);
     expect(week.people.map((p) => p.name)).toEqual(["Alice", "Bob"]);
@@ -416,7 +421,7 @@ describe("reports", () => {
       expect.objectContaining({ entryId: id, start: NINE + HOUR, end: null }),
     ]);
     expect(week.untimed).toEqual([
-      expect.objectContaining({ userId: bob, jobName: "Other Co", seconds: 7200, workDate: WED }),
+      expect.objectContaining({ userId: bob, jobName: "Other Co:Service", seconds: 7200, workDate: WED }),
     ]);
     expect(calendarWeek(SUN, { userIds: [bob] }, NINE).blocks).toHaveLength(0);
   });

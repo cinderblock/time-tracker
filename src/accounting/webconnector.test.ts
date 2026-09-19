@@ -102,7 +102,7 @@ describe("the Web Connector", () => {
     const admin = createUser({ name: "Ada", role: "admin", actorUserId: null }).id;
     const alice = createUser({ name: "Alice", role: "employee", actorUserId: admin }).id;
     linkPerson({ userId: alice, remoteId: "E-ALICE", actorUserId: admin });
-    const acme = listJobs().find((j) => j.remoteId === "C-ACME")!.id;
+    const acme = listJobs().find((j) => j.remoteId === "C-ACME-2")!.id;
     const ids = [0, 1, 2].map((i) => {
       const entryId = uuidv7();
       const r = applyOp(alice, {
@@ -139,7 +139,7 @@ describe("the Web Connector", () => {
     session();
     const admin = createUser({ name: "Ada", role: "admin", actorUserId: null }).id;
     linkPerson({ userId: admin, remoteId: "E-ALICE", actorUserId: admin });
-    const acme = listJobs()[0]!.id;
+    const acme = listJobs().find((j) => j.remoteId === "C-ACME-2")!.id;
     const make = () => {
       const entryId = uuidv7();
       applyOp(admin, { opId: uuidv7(), type: "entry.create", deviceId: "t", clientTime: now, payload: { entryId, jobId: acme, workDate: "2026-09-16", durationSeconds: 3600 } }, now);

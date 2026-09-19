@@ -1,7 +1,7 @@
 import { audit } from "./audit.ts";
 import { db } from "./db.server.ts";
 import { type EntryStatus, isEditable, lockedReason } from "./entry-status.ts";
-import { requireBookableJob } from "./jobs.ts";
+import { requireBookableJob, resolveJob } from "./jobs.ts";
 import { MAX_ENTRY_SECONDS } from "./ops-schema.ts";
 import { OpError } from "./op-error.ts";
 import { requireNoteOnStop } from "./settings.ts";
@@ -179,11 +179,11 @@ function cleanNote(note: string | null | undefined): string | null | undefined {
   return trimmed === "" ? null : trimmed;
 }
 
-/** Whether stopping a timer on this job needs a note. */
+/** Whether stopping a timer on this job needs a note: the global rule, the job's own, or its customer's. */
 export function noteRequiredFor(jobId: string | null): boolean {
   if (requireNoteOnStop()) return true;
   if (!jobId) return false;
-  return db().query<{ r: number }, [string]>("SELECT requires_note AS r FROM jobs WHERE id = ?").get(jobId)?.r === 1;
+  return resolveJob(jobId)?.noteRequired ?? false;
 }
 
 export interface LocationFix {

@@ -2,14 +2,15 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { db } from "./db.server.ts";
 import { getEntry, getOpenEntry, listEntriesForDate, totalsByDate } from "./entries.ts";
+import { loadDay } from "../app/tracker.server.ts";
 import { getJob, listJobs, recentJobIds, updateJob } from "./jobs.ts";
-import { listNotesForDate } from "./notes.ts";
+import { listNotesForDate, pendingNotesBefore } from "./notes.ts";
 import { applyOp, applyOps } from "./ops.ts";
 import type { OpPayload, OpResult, OpType } from "./ops-schema.ts";
 import { proposeRollup, rollupProblems } from "./rollup.ts";
 import { setRequireNoteOnStop } from "./settings.ts";
 import { freshDb } from "./testing/db.ts";
-import { createUser } from "./users.ts";
+import { createUser, setTrackingMode } from "./users.ts";
 import { uuidv7, uuidv7Time } from "./uuid.ts";
 
 const MIN = 60_000;
@@ -19,6 +20,7 @@ const NINE = Date.parse("2026-09-16T16:00:00Z");
 const TODAY = "2026-09-16";
 
 let userId = 0;
+let customer = "";
 let jobA = "";
 let jobB = "";
 
@@ -26,10 +28,12 @@ beforeEach(() => {
   process.env.TZ = "America/Los_Angeles";
   freshDb();
   userId = createUser({ name: "Worker", role: "employee", actorUserId: null }).id;
+  customer = uuidv7();
   jobA = uuidv7();
   jobB = uuidv7();
-  ok(send("job.create", { jobId: jobA, name: "Alpha" }));
-  ok(send("job.create", { jobId: jobB, name: "Bravo" }));
+  ok(send("job.create", { jobId: customer, name: "Acme" }));
+  ok(send("job.create", { jobId: jobA, name: "Alpha", parentId: customer }));
+  ok(send("job.create", { jobId: jobB, name: "Bravo", parentId: customer }));
 });
 
 function send<T extends OpType>(type: T, payload: OpPayload<T>, as = userId, opId = uuidv7()): OpResult {
@@ -338,12 +342,45 @@ describe("the op ledger", () => {
 
 describe("jobs", () => {
   test("names are unique per level, case-insensitively, and can't contain ':'", () => {
-    rejected(send("job.create", { jobId: uuidv7(), name: "alpha" }), "conflict");
+    rejected(send("job.create", { jobId: uuidv7(), name: "alpha", parentId: customer }), "conflict");
+    rejected(send("job.create", { jobId: uuidv7(), name: "ACME" }), "conflict");
     rejected(send("job.create", { jobId: uuidv7(), name: "A:B" }), "invalid");
     const child = uuidv7();
     ok(send("job.create", { jobId: child, name: "Alpha", parentId: jobB }));
-    expect(getJob(child)!.fullName).toBe("Bravo:Alpha");
+    expect(getJob(child)!.fullName).toBe("Acme:Bravo:Alpha");
     expect(getJob(child)!.provisional).toBe(false); // no accounting backend to link to
+    expect(getJob(child)).toMatchObject({ customerId: customer, bookable: true });
+  });
+
+  test("time goes on jobs, never on a customer", () => {
+    expect(getJob(customer)).toMatchObject({ open: true, bookable: false, customerId: customer });
+    expect(getJob(jobA)).toMatchObject({ open: true, bookable: true, customerId: customer });
+    const error = rejected(send("timer.start", { entryId: uuidv7(), jobId: customer, at: NINE }), "conflict");
+    expect(error).toContain("is a customer");
+    rejected(send("entry.create", { entryId: uuidv7(), jobId: customer, workDate: TODAY, durationSeconds: 60 }), "conflict");
+    rejected(send("note.create", { noteId: uuidv7(), at: NINE, text: "x", jobId: customer }), "conflict");
+    expect(listEntriesForDate(userId, TODAY)).toHaveLength(0);
+  });
+
+  test("a customer's note rule applies to its jobs, and closing it closes them", () => {
+    const admin = createUser({ name: "Admin", role: "admin", actorUserId: null });
+    updateJob({ id: customer, requiresNote: true, actorUserId: admin.id });
+    expect(getJob(jobA)).toMatchObject({ requiresNote: false, noteRequired: true });
+    const id = uuidv7();
+    ok(send("timer.start", { entryId: id, jobId: jobA, at: NINE }));
+    rejected(send("timer.stop", { entryId: id, at: NINE + MIN }), "note_required");
+    ok(send("timer.stop", { entryId: id, at: NINE + MIN, note: "Done" }));
+    expect(recentJobIds(userId)).toEqual([jobA]);
+
+    updateJob({ id: customer, active: false, actorUserId: admin.id });
+    expect(getJob(jobA)).toMatchObject({ active: true, open: false, bookable: false });
+    expect(rejected(send("timer.start", { entryId: uuidv7(), jobId: jobA, at: NINE }), "conflict")).toContain("closed customer");
+    expect(listJobs()).toEqual([]);
+    expect(listJobs({ includeInactive: true }).map((j) => j.name)).toEqual(["Acme", "Alpha", "Bravo"]);
+    expect(recentJobIds(userId)).toEqual([]);
+
+    updateJob({ id: customer, active: true, actorUserId: admin.id });
+    expect(getJob(jobA)!.bookable).toBe(true);
   });
 
   test("recent jobs follow what the person last booked", () => {
@@ -352,7 +389,7 @@ describe("jobs", () => {
     // created_at comes from the op's server time; give the second a later one.
     db().query("UPDATE time_entries SET created_at = created_at + 1000 WHERE job_id = ?").run(jobB);
     expect(recentJobIds(userId)).toEqual([jobB, jobA]);
-    expect(listJobs().map((j) => j.name)).toEqual(["Alpha", "Bravo"]);
+    expect(listJobs().map((j) => j.name)).toEqual(["Acme", "Alpha", "Bravo"]);
   });
 });
 
@@ -443,7 +480,7 @@ describe("notes and rollup", () => {
     const note = uuidv7();
     ok(send("note.create", { noteId: note, at: NINE, text: "Framing", jobId: jobA }));
     const closed = uuidv7();
-    ok(send("job.create", { jobId: closed, name: "Closed" }));
+    ok(send("job.create", { jobId: closed, name: "Closed", parentId: customer }));
     const admin = createUser({ name: "Admin", role: "admin", actorUserId: null });
     updateJob({ id: closed, active: false, actorUserId: admin.id });
 
@@ -456,6 +493,34 @@ describe("notes and rollup", () => {
     );
     expect(listEntriesForDate(userId, TODAY)).toHaveLength(0);
     expect(listNotesForDate(userId, TODAY)[0]!.rolledIntoEntryId).toBeNull();
+  });
+
+  test("in notes mode, the latest earlier day with notes not yet turned into time holds later days", () => {
+    const yesterday = NINE - 24 * HOUR; // 2026-09-15
+    const older = NINE - 4 * 24 * HOUR; // 2026-09-12
+    const n1 = uuidv7();
+    ok(send("note.create", { noteId: n1, at: yesterday, text: "Framing", jobId: jobA }));
+    ok(send("note.create", { noteId: uuidv7(), at: older, text: "Older", jobId: jobA }));
+    const gone = uuidv7();
+    ok(send("note.create", { noteId: gone, at: yesterday + HOUR, text: "Mistake" }));
+    ok(send("note.delete", { noteId: gone, at: NINE }));
+
+    expect(pendingNotesBefore(userId, TODAY)).toEqual({ date: "2026-09-15", count: 1 });
+    expect(pendingNotesBefore(userId, "2026-09-15")).toEqual({ date: "2026-09-12", count: 1 });
+    expect(pendingNotesBefore(userId, "2026-09-12")).toBeNull();
+
+    // Only in notes mode does the tracking screen hear about it.
+    expect(loadDay(userId, TODAY)).toMatchObject({ mode: "timer", notesToRollUp: null });
+    setTrackingMode({ userId, mode: "notes", actorUserId: userId });
+    expect(loadDay(userId, TODAY)).toMatchObject({ mode: "notes", notesToRollUp: { date: "2026-09-15", count: 1 } });
+
+    ok(
+      send("rollup.commit", {
+        workDate: "2026-09-15",
+        lines: [{ entryId: uuidv7(), jobId: jobA, startedAt: yesterday, endedAt: yesterday + HOUR, noteIds: [n1] }],
+      }),
+    );
+    expect(loadDay(userId, TODAY).notesToRollUp).toEqual({ date: "2026-09-12", count: 1 });
   });
 
   test("notes from another day, or someone else's, can't be committed", () => {

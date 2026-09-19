@@ -32,13 +32,15 @@ const op = <T extends OpType>(type: T, payload: OpPayload<T>): Op =>
 beforeEach(() => {
   freshDb();
   userId = createUser({ name: "W", role: "employee", actorUserId: null }).id;
+  const customer = uuidv7();
   jobA = uuidv7();
   jobB = uuidv7();
-  for (const [id, name] of [
-    [jobA, "Alpha"],
-    [jobB, "Bravo"],
+  for (const [id, name, parentId] of [
+    [customer, "Acme", null],
+    [jobA, "Alpha", customer],
+    [jobB, "Bravo", customer],
   ] as const) {
-    const r = applyOp(userId, op("job.create", { jobId: id, name }), NINE);
+    const r = applyOp(userId, op("job.create", { jobId: id, name, parentId }), NINE);
     if (!r.ok) throw new Error(r.error);
   }
 });

@@ -2,6 +2,7 @@ import { audit } from "./audit.ts";
 import { randomToken } from "./crypto.ts";
 import { db } from "./db.server.ts";
 import { NAME_MAX_LENGTH } from "./limits.ts";
+import { type TrackingMode, isTrackingMode } from "./tracking-mode.ts";
 
 export type Role = "admin" | "employee";
 
@@ -12,6 +13,8 @@ export interface User {
   role: Role;
   categoryId: number | null;
   webauthnUserId: string;
+  /** How they record time (src/tracking-mode.ts). Their own choice. */
+  trackingMode: TrackingMode;
   active: boolean;
   createdAt: number;
   updatedAt: number;
@@ -24,13 +27,14 @@ interface UserRow {
   role: Role;
   category_id: number | null;
   webauthn_user_id: string;
+  tracking_mode: TrackingMode;
   active: number;
   created_at: number;
   updated_at: number;
 }
 
 const COLUMNS =
-  "id, name, email, role, category_id, webauthn_user_id, active, created_at, updated_at";
+  "id, name, email, role, category_id, webauthn_user_id, tracking_mode, active, created_at, updated_at";
 
 function toUser(r: UserRow): User {
   return {
@@ -40,6 +44,7 @@ function toUser(r: UserRow): User {
     role: r.role,
     categoryId: r.category_id,
     webauthnUserId: r.webauthn_user_id,
+    trackingMode: r.tracking_mode,
     active: r.active === 1,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -149,6 +154,23 @@ export function renameUser(args: { userId: number; name: string; actorUserId: nu
     action: "rename",
     before: { name: user.name },
     after: { name },
+  });
+  return mustGet(user.id);
+}
+
+/** How this person records time. Their own choice, so no admin is needed. */
+export function setTrackingMode(args: { userId: number; mode: unknown; actorUserId: number }): User {
+  const user = mustGet(args.userId);
+  if (!isTrackingMode(args.mode)) throw new UserInputError("Pick timers or notes.");
+  if (args.mode === user.trackingMode) return user;
+  db().query("UPDATE users SET tracking_mode = ?, updated_at = ? WHERE id = ?").run(args.mode, Date.now(), user.id);
+  audit({
+    actorUserId: args.actorUserId,
+    entity: "user",
+    entityId: user.id,
+    action: "tracking_mode",
+    before: { trackingMode: user.trackingMode },
+    after: { trackingMode: args.mode },
   });
   return mustGet(user.id);
 }

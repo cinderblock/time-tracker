@@ -6,35 +6,51 @@ import { OpError } from "./op-error.ts";
 import { UserInputError } from "./users.ts";
 
 /**
- * Jobs — what time is booked against.
+ * Jobs — what time is booked against — and the customers they belong to.
  *
- * With an accounting backend, jobs normally arrive from it (remote-lists.ts
- * pulls them). Anyone may still create one here when the work can't wait for
- * the real job to exist; such jobs are `provisional` until an admin links them
- * to a real one (merging them) or has them created there. With no backend
- * there is nothing to link to, so locally created jobs are simply jobs.
+ * The rows form a tree. A top-level row is a *customer*; anything under it is
+ * a *job* (jobs can nest further, as they do in accounting systems). Time is
+ * booked to jobs only: a customer groups its jobs and never takes time
+ * itself. Closing a customer closes its jobs, and a customer's "needs a
+ * note" rule applies to them.
+ *
+ * With an accounting backend, customers and jobs normally arrive from it
+ * (remote-lists.ts pulls them). Anyone may still create one here when the
+ * work can't wait for the real one to exist; such rows are `provisional`
+ * until an admin links them to a real one (merging them) or has them created
+ * there. With no backend there is nothing to link to, so locally created
+ * rows are simply the list.
  */
 
 export interface Job {
   id: string;
   name: string;
-  /** "Parent:Child" path, the way accounting systems display nested jobs. */
+  /** "Customer:Job" path, the way accounting systems display nested jobs. */
   fullName: string;
   parentId: string | null;
+  /** The top of this row's tree — its customer. A customer's own id. */
+  customerId: string;
   remoteId: string | null;
-  /** Whether the accounting system has it active. Always true for local jobs. */
+  /** Whether the accounting system has it active. Always true for local rows. */
   remoteActive: boolean;
   provisional: boolean;
-  /** Set on a provisional job that was linked to a real one: the job it became. */
+  /** Set on a provisional row that was linked to a real one: the row it became. */
   mergedInto: string | null;
   /** An admin asked for it to be created in the accounting system. */
   createRequestedAt: number | null;
   /** Why the last attempt to create it there failed. */
   syncError: string | null;
   defaultServiceItemId: string | null;
+  /** This row's own "needs a note" switch. `noteRequired` is the rule in force. */
   requiresNote: boolean;
-  /** Open here. A job can take time only when this and `remoteActive` are both true. */
+  /** Stopping a timer here needs a note: its own switch, or one above it. */
+  noteRequired: boolean;
+  /** Open here (the admin's switch). Independent of anything above it. */
   active: boolean;
+  /** Open, active in the accounting system and not merged — and so is everything above it. */
+  open: boolean;
+  /** Time can be booked here: open, and a job rather than a customer. */
+  bookable: boolean;
   createdBy: number | null;
   createdAt: number;
 }
@@ -63,61 +79,72 @@ function allRows(): JobRow[] {
   return db().query<JobRow, []>(`SELECT ${COLUMNS} FROM jobs`).all();
 }
 
-function withFullNames(rows: JobRow[]): Job[] {
+const selfOpen = (r: JobRow) => r.active === 1 && r.remote_active === 1 && r.merged_into == null;
+
+/** Rows to Jobs, with everything that depends on the rows above each one. */
+function hydrate(rows: JobRow[]): Job[] {
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const fullName = (row: JobRow): string => {
-    const parts = [row.name];
-    const seen = new Set([row.id]);
-    let parent = row.parent_id ? byId.get(row.parent_id) : undefined;
+  return rows.map((r) => {
+    const names = [r.name];
+    let open = selfOpen(r);
+    let noteRequired = r.requires_note === 1;
+    let top = r;
     // `seen` guards against a cycle ever sneaking into the data.
-    while (parent && !seen.has(parent.id)) {
-      parts.unshift(parent.name);
-      seen.add(parent.id);
-      parent = parent.parent_id ? byId.get(parent.parent_id) : undefined;
+    const seen = new Set([r.id]);
+    for (let p = r.parent_id ? byId.get(r.parent_id) : undefined; p && !seen.has(p.id); ) {
+      names.unshift(p.name);
+      seen.add(p.id);
+      open &&= selfOpen(p);
+      noteRequired ||= p.requires_note === 1;
+      top = p;
+      p = p.parent_id ? byId.get(p.parent_id) : undefined;
     }
-    return parts.join(":");
-  };
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    fullName: fullName(r),
-    parentId: r.parent_id,
-    remoteId: r.remote_id,
-    remoteActive: r.remote_active === 1,
-    provisional: r.provisional === 1,
-    mergedInto: r.merged_into,
-    createRequestedAt: r.create_requested_at,
-    syncError: r.sync_error,
-    defaultServiceItemId: r.default_service_item_id,
-    requiresNote: r.requires_note === 1,
-    active: r.active === 1,
-    createdBy: r.created_by,
-    createdAt: r.created_at,
-  }));
+    return {
+      id: r.id,
+      name: r.name,
+      fullName: names.join(":"),
+      parentId: r.parent_id,
+      customerId: top.id,
+      remoteId: r.remote_id,
+      remoteActive: r.remote_active === 1,
+      provisional: r.provisional === 1,
+      mergedInto: r.merged_into,
+      createRequestedAt: r.create_requested_at,
+      syncError: r.sync_error,
+      defaultServiceItemId: r.default_service_item_id,
+      requiresNote: r.requires_note === 1,
+      noteRequired,
+      active: r.active === 1,
+      open,
+      bookable: open && r.parent_id != null,
+      createdBy: r.created_by,
+      createdAt: r.created_at,
+    };
+  });
 }
 
-/** Whether time can be booked against a job right now. */
-export const isBookable = (job: Pick<Job, "active" | "remoteActive" | "mergedInto">) =>
-  job.active && job.remoteActive && job.mergedInto == null;
+const byFullName = (a: Job, b: Job) => a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" });
 
 /**
- * All jobs, sorted by full name. Closed ones only when asked for. Jobs merged
- * into another are never listed: they live on as the job they became.
+ * Customers and jobs, sorted by full name. Open ones by default — customers
+ * included, so check `bookable` before booking — or everything when asked.
+ * Rows merged into another are never listed: they live on as the row they
+ * became.
  */
 export function listJobs(opts: { includeInactive?: boolean } = {}): Job[] {
-  return withFullNames(allRows())
-    .filter((j) => j.mergedInto == null && (opts.includeInactive || isBookable(j)))
-    .sort((a, b) => a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" }));
+  return hydrate(allRows())
+    .filter((j) => j.mergedInto == null && (opts.includeInactive || j.open))
+    .sort(byFullName);
 }
 
-/** A job by id, including merged ones (use `resolveJob` to follow a merge). */
+/** A row by id, including merged ones (use `resolveJob` to follow a merge). */
 export function getJob(id: string): Job | null {
-  return withFullNames(allRows()).find((j) => j.id === id) ?? null;
+  return hydrate(allRows()).find((j) => j.id === id) ?? null;
 }
 
-/** A job by id, following merges to the job it became. */
+/** A row by id, following merges to the row it became. */
 export function resolveJob(id: string): Job | null {
-  const all = new Map(withFullNames(allRows()).map((j) => [j.id, j]));
+  const all = new Map(hydrate(allRows()).map((j) => [j.id, j]));
   let job = all.get(id);
   const seen = new Set<string>();
   while (job?.mergedInto && !seen.has(job.id)) {
@@ -139,6 +166,8 @@ export function requireBookableJob(id: string): Job {
   if (!job.remoteActive) {
     throw new OpError("conflict", `“${job.fullName}” is inactive in the accounting system. Pick another job.`);
   }
+  if (!job.parentId) throw new OpError("conflict", `“${job.fullName}” is a customer. Pick one of its jobs.`);
+  if (!job.open) throw new OpError("conflict", `“${job.fullName}” is under a closed customer. Pick another job.`);
   return job;
 }
 
@@ -162,6 +191,7 @@ function nameTaken(name: string, parentId: string | null, exceptId: string | nul
   );
 }
 
+/** A new customer (no parent) or job (under one). */
 export function createJob(args: {
   id: string;
   name: string;
@@ -172,11 +202,14 @@ export function createJob(args: {
   const now = args.now ?? Date.now();
   const name = normalizeJobName(args.name);
   const parent = args.parentId ? resolveJob(args.parentId) : null;
-  if (args.parentId && !parent) throw new OpError("not_found", "The parent job doesn't exist.");
+  if (args.parentId && !parent) throw new OpError("not_found", "The customer doesn't exist.");
   const parentId = parent?.id ?? null;
 
   if (nameTaken(name, parentId, null)) {
-    throw new OpError("conflict", `There's already a job called “${name}”${parentId ? " there" : ""}.`);
+    throw new OpError(
+      "conflict",
+      parentId ? `“${parent!.fullName}” already has a job called “${name}”.` : `There's already a customer called “${name}”.`,
+    );
   }
   if (getJob(args.id)) throw new OpError("conflict", "A job with that id already exists.");
 
@@ -211,14 +244,14 @@ export function updateJob(args: {
   let name = job.name;
   if (args.name !== undefined && args.name.trim() !== job.name) {
     if (job.remoteId) {
-      throw new UserInputError("This job's name comes from the accounting system. Rename it there.");
+      throw new UserInputError("This name comes from the accounting system. Change it there.");
     }
     try {
       name = normalizeJobName(args.name);
     } catch (err) {
       throw new UserInputError(err instanceof Error ? err.message : "Invalid name.");
     }
-    if (nameTaken(name, job.parentId, job.id)) throw new UserInputError(`There's already a job called “${name}”.`);
+    if (nameTaken(name, job.parentId, job.id)) throw new UserInputError(`There's already one called “${name}” there.`);
   }
   const active = args.active ?? job.active;
   const requiresNote = args.requiresNote ?? job.requiresNote;
@@ -240,16 +273,17 @@ export function updateJob(args: {
 
 /** The bookable jobs a person booked most recently, newest first — for one-tap switching. */
 export function recentJobIds(userId: number, limit = 6): string[] {
+  const bookable = new Set(listJobs().filter((j) => j.bookable).map((j) => j.id));
   return db()
-    .query<{ job_id: string }, [number, number]>(
-      `SELECT e.job_id
-         FROM time_entries e
-         JOIN jobs j ON j.id = e.job_id AND j.active = 1 AND j.remote_active = 1 AND j.merged_into IS NULL
-        WHERE e.user_id = ? AND e.deleted_at IS NULL
-        GROUP BY e.job_id
-        ORDER BY MAX(e.created_at) DESC
-        LIMIT ?`,
+    .query<{ job_id: string }, [number]>(
+      `SELECT job_id
+         FROM time_entries
+        WHERE user_id = ? AND deleted_at IS NULL AND job_id IS NOT NULL
+        GROUP BY job_id
+        ORDER BY MAX(created_at) DESC`,
     )
-    .all(userId, limit)
-    .map((r) => r.job_id);
+    .all(userId)
+    .map((r) => r.job_id)
+    .filter((id) => bookable.has(id))
+    .slice(0, limit);
 }

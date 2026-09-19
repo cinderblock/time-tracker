@@ -106,12 +106,12 @@ test("set up: the first admin, and QuickBooks' lists", async ({ browser }) => {
   await expect(page.getByText(/Lists last refreshed/)).toBeVisible();
 
   await page.goto("/admin/jobs");
-  await expect(page.getByText("Acme:Phase 2", { exact: true })).toBeVisible();
-  // Names come from QuickBooks: no renaming here.
-  const acme = page.locator(".mantine-Card-root", { hasText: "Acme:Phase 2" });
+  // Customers with their jobs under them; names come from QuickBooks, so no renaming here.
+  const acme = page.getByRole("group", { name: "Acme", exact: true });
+  await expect(acme.getByText("Phase 2", { exact: true })).toBeVisible();
   await expect(acme.getByRole("button", { name: "Rename" })).toHaveCount(0);
-  await expect(page.getByText("Old Client", { exact: true })).toBeVisible();
-  await expect(page.locator(".mantine-Card-root", { hasText: "Old Client" }).getByText("inactive in QuickBooks")).toBeVisible();
+  const old = page.getByRole("group", { name: "Old Client", exact: true });
+  await expect(old.getByText("inactive in QuickBooks")).toBeVisible();
 });
 
 test("link a person, pick default items, and send approved time", async () => {
@@ -125,12 +125,14 @@ test("link a person, pick default items, and send approved time", async () => {
   await choose(page.getByRole("combobox", { name: "Default payroll item" }), "Hourly");
   await expect(toast("Default payroll item saved.")).toBeVisible();
 
-  // Some time on a real job, and some on a job made up on the spot.
+  // Some time on a real job, and some on a job made up on the spot under a real customer.
   await page.goto("/admin/jobs");
-  await page.getByLabel("New job").fill("Pop-up job");
-  await page.getByRole("button", { name: "Add job" }).click();
-  await expect(page.locator(".mantine-Card-root", { hasText: "Pop-up job" }).getByText("not in QuickBooks yet")).toBeVisible();
-  await addTime("Acme:Phase 2", "2", "0");
+  const acme = page.getByRole("group", { name: "Acme", exact: true });
+  await acme.getByRole("button", { name: "Add a job" }).click();
+  await acme.getByLabel("New job for Acme").fill("Pop-up job");
+  await acme.getByRole("button", { name: "Add job", exact: true }).click();
+  await expect(page.getByRole("group", { name: "Acme:Pop-up job" }).getByText("not in QuickBooks yet")).toBeVisible();
+  await addTime("Phase 2", "2", "0");
   await addTime("Pop-up job", "0", "45");
   await approveWeek();
 
@@ -138,7 +140,7 @@ test("link a person, pick default items, and send approved time", async () => {
   await expect(stat("Ready to send")).toContainText("1");
   await expect(stat("Waiting on a fix")).toContainText("1");
   const waiting = page.getByRole("alert").filter({ hasText: "Approved time that can't be sent yet" });
-  await expect(waiting).toContainText("The job “Pop-up job” was made here and isn't in the accounting system yet. (1 entry, 45m)");
+  await expect(waiting).toContainText("The job “Acme:Pop-up job” was made here and isn't in the accounting system yet. (1 entry, 45m)");
   await expect(waiting.getByRole("link", { name: "Link jobs" })).toBeVisible();
 
   await sendNow("Sent 1 request.");
@@ -159,34 +161,41 @@ test("link a person, pick default items, and send approved time", async () => {
 
 test("a job made here is linked to the real one, and its time follows", async () => {
   const card = page.locator(".mantine-Card-root", { hasText: "Pop-up job" });
-  await choose(card.getByRole("combobox", { name: "Link Pop-up job to" }), "Acme");
+  const link = card.getByRole("combobox", { name: "Link Acme:Pop-up job to" });
+  await link.click();
+  // Only QuickBooks jobs are offered: time never lands on a customer.
+  await expect(page.getByRole("option", { name: "Acme", exact: true })).toHaveCount(0);
+  await page.getByRole("option", { name: "Acme:Phase 2", exact: true }).click();
   await expect(toast("Linked. Its time now belongs to that job.")).toBeVisible();
   await expect(page.getByText("None. Every job is in QuickBooks.")).toBeVisible();
   await sendNow("Sent 1 request.");
   expect((await bridge()).records.map((r) => [r.customer, r.duration])).toEqual([
     ["C-ACME-2", "PT2H0M0S"],
-    ["C-ACME", "PT0H45M0S"],
+    ["C-ACME-2", "PT0H45M0S"],
   ]);
 
   // The tracking screen shows the time under the real job now.
   await page.goto("/");
-  await expect(page.locator(".mantine-Card-root", { hasText: "45m" })).toContainText("Acme");
+  await expect(page.locator(".mantine-Card-root", { hasText: "45m" })).toContainText("Acme:Phase 2");
   await expect(page.getByText("in accounting")).toHaveCount(2);
 });
 
 test("a job made here can be created in QuickBooks instead", async () => {
   await page.goto("/admin/jobs");
-  await page.getByLabel("New job").fill("Brand New Site");
-  await page.getByRole("button", { name: "Add job" }).click();
+  const acme = page.getByRole("group", { name: "Acme", exact: true });
+  await acme.getByRole("button", { name: "Add a job" }).click();
+  await acme.getByLabel("New job for Acme").fill("Brand New Site");
+  await acme.getByRole("button", { name: "Add job", exact: true }).click();
+  await expect(page.getByRole("group", { name: "Acme:Brand New Site" })).toBeVisible();
   await page.goto("/admin/accounting");
   await page.locator(".mantine-Card-root", { hasText: "Brand New Site" }).getByRole("button", { name: "Create in QuickBooks" }).click();
   await expect(toast("It will be created at the next contact. Sent 1 request.")).toBeVisible();
-  expect((await bridge()).customers.map((c) => c.fullName)).toContain("Brand New Site");
+  expect((await bridge()).customers.map((c) => c.fullName)).toContain("Acme:Brand New Site");
   await expect(page.getByText("None. Every job is in QuickBooks.")).toBeVisible();
 });
 
 test("while QuickBooks is closed nothing is lost, and it goes once it's back", async () => {
-  await addTime("Acme", "0", "30");
+  await addTime("Phase 2", "0", "30");
   await approveWeek();
   await bridgeControl("down", { down: true });
   await page.goto("/admin/accounting");
@@ -201,7 +210,7 @@ test("while QuickBooks is closed nothing is lost, and it goes once it's back", a
 });
 
 test("a refusal is shown, and can be retried", async () => {
-  await addTime("Acme", "0", "15");
+  await addTime("Phase 2", "0", "15");
   await approveWeek();
   await page.goto("/admin/accounting");
   // After the page's own health check, so it's the time that's refused.

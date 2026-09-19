@@ -113,11 +113,16 @@ function applyOne(s: State, op: Op): void {
       const p = op.payload;
       if (m.jobs.some((j) => j.id === p.jobId)) return;
       const parent = jobOf(m, p.parentId);
+      const name = p.name.trim();
+      // A new customer (no parent) only groups; a job under a customer
+      // takes time and inherits the customer's note rule.
       m.jobs.push({
         id: p.jobId,
-        fullName: parent ? `${parent.fullName}:${p.name.trim()}` : p.name.trim(),
-        requiresNote: false,
-        active: true,
+        name,
+        fullName: parent ? `${parent.fullName}:${name}` : name,
+        parentId: parent?.id ?? null,
+        requiresNote: parent?.requiresNote ?? false,
+        bookable: parent != null,
         provisional: false,
       });
       m.jobs.sort((a, b) => a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" }));
@@ -332,6 +337,9 @@ function applyOne(s: State, op: Op): void {
 
     case "rollup.commit": {
       const p = op.payload;
+      // Rolling up the day that was holding this one back frees it — as
+      // far as this copy can tell; the server's next copy is the word.
+      if (m.notesToRollUp?.date === p.workDate) m.notesToRollUp = null;
       if (p.workDate !== m.workDate) return;
       for (const line of p.lines) {
         if (findEntry(m, line.entryId)) continue;

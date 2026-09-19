@@ -69,7 +69,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     }))
     .filter((g) => g.items.length > 0);
   const remoteJobs = jobs.filter((j) => j.remoteId);
-  const byName = new Map(remoteJobs.map((j) => [j.fullName.toLowerCase(), j.id]));
+  const byName = new Map(remoteJobs.map((j) => [j.fullName.toLowerCase(), j]));
   const categoryItems = categoryPayrollItems();
   const overview = syncOverview();
 
@@ -109,15 +109,25 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     categories: listCategories().map((c) => ({ id: c.id, name: c.name, payrollItemId: categoryItems.get(c.id) ?? null })),
     provisional: jobs
       .filter((j) => !j.remoteId)
-      .map((j) => ({
-        id: j.id,
-        fullName: j.fullName,
-        active: j.active,
-        createRequested: j.createRequestedAt != null,
-        error: j.syncError,
-        suggestion: byName.get(j.fullName.toLowerCase()) ?? null,
-      })),
-    remoteJobs: remoteJobs.map((j) => ({ value: j.id, label: j.remoteActive ? j.fullName : `${j.fullName} (inactive)` })),
+      .map((j) => {
+        // A job's time has to land on a job there, never on a customer.
+        const isJob = j.parentId != null;
+        const sameName = byName.get(j.fullName.toLowerCase());
+        return {
+          id: j.id,
+          fullName: j.fullName,
+          isJob,
+          active: j.active,
+          createRequested: j.createRequestedAt != null,
+          error: j.syncError,
+          suggestion: sameName && !(isJob && !sameName.parentId) ? sameName.id : null,
+        };
+      }),
+    remoteJobs: remoteJobs.map((j) => ({
+      value: j.id,
+      label: j.remoteActive ? j.fullName : `${j.fullName} (inactive)`,
+      customer: j.parentId == null,
+    })),
     jobServiceItems: remoteJobs
       .filter((j) => j.defaultServiceItemId)
       .map((j) => ({ id: j.id, fullName: j.fullName, itemId: j.defaultServiceItemId! })),
@@ -491,8 +501,9 @@ function JobsSection({ data }: { data: Data }) {
     <Stack gap="sm" id="jobs">
       <Title order={3}>Jobs made here</Title>
       <Text size="sm" c="dimmed">
-        Jobs people created while tracking aren't in QuickBooks. Link each to the QuickBooks job it really is — its time
-        moves there — or have it created in QuickBooks as it is.
+        Customers and jobs people created while tracking aren't in QuickBooks. Link each to what it really is there —
+        its time moves along — or have it created in QuickBooks as it is. A job can only be linked to a QuickBooks job,
+        since time is never booked to a customer.
       </Text>
       {data.provisional.length === 0 ? (
         <Text size="sm">None. Every job is in QuickBooks.</Text>
@@ -506,6 +517,7 @@ function JobsSection({ data }: { data: Data }) {
 function ProvisionalJob({ job, data, fetcher }: { job: Data["provisional"][number]; data: Data; fetcher: Fetcher }) {
   const busy = fetcher.state !== "idle";
   const suggestion = job.suggestion ? data.remoteJobs.find((r) => r.value === job.suggestion) : null;
+  const targets = job.isJob ? data.remoteJobs.filter((r) => !r.customer) : data.remoteJobs;
   return (
     <Card withBorder padding="sm">
       <Stack gap="xs">
@@ -542,10 +554,10 @@ function ProvisionalJob({ job, data, fetcher }: { job: Data["provisional"][numbe
         <Group gap="xs" align="end">
           <Select
             aria-label={`Link ${job.fullName} to`}
-            placeholder="Link to a QuickBooks job…"
-            data={data.remoteJobs}
+            placeholder={job.isJob ? "Link to a QuickBooks job…" : "Link to a QuickBooks customer or job…"}
+            data={targets}
             searchable
-            disabled={busy || data.remoteJobs.length === 0}
+            disabled={busy || targets.length === 0}
             onChange={(v) => v && fetcher.submit({ intent: "link-job", jobId: job.id, targetId: v }, { method: "post" })}
             style={{ flex: 1 }}
           />

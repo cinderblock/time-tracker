@@ -68,6 +68,19 @@ deployer, not here.
     (2026-09-18): behind a TLS-terminating proxy it has to trust the proxy's
     headers and name `PUBLIC_BASE_URL`'s host as the allowed action origin at
     runtime, or React Router refuses every form. See the CSRF finding below.
+12. **A top-level job is a customer and takes no time** (2026-09-19, from the
+    first real use). Time is booked to jobs under a customer; the picker groups
+    jobs by customer with the recently used ones first; closing a customer
+    closes its jobs and its "needs a note" rule applies to them; a provisional
+    job can only be linked to a job in the accounting system, never to a
+    customer. No setting — it holds for every backend. Details and traps in
+    `plans/jobs-under-customers.md`.
+13. **Timers and notes are two modes, one at a time, chosen by the person**
+    (2026-09-19). The two note boxes that showed together while a timer ran
+    were the two recording modes side by side. Now `users.tracking_mode`
+    picks one: timer mode offers timers and shows notes only as leftovers;
+    notes mode offers the jot box and no timer, and a day's notes have to be
+    turned into time before the next day can take any. Same plan file.
 
 ## Stack
 
@@ -242,14 +255,23 @@ no server at all. Server `loader`s remain for the first paint.
 
 ### Recording modes
 
+Each person tracks in one of two modes (`users.tracking_mode`, their own choice on
+the Account page; decision 13):
+
 1. **Timer** — start / pause / stop, persisted as `time_segments` so a pause is a real
-   gap rather than a subtracted number. Per-job or global setting can require a note
-   before a stop is accepted.
+   gap rather than a subtracted number. A job, its customer, or a global setting can
+   require a note before a stop is accepted.
 2. **Sporadic notes → daily rollup** — `day_notes` captured freely through the day,
    then a review screen (end of day, or next morning) groups them into `time_entries`.
-   The rollup is a *proposal* the user edits and commits; committing is one op.
-3. **Manual** — type a duration, or a start and stop time. Same `time_entries` row,
-   `source='manual'`.
+   The rollup is a *proposal* the user edits and commits; committing is one op. A
+   day's notes must become time before a later day can take notes (the tracking
+   screen says which day is waiting and links to it; that day's "next" is disabled).
+
+**Manual** entry — type a duration, or a start and stop time — is available in both
+(same `time_entries` row, `source='manual'`).
+
+Jobs sit under customers (decision 12): a customer is the top of the job tree and
+never takes time; everything below it does.
 
 **Phase 2 design details** (decided while building it):
 

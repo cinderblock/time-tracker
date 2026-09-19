@@ -6,9 +6,11 @@ import { freshDb } from "./testing/db.ts";
 import {
   countActiveAdmins,
   createUser,
+  getUser,
   listUsers,
   normalizeName,
   renameUser,
+  setTrackingMode,
   updateUserAccess,
 } from "./users.ts";
 
@@ -33,6 +35,18 @@ describe("createUser", () => {
     const b = createUser({ name: "B", role: "employee", actorUserId: null });
     expect(a.webauthnUserId).not.toBe(b.webauthnUserId);
     expect(Buffer.from(a.webauthnUserId, "base64url")).toHaveLength(32);
+  });
+});
+
+describe("setTrackingMode", () => {
+  test("timers by default; notes on request; nonsense refused; audited once per change", () => {
+    const nora = createUser({ name: "Nora", role: "employee", actorUserId: null });
+    expect(nora.trackingMode).toBe("timer");
+    expect(setTrackingMode({ userId: nora.id, mode: "notes", actorUserId: nora.id }).trackingMode).toBe("notes");
+    expect(getUser(nora.id)!.trackingMode).toBe("notes");
+    setTrackingMode({ userId: nora.id, mode: "notes", actorUserId: nora.id }); // no change, no audit row
+    expect(() => setTrackingMode({ userId: nora.id, mode: "stopwatch", actorUserId: nora.id })).toThrow("timers or notes");
+    expect(auditFor("user", nora.id).filter((e) => e.action === "tracking_mode")).toHaveLength(1);
   });
 });
 

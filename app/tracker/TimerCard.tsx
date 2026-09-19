@@ -6,6 +6,7 @@ import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import { formatClock, formatDuration } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
+import { splitJobName } from "./job-groups.ts";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import { type EntryView, type JobView, liveSeconds } from "./model.ts";
 
@@ -56,6 +57,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
   const [otherJob, setOtherJob] = useState<string | null>(null);
   const paused = entry.runningSince == null;
   const tz = model.timezone;
+  const { customer, job: jobTitle } = splitJobName(entry.jobName);
 
   // Keep the field in step when the entry changes underneath (another device).
   useEffect(() => setNote(entry.note ?? ""), [entry.id, entry.note]);
@@ -123,8 +125,13 @@ function RunningTimer({ entry }: { entry: EntryView }) {
               {paused ? "Paused" : "Working on"}
             </Text>
             <Title order={3} lh={1.2}>
-              {entry.jobName}
+              {jobTitle}
             </Title>
+            {customer && (
+              <Text size="sm" c="dimmed">
+                {customer}
+              </Text>
+            )}
           </Stack>
           <Badge color={paused ? "yellow" : "green"} variant="light">
             {paused ? "paused" : "running"}

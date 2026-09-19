@@ -73,6 +73,24 @@ export function listNotesForDate(userId: number, workDate: string): DayNote[] {
     .map(toNote);
 }
 
+/**
+ * The latest day before `before` whose notes haven't been turned into time,
+ * if any. In notes mode that day has to be finished before a later one can
+ * take notes.
+ */
+export function pendingNotesBefore(userId: number, before: string): { date: string; count: number } | null {
+  const row = db()
+    .query<{ work_date: string; n: number }, [number, string]>(
+      `SELECT work_date, COUNT(*) AS n FROM day_notes
+        WHERE user_id = ? AND work_date < ? AND deleted_at IS NULL AND rolled_into_entry_id IS NULL
+        GROUP BY work_date
+        ORDER BY work_date DESC
+        LIMIT 1`,
+    )
+    .get(userId, before);
+  return row ? { date: row.work_date, count: row.n } : null;
+}
+
 export function createNote(args: {
   userId: number;
   noteId: string;

@@ -85,8 +85,13 @@ test("set up: an admin, an employee, two jobs, and some time", async ({ browser 
   await admin.page.getByLabel("Your name").fill("Paula Payroll");
   await admin.page.getByRole("button", { name: "Create passkey" }).click();
   await expect(admin.page.getByRole("banner").getByText("Paula Payroll")).toBeVisible();
-  await send(admin.context.request, "job.create", { jobId: echo, name: "Echo Works" });
-  await send(admin.context.request, "job.create", { jobId: foxtrot, name: "Foxtrot Farm" });
+  // Two customers, a job under each.
+  const echoCo = uuidv7();
+  const foxtrotCo = uuidv7();
+  await send(admin.context.request, "job.create", { jobId: echoCo, name: "Echo Co" });
+  await send(admin.context.request, "job.create", { jobId: echo, name: "Echo Works", parentId: echoCo });
+  await send(admin.context.request, "job.create", { jobId: foxtrotCo, name: "Foxtrot Co" });
+  await send(admin.context.request, "job.create", { jobId: foxtrot, name: "Foxtrot Farm", parentId: foxtrotCo });
 
   await admin.page.goto("/admin/people");
   await admin.page.getByLabel("Their name").fill("Eddie Employee");
@@ -198,10 +203,10 @@ test("the employee sees approved time locked", async () => {
 test("the calendar shows each block of time", async () => {
   const { page } = admin;
   await page.getByRole("link", { name: "Calendar" }).click();
-  const block = page.getByRole("link", { name: "Eddie Employee, Echo Works, 9:00 AM – 11:00 AM, approved" });
+  const block = page.getByRole("link", { name: "Eddie Employee, Echo Co:Echo Works, 9:00 AM – 11:00 AM, approved" });
   await expect(block).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Eddie Employee, Foxtrot Farm, .* – now$/ })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Eddie Employee · 1h 30m · Foxtrot Farm/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Eddie Employee, Foxtrot Co:Foxtrot Farm, .* – now$/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Eddie Employee · 1h 30m · Foxtrot Co:Foxtrot Farm/ })).toBeVisible();
   await shot(page, "calendar");
   await block.click();
   await expect(page).toHaveURL(new RegExp(`/admin/people/${employeeId}/time$`));
@@ -248,7 +253,7 @@ test("reports: totals by customer, costs frozen at approval, and a CSV", async (
   await expect(page.getByRole("row", { name: /Eddie Employee/ })).toBeVisible();
   await choose(page, "Group by", "Customer");
   await expect(page).toHaveURL(/by=customer/);
-  const echoRow = page.getByRole("row", { name: /Echo Works/ });
+  const echoRow = page.getByRole("row", { name: /Echo Co/ });
   await expect(echoRow).toContainText("2h");
   await expect(echoRow).toContainText("$80.00");
   await shot(page, "reports");
@@ -259,7 +264,7 @@ test("reports: totals by customer, costs frozen at approval, and a CSV", async (
   expect(file.suggestedFilename()).toMatch(/^time-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/);
   const csv = readFileSync((await file.path())!, "utf8");
   expect(csv).toContain("Date,Person,Category,Customer,Job,Start,End,Hours,Status,Rate,Cost,Note,Entry ID");
-  expect(csv).toContain(`${TODAY},Eddie Employee,Field crew,Echo Works,Echo Works,9:00 AM,11:00 AM,2,Approved,40,80,Framing,`);
+  expect(csv).toContain(`${TODAY},Eddie Employee,Field crew,Echo Co,Echo Co:Echo Works,9:00 AM,11:00 AM,2,Approved,40,80,Framing,`);
 });
 
 test("reopening a week unlocks it again", async () => {

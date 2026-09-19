@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Button, Card, Group, Radio, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useState } from "react";
 import { useFetcher, useRevalidator } from "react-router";
@@ -6,7 +6,8 @@ import { useFetcher, useRevalidator } from "react-router";
 import { removeCredential, renameCredential } from "../../src/credentials.ts";
 import { revokeAllSessions, revokeSession } from "../../src/sessions.ts";
 import { NAME_MAX_LENGTH } from "../../src/limits.ts";
-import { renameUser } from "../../src/users.ts";
+import type { TrackingMode } from "../../src/tracking-mode.ts";
+import { renameUser, setTrackingMode } from "../../src/users.ts";
 import { handleForm, intField, stringField } from "../actions.server.ts";
 import { requireUser } from "../auth.server.ts";
 import { PasskeyList, SessionList } from "../components/credential-lists.tsx";
@@ -24,6 +25,7 @@ export function loader({ request, context }: Route.LoaderArgs) {
     userId: user.id,
     name: user.name,
     role: user.role,
+    trackingMode: user.trackingMode,
     passkeys: passkeyViews(user.id),
     sessions: sessionViews(user.id, session.id),
   };
@@ -40,6 +42,13 @@ export async function action({ request, context }: Route.ActionArgs) {
     rename: (form) => {
       renameUser({ ...self, name: stringField(form, "name") });
       return { ok: true, message: "Name updated." };
+    },
+    "tracking-mode": (form) => {
+      const user = setTrackingMode({ ...self, mode: stringField(form, "mode") });
+      return {
+        ok: true,
+        message: user.trackingMode === "notes" ? "You'll jot notes and turn them into time." : "You'll use timers.",
+      };
     },
     "rename-passkey": (form) => {
       renameCredential({ ...self, id: intField(form, "credentialId"), nickname: stringField(form, "nickname") });
@@ -61,7 +70,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 }
 
 export default function Account({ loaderData }: Route.ComponentProps) {
-  const { userId, name, role, passkeys, sessions } = loaderData;
+  const { userId, name, role, trackingMode, passkeys, sessions } = loaderData;
 
   return (
     <Stack gap="xl" maw={640}>
@@ -71,6 +80,8 @@ export default function Account({ loaderData }: Route.ComponentProps) {
       </Stack>
 
       <RenameSelf name={name} />
+
+      <TrackingModeSetting mode={trackingMode} />
 
       <Stack gap="sm">
         <Title order={3}>Passkeys</Title>
@@ -124,6 +135,44 @@ function RenameSelf({ name }: { name: string }) {
           </Button>
         </Group>
       </fetcher.Form>
+    </Card>
+  );
+}
+
+/** Timers or notes: the person's own choice, kept with the account so every device agrees. */
+function TrackingModeSetting({ mode }: { mode: TrackingMode }) {
+  const fetcher = useFetcher();
+  useActionFeedback(fetcher.data);
+  const busy = fetcher.state !== "idle";
+  // Shows the choice the moment it's made; the server's answer follows.
+  const [value, setValue] = useState<string>(mode);
+  useEffect(() => setValue(mode), [mode]);
+  return (
+    <Card withBorder id="tracking">
+      <Radio.Group
+        label="How you track time"
+        description="Your choice, on every device you use."
+        value={value}
+        onChange={(next) => {
+          setValue(next);
+          fetcher.submit({ intent: "tracking-mode", mode: next }, { method: "post" });
+        }}
+      >
+        <Stack gap="sm" mt="sm">
+          <Radio
+            value="timer"
+            label="Timers"
+            description="Start a timer on a job, switch jobs as you go, stop when you're done."
+            disabled={busy}
+          />
+          <Radio
+            value="notes"
+            label="Notes through the day"
+            description="Jot what you're working on as you go. At the end of the day, turn the notes into time — the next day waits until you have."
+            disabled={busy}
+          />
+        </Stack>
+      </Radio.Group>
     </Card>
   );
 }

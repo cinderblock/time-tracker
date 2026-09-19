@@ -1,9 +1,11 @@
 import { config } from "../src/config.server.ts";
 import { type Entry, getOpenEntry, listEntriesForDate, noteRequiredFor, totalsByDate } from "../src/entries.ts";
-import { isBookable, listJobs, recentJobIds } from "../src/jobs.ts";
-import { listNotesForDate } from "../src/notes.ts";
+import { listJobs, recentJobIds } from "../src/jobs.ts";
+import { listNotesForDate, pendingNotesBefore } from "../src/notes.ts";
 import { requireNoteOnStop, weekStartsOn } from "../src/settings.ts";
 import { addDays, today, weekStartOf } from "../src/time.ts";
+import { DEFAULT_TRACKING_MODE } from "../src/tracking-mode.ts";
+import { getUser } from "../src/users.ts";
 import { type DayModel, type EntryView, type JobView, compareEntries, compareNotes } from "./tracker/model.ts";
 
 /**
@@ -18,13 +20,13 @@ function lastEnd(e: Entry): number | null {
   return max;
 }
 
-function entryView(e: Entry, jobs: Map<string, JobView>): EntryView {
+function entryView(e: Entry, jobNames: Map<string, string>): EntryView {
   const first = e.segments[0];
   const last = e.segments.at(-1);
   return {
     id: e.id,
     jobId: e.jobId,
-    jobName: e.jobId ? (jobs.get(e.jobId)?.fullName ?? "Unknown job") : "No job",
+    jobName: e.jobId ? (jobNames.get(e.jobId) ?? "Unknown job") : "No job",
     workDate: e.workDate,
     note: e.note,
     source: e.source,
@@ -40,22 +42,24 @@ function entryView(e: Entry, jobs: Map<string, JobView>): EntryView {
 }
 
 export function loadDay(userId: number, workDate: string): DayModel {
+  // Closed jobs still name the entries booked to them; only open ones are offered.
   const allJobs = listJobs({ includeInactive: true });
-  const jobMap = new Map<string, JobView>(
-    allJobs.map((j) => [
-      j.id,
-      {
-        id: j.id,
-        fullName: j.fullName,
-        requiresNote: j.requiresNote,
-        active: isBookable(j),
-        provisional: j.provisional,
-      },
-    ]),
-  );
+  const jobNames = new Map(allJobs.map((j) => [j.id, j.fullName]));
+  const jobs: JobView[] = allJobs
+    .filter((j) => j.open)
+    .map((j) => ({
+      id: j.id,
+      name: j.name,
+      fullName: j.fullName,
+      parentId: j.parentId,
+      requiresNote: j.noteRequired,
+      bookable: j.bookable,
+      provisional: j.provisional,
+    }));
 
   const open = getOpenEntry(userId);
   const todayDate = today(config.timezone);
+  const mode = getUser(userId)?.trackingMode ?? DEFAULT_TRACKING_MODE;
 
   // The week containing the shown date, starting on the organisation's first weekday.
   const weekStart = weekStartOf(workDate, weekStartsOn());
@@ -68,21 +72,23 @@ export function loadDay(userId: number, workDate: string): DayModel {
     workDate,
     today: todayDate,
     timezone: config.timezone,
+    mode,
+    notesToRollUp: mode === "notes" ? pendingNotesBefore(userId, workDate) : null,
     requireNoteOnStop: requireNoteOnStop(),
-    open: open ? entryView(open, jobMap) : null,
+    open: open ? entryView(open, jobNames) : null,
     entries: listEntriesForDate(userId, workDate)
-      .map((e) => entryView(e, jobMap))
+      .map((e) => entryView(e, jobNames))
       .sort(compareEntries),
     notes: listNotesForDate(userId, workDate).map((n) => ({
       id: n.id,
       at: n.at,
       text: n.text,
       jobId: n.jobId,
-      jobName: n.jobId ? (jobMap.get(n.jobId)?.fullName ?? null) : null,
+      jobName: n.jobId ? (jobNames.get(n.jobId) ?? null) : null,
       rolledIntoEntryId: n.rolledIntoEntryId,
     }))
       .sort(compareNotes),
-    jobs: [...jobMap.values()].filter((j) => j.active),
+    jobs,
     recentJobIds: recentJobIds(userId),
     week: Array.from({ length: 7 }, (_, i) => {
       const date = addDays(weekStart, i);

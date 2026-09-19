@@ -10,8 +10,9 @@ import { NotesPanel } from "./NotesPanel.tsx";
 import { TimerPanel } from "./TimerCard.tsx";
 
 /**
- * The tracking screen for one day. On a phone everything stacks, timer
- * first; on a wide screen the timer and notes sit beside the day's entries.
+ * The tracking screen for one day. On a phone everything stacks, the way of
+ * recording time first — a timer, or the day's notes, whichever the person
+ * tracks with; on a wide screen that sits beside the day's entries.
  */
 export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor?: ActingFor }) {
   return (
@@ -23,8 +24,16 @@ export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor
         <Grid gap="lg">
           <Grid.Col span={{ base: 12, md: 6 }}>
             <Stack gap="lg">
-              {model.workDate === model.today ? <TimerPanel /> : <OpenTimerElsewhere />}
+              {model.workDate !== model.today ? (
+                <OpenTimerElsewhere />
+              ) : model.mode === "notes" ? (
+                // Notes mode offers no timer — but one that's running must still be stoppable.
+                model.open && <TimerPanel />
+              ) : (
+                <TimerPanel />
+              )}
               <NotesPanel />
+              <ModeHint />
             </Stack>
           </Grid.Col>
           <Grid.Col span={{ base: 12, md: 6 }}>
@@ -33,6 +42,27 @@ export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor
         </Grid>
       </Stack>
     </TrackerProvider>
+  );
+}
+
+/** Which way of tracking is on, and where to change it. */
+function ModeHint() {
+  const { model, actingFor } = useTracker();
+  const notes = model.mode === "notes";
+  if (actingFor) {
+    return (
+      <Text size="xs" c="dimmed">
+        {actingFor.name} tracks with {notes ? "notes, turned into time later" : "timers"}.
+      </Text>
+    );
+  }
+  return (
+    <Text size="xs" c="dimmed">
+      You track with {notes ? "notes, turned into time at the end of the day" : "timers"}.{" "}
+      <Anchor component={Link} to="/account#tracking" size="xs">
+        Change
+      </Anchor>
+    </Text>
   );
 }
 

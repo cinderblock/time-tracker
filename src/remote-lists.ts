@@ -262,6 +262,12 @@ export function linkJob(args: { jobId: string; targetId: string; actorUserId: nu
     const target = resolveJob(args.targetId);
     if (!target?.remoteId) throw new UserInputError("Pick a job from the accounting system.");
     if (target.id === job.id) throw new UserInputError("A job can't be linked to itself.");
+    // Time is booked to jobs, never to a customer: a job's time has to land on a job.
+    if (job.parentId && !target.parentId) {
+      throw new UserInputError(
+        `“${target.fullName}” is a customer, and “${job.fullName}” is a job. Link it to one of that customer's jobs, or have it created there.`,
+      );
+    }
 
     const moved = {
       entries: db().query("UPDATE time_entries SET job_id = ?, updated_at = ? WHERE job_id = ?").run(target.id, now, job.id).changes,

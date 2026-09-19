@@ -63,9 +63,13 @@ test.afterAll(async () => {
 test("set up, and let the service worker take over", async ({ browser }) => {
   ({ context: ctx, page } = await signUp(browser, "Olive Offline"));
   await page.goto("/admin/jobs");
-  await page.getByLabel("New job").fill("Delta Dock");
-  await page.getByRole("button", { name: "Add job" }).click();
-  await expect(page.getByText("Delta Dock", { exact: true })).toBeVisible();
+  await page.getByLabel("New customer").fill("Delta");
+  await page.getByRole("button", { name: "Add customer" }).click();
+  const customer = page.getByRole("group", { name: "Delta", exact: true });
+  await customer.getByRole("button", { name: "Add a job" }).click();
+  await customer.getByLabel("New job for Delta").fill("Delta Dock");
+  await customer.getByRole("button", { name: "Add job", exact: true }).click();
+  await expect(page.getByRole("group", { name: "Delta:Delta Dock" })).toBeVisible();
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();
@@ -82,10 +86,8 @@ test("with no connection, tracking still works and changes wait on the device", 
   await expect(timerCard().getByRole("heading", { name: "Delta Dock" })).toBeVisible();
   await expect(syncBadge().getByText("Offline · 1 to sync")).toBeVisible();
 
-  const noteBox = page.getByPlaceholder("What are you working on now?");
-  await noteBox.fill("Checking the loading bay offline");
-  await page.getByRole("button", { name: "Add note" }).click();
-  await expect(page.getByText("Checking the loading bay offline")).toBeVisible();
+  await timerCard().getByRole("button", { name: "Pause" }).click();
+  await expect(timerCard().getByText("paused", { exact: true })).toBeVisible();
   await expect(syncBadge().getByText("Offline · 2 to sync")).toBeVisible();
 });
 
@@ -93,8 +95,7 @@ test("the app relaunches offline, with the unsynced changes still there", async 
   await page.reload();
   await expect(page.getByText("Showing the copy saved on this device")).toBeVisible();
   await expect(timerCard().getByRole("heading", { name: "Delta Dock" })).toBeVisible();
-  await expect(timerCard().getByText("running", { exact: true })).toBeVisible();
-  await expect(page.getByText("Checking the loading bay offline")).toBeVisible();
+  await expect(timerCard().getByText("paused", { exact: true })).toBeVisible();
   await expect(syncBadge().getByText("Offline · 2 to sync")).toBeVisible();
 
   await timerCard().getByRole("button", { name: "Stop" }).click();
@@ -121,7 +122,6 @@ test("back online, everything syncs and the screen matches the server", async ()
   // A fresh load straight from the server shows the same thing.
   await page.reload();
   await expect(entryRows().filter({ hasText: "Delta Dock" })).toHaveCount(1);
-  await expect(page.getByText("Checking the loading bay offline")).toBeVisible();
   await expect(page.getByText("Showing the copy saved on this device")).toHaveCount(0);
 });
 
@@ -187,9 +187,14 @@ test("a change made offline that the server refuses is reported, not lost silent
 });
 
 test("signing out with unsynced changes warns first, and keeps them for next time", async () => {
+  // The refused stop above left the device's copy showing a timer the server
+  // no longer has; a fresh load agrees with the server before going offline.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();
+
   await ctx.setOffline(true);
-  await page.getByPlaceholder("What are you working on now?").fill("Written before signing out");
-  await page.getByRole("button", { name: "Add note" }).click();
+  await pickJob(page.getByPlaceholder("Any job — type to search"), "Delta Dock");
+  await expect(timerCard().getByRole("heading", { name: "Delta Dock" })).toBeVisible();
   await expect(syncBadge().getByText("Offline · 1 to sync")).toBeVisible();
 
   // Keep the change from syncing once back online, so it's still waiting at
@@ -214,5 +219,5 @@ test("signing out with unsynced changes warns first, and keeps them for next tim
   await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
   await expect(syncBadge().getByText(/\d+ to sync/)).toHaveCount(0, { timeout: 15_000 });
   await page.reload();
-  await expect(page.getByText("Written before signing out")).toBeVisible();
+  await expect(timerCard().getByRole("heading", { name: "Delta Dock" })).toBeVisible();
 });

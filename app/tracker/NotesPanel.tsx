@@ -15,37 +15,72 @@ import {
 import { TimeInput } from "@mantine/dates";
 import { useMediaQuery } from "@mantine/hooks";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router";
 
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import { type RollupLine, proposeRollup, rollupProblems } from "../../src/rollup.ts";
-import { addDays, formatClock, formatDurationHuman, zonedTimeInput, zonedTimeToInstant } from "../../src/time.ts";
+import {
+  addDays,
+  formatClock,
+  formatDurationHuman,
+  formatWorkDate,
+  zonedTimeInput,
+  zonedTimeToInstant,
+} from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { JobSelect } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
 
 /**
- * Sporadic notes: jot what you're doing as you go, then turn the day's notes
- * into time entries at the end of the day (or the next morning).
+ * Notes mode: jot what you're doing as you go, then turn the day's notes into
+ * time entries at the end of the day (or the next morning). A day's notes
+ * have to become time before the next day can take any, so nothing is left
+ * half-done.
+ *
+ * In timer mode this panel only shows a day's leftover notes (from before a
+ * switch), so they can still be turned into time.
  */
 export function NotesPanel() {
-  const { model } = useTracker();
+  const { model, hrefFor } = useTracker();
   const [reviewing, setReviewing] = useState(false);
   const pendingNotes = model.notes.filter((n) => !n.rolledIntoEntryId);
   const isToday = model.workDate === model.today;
+  const notesMode = model.mode === "notes";
+  // An earlier day's notes come first; until they're time, today takes none.
+  const heldBy = notesMode && isToday ? (model.notesToRollUp ?? null) : null;
+  const canJot = notesMode && isToday && !heldBy;
+
+  if (!notesMode && model.notes.length === 0) return null;
 
   return (
     <Stack gap="sm">
       <Title order={3}>Notes</Title>
-      {isToday && <QuickNote />}
+      {heldBy && (
+        <Alert color="yellow" title={`${formatWorkDate(heldBy.date)} isn't finished`}>
+          <Stack gap="xs">
+            <Text size="sm">
+              Turn {heldBy.count === 1 ? "its note" : `its ${heldBy.count} notes`} into time before today's notes start.
+            </Text>
+            <Group>
+              <Button component={Link} to={hrefFor(heldBy.date)} size="sm">
+                Go to {formatWorkDate(heldBy.date)}
+              </Button>
+            </Group>
+          </Stack>
+        </Alert>
+      )}
+      {canJot && <QuickNote />}
       {model.notes.length === 0 ? (
-        <Text c="dimmed" size="sm">
-          {model.partial
-            ? "Notes for this day aren't on this device."
-            : isToday
-              ? "Jot what you're working on as you switch tasks. At the end of the day, turn the notes into time."
-              : "No notes on this day."}
-        </Text>
+        !heldBy && (
+          <Text c="dimmed" size="sm">
+            {model.partial
+              ? "Notes for this day aren't on this device."
+              : canJot
+                ? "Jot what you're working on as you switch tasks. At the end of the day, turn the notes into time."
+                : "No notes on this day."}
+          </Text>
+        )
       ) : (
         model.notes.map((n) => <NoteRow key={n.id} note={n} />)
       )}
@@ -67,8 +102,8 @@ function QuickNote() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Default the job to whatever the last note (or running timer) was about.
-  const lastJob = model.notes.at(-1)?.jobId ?? model.open?.jobId ?? null;
+  // Default the job to whatever the last note was about.
+  const lastJob = model.notes.at(-1)?.jobId ?? null;
   useEffect(() => setJobId((current) => current ?? lastJob), [lastJob]);
 
   async function add(event: React.FormEvent) {

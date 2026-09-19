@@ -416,6 +416,16 @@ const migrations: Migration[] = [
         );
     `,
   },
+  {
+    name: "002_tracking_mode",
+    sql: `
+        -- How this person records time: 'timer' (start/stop timers) or
+        -- 'notes' (jot notes through the day, turn them into time after).
+        -- Their own choice; see src/tracking-mode.ts.
+        ALTER TABLE users ADD COLUMN tracking_mode TEXT NOT NULL DEFAULT 'timer'
+          CHECK (tracking_mode IN ('timer','notes'));
+    `,
+  },
 ];
 
 /**

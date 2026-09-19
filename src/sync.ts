@@ -172,11 +172,16 @@ function recordFor(e: EntryRow, l: Lookups): { record: TimeRecord } | NotReady {
   const chain = jobChain(l, e.job_id);
   const job = chain[0];
   if (e.job_id && !job) return { reason: "Its job no longer exists.", fix: "job" };
+  // Named by its full "Customer:Job" path, as the Jobs page shows it.
+  const jobName = chain
+    .map((j) => j.name)
+    .reverse()
+    .join(":");
   if (job && !job.remoteId) {
-    return { reason: `The job “${job.name}” was made here and isn't in the accounting system yet.`, fix: "job" };
+    return { reason: `The job “${jobName}” was made here and isn't in the accounting system yet.`, fix: "job" };
   }
   if (job && !job.remoteActive) {
-    return { reason: `The job “${job.name}” is inactive in the accounting system.`, fix: "job" };
+    return { reason: `The job “${jobName}” is inactive in the accounting system.`, fix: "job" };
   }
 
   const serviceItemId =

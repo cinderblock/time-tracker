@@ -12,7 +12,9 @@ export function DayHeader() {
   const { model, hrefFor } = useTracker();
   const { workDate, today } = model;
   const isToday = workDate === today;
-  const canGoForward = workDate < today;
+  // In notes mode a day's notes have to become time before moving on from it.
+  const heldHere = model.mode === "notes" && model.notes.some((n) => !n.rolledIntoEntryId);
+  const canGoForward = workDate < today && !heldHere;
   // Totals come from the server; add the running timer's live time to its day
   // so the strip agrees with the list below it.
   const now = useNow(30_000);
@@ -46,17 +48,22 @@ export function DayHeader() {
             </Button>
           )}
         </Stack>
-        <Button
-          component={Link}
-          to={hrefFor(addDays(workDate, 1))}
-          variant="default"
-          size="sm"
-          aria-label="Next day"
-          disabled={!canGoForward}
-        >
-          ›
-        </Button>
+        {canGoForward ? (
+          <Button component={Link} to={hrefFor(addDays(workDate, 1))} variant="default" size="sm" aria-label="Next day">
+            ›
+          </Button>
+        ) : (
+          // A real disabled button: a "disabled" link would still navigate.
+          <Button variant="default" size="sm" aria-label="Next day" disabled>
+            ›
+          </Button>
+        )}
       </Group>
+      {heldHere && workDate < today && (
+        <Text size="xs" c="dimmed" ta="center">
+          Turn this day's notes into time to move on.
+        </Text>
+      )}
 
       <SimpleGrid cols={7} spacing={4}>
         {week.map((d) => {
