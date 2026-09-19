@@ -33,8 +33,10 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./package.json
 # The server build already contains src/; the operator commands
-# (`bun run admin-link`) run from source, so it's copied too.
+# (`bun run admin-link`) run from source, so it's copied too. server.ts is the
+# production server (Express behind the reverse proxy); Bun runs it as is.
 COPY --from=builder /app/src ./src
+COPY --from=builder /app/server.ts ./server.ts
 
 VOLUME ["/data"]
 EXPOSE 3000

@@ -203,6 +203,11 @@ Deploying is the deployer's, and wants three things:
 - **Put the reverse proxy in front.** Bind the container to `127.0.0.1` and
   terminate TLS there: passkeys and the Web Connector both need HTTPS, and
   anything that reaches the app directly makes `X-Forwarded-For` untrustworthy.
+  The server believes the proxy's `X-Forwarded-*` headers when the proxy is on
+  this host or a private network (`TRUST_PROXY` widens or narrows that, in
+  Express's syntax), and treats `PUBLIC_BASE_URL`'s host as the one origin
+  allowed to submit forms — so a proxy that forwards nothing still works, and
+  a foreign site's form never does.
 - **Keep the settings and the database with the deployment**, not here. The
   container reads its configuration from the environment
   ([`.env.example`](.env.example) lists it) and keeps its SQLite database in the

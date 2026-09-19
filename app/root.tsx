@@ -106,6 +106,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="theme-color" content={themeColor} />
         {/* iOS ignores the manifest's display mode; these make a home-screen
             launch open without Safari chrome, under the right name. */}
+        <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content={shortName} />

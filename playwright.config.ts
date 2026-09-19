@@ -21,11 +21,13 @@ const PORT = Number(process.env.E2E_PORT ?? 3140);
 const BRIDGE_PORT = PORT + 1;
 const BRIDGE_APP_PORT = PORT + 2;
 const QBWC_APP_PORT = PORT + 3;
+const PROXIED_APP_PORT = PORT + 4;
 
 const stamp = `${process.pid}-${Date.now()}`;
 process.env.E2E_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-${stamp}.db`);
 process.env.E2E_BRIDGE_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-bridge-${stamp}.db`);
 process.env.E2E_QBWC_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-qbwc-${stamp}.db`);
+process.env.E2E_PROXIED_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-proxied-${stamp}.db`);
 
 const common = {
   SESSION_SECRET: "e2e-only-session-secret",
@@ -67,9 +69,25 @@ export const qbwcEnv = {
   QBWC_PASSWORD: "e2e-qbwc-password",
 };
 
-const app = (env: Record<string, string | undefined>) => ({
+/**
+ * An instance that believes it is served as https://proxied.test — the way a
+ * deployment behind a TLS-terminating reverse proxy sees itself — while it
+ * actually listens on plain http here. Only e2e/proxied.spec.ts talks to it,
+ * with hand-made requests carrying the proxy's headers.
+ */
+export const proxiedListenUrl = `http://localhost:${PROXIED_APP_PORT}`;
+export const proxiedEnv = {
+  ...common,
+  PORT: String(PROXIED_APP_PORT),
+  PUBLIC_BASE_URL: "https://proxied.test",
+  DATABASE_PATH: process.env.E2E_PROXIED_DATABASE_PATH,
+  APP_NAME: "E2E Proxied",
+  ACCOUNTING_BACKEND: "none",
+};
+
+const app = (env: Record<string, string | undefined>, listenUrl = env.PUBLIC_BASE_URL) => ({
   command: "bun run start",
-  url: `${env.PUBLIC_BASE_URL}/signin`,
+  url: `${listenUrl}/signin`,
   env: env as Record<string, string>,
   reuseExistingServer: false,
   timeout: 60_000,
@@ -88,7 +106,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: /(accounting|webconnector)\.spec\.ts/,
+      testIgnore: /(accounting|webconnector|proxied)\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: e2eEnv.PUBLIC_BASE_URL },
     },
     {
@@ -100,6 +118,11 @@ export default defineConfig({
       name: "qb-webconnector",
       testMatch: /webconnector\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: qbwcEnv.PUBLIC_BASE_URL },
+    },
+    {
+      // Plain requests, no browser: the point is which layer answers.
+      name: "proxied",
+      testMatch: /proxied\.spec\.ts/,
     },
   ],
   webServer: [
@@ -113,5 +136,6 @@ export default defineConfig({
     },
     app(bridgeEnv),
     app(qbwcEnv),
+    app(proxiedEnv, proxiedListenUrl),
   ],
 });

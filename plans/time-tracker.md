@@ -64,6 +64,10 @@ deployer, not here.
     deployment improvised — were tried and dropped; this is the deployer's
     established model.) The app also checks its settings at startup and the
     image has a health check, so a bad build fails wherever it runs.
+11. **`server.ts` is the production server**, not `react-router-serve`
+    (2026-09-18): behind a TLS-terminating proxy it has to trust the proxy's
+    headers and name `PUBLIC_BASE_URL`'s host as the allowed action origin at
+    runtime, or React Router refuses every form. See the CSRF finding below.
 
 ## Stack
 
@@ -743,11 +747,27 @@ own phase; they are properties of the entry UI, not separate features.
   request timeout**, and QuickBooks then sat wedged ("a modal dialog box is
   showing", though no window existed) for ~30 min before recovering on its own.
   The app's 5-minute pull retry rode it out. Not fixed; noted.
-- **A refused form was invisible in the log.** A user's invite came back 400
-  twice and nothing said what was refused, or from what browser. `handleForm`
-  now logs the path, intent, message and user agent of every refusal. (Their
-  page also showed the error boundary rather than a message; a plain 400 does
-  not do that in Chromium at phone size — unexplained until the log says more.)
+- **Every form action failed behind the reverse proxy — React Router's CSRF
+  guard, not the app** (2026-09-18). `singleFetchAction` runs
+  `throwIfPotentialCSRFAttack` before any route code: the browser's `Origin`
+  (`https://…`) must equal `request.url`'s origin, and `@react-router/express`
+  builds `request.url` from `req.protocol`, which is `http` behind a
+  TLS-terminating proxy unless Express's `trust proxy` is on — and the stock
+  `react-router-serve` never enables it. Result: `400 Bad Request` for every
+  `.data` POST (invite, rates, settings…), nothing logged, while tracking (a
+  resource route, outside the guard) kept working. Invisible locally and in
+  e2e, where there is no proxy. Fix: our own `server.ts` (Express) that trusts
+  the proxy (`TRUST_PROXY`, default loopback + private networks) *and* passes
+  `allowedActionOrigins: [PUBLIC_BASE_URL host]` on the build — React Router's
+  documented runtime hook — so even a proxy forwarding nothing works. The
+  routes' own `assertSameOrigin` still runs after it. `e2e/proxied.spec.ts`
+  drives a fourth instance that believes it is `https://proxied.test`.
+  Lesson: anything the framework decides from `request.url` needs a test with
+  a proxy in the loop, or a fourth instance that fakes one.
+- **A refused form was invisible in the log.** `handleForm` now logs the path,
+  intent, message and user agent of every refusal. (The 400s that prompted it
+  turned out to come from before `handleForm` — see above — which the missing
+  log line was itself the clue to.)
 - **Running the bridge's Python suite alongside the e2e suite made one e2e test
   time out** (a button stuck "loading"); alone it passes. Load, not a bug.
 - **React inserts `<!-- -->` between adjacent JSX text expressions.** Grepping
