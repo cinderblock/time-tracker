@@ -60,7 +60,7 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
    the README.
 6. [x] Tests: rollup and tracking unit tests, reducer mirror, e2e notes-mode
    tests rewritten.
-7. [x] typecheck, unit (273), e2e (58) green; committed. Deploy (push, CI, pin in ops) waits for the word.
+7. [x] typecheck, unit (273), e2e (58) green; committed; deployed (the deployer pinned the published digest).
 
 ## Findings / gotchas
 
@@ -69,7 +69,7 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
 
 ## Progress log
 
-- 2026-09-19 — Designed and built in one pass: start markers, sections by job, per-job hours dialog, duration lines in rollup.commit, migration 003. Typecheck clean; 273 unit; 58 e2e (first run green). Committed; not yet pushed or deployed.
+- 2026-09-19 — Designed and built in one pass: start markers, sections by job, per-job hours dialog, duration lines in rollup.commit, migration 003. Typecheck clean; 273 unit; 58 e2e (first run green). Committed, pushed, and deployed by the deployer the same day (migration 003 applied itself on first start).
 
 ## Open questions for the user
 
