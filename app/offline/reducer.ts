@@ -293,7 +293,8 @@ function applyOne(s: State, op: Op): void {
       m.notes.push({
         id: p.noteId,
         at: p.at,
-        text: p.text.trim(),
+        kind: p.kind ?? "note",
+        text: p.kind === "start" ? "" : (p.text ?? "").trim(),
         jobId: p.jobId ?? null,
         jobName: p.jobId ? jobName(m, p.jobId) : null,
         rolledIntoEntryId: null,
@@ -343,7 +344,8 @@ function applyOne(s: State, op: Op): void {
       if (p.workDate !== m.workDate) return;
       for (const line of p.lines) {
         if (findEntry(m, line.entryId)) continue;
-        const seconds = Math.round((line.endedAt - line.startedAt) / 1000);
+        const spanned = line.startedAt != null && line.endedAt != null;
+        const seconds = spanned ? Math.round((line.endedAt! - line.startedAt!) / 1000) : line.durationSeconds!;
         putEntry(m, {
           id: line.entryId,
           jobId: line.jobId,
@@ -353,11 +355,11 @@ function applyOne(s: State, op: Op): void {
           source: "note_rollup",
           status: "draft",
           durationSeconds: seconds,
-          startedAt: line.startedAt,
-          endedAt: line.endedAt,
+          startedAt: spanned ? line.startedAt! : null,
+          endedAt: spanned ? line.endedAt! : null,
           runningSince: null,
-          lastEndedAt: line.endedAt,
-          segmentCount: 1,
+          lastEndedAt: spanned ? line.endedAt! : null,
+          segmentCount: spanned ? 1 : 0,
           noteRequired: false,
         });
         addToWeek(m, p.workDate, seconds);

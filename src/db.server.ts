@@ -426,6 +426,16 @@ const migrations: Migration[] = [
           CHECK (tracking_mode IN ('timer','notes'));
     `,
   },
+  {
+    name: "003_note_kind",
+    sql: `
+        -- A 'note' says what was done. A 'start' marks being on a job from
+        -- that moment (made when a job is added to the day) and has no words
+        -- of its own; it bounds the timeline like any other note.
+        ALTER TABLE day_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'
+          CHECK (kind IN ('note','start'));
+    `,
+  },
 ];
 
 /**

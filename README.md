@@ -30,9 +30,11 @@ repository. All of that is deployment configuration or an admin setting.
   - *Timers* — start, pause, resume, stop. Switching jobs is one tap on a recent
     job and stops the old timer at the same instant. A job, a customer (for all
     its jobs) or the whole organisation can require a note before a timer stops.
-  - *Notes* — jot what you're doing as you go; at the end of the day (or the next
-    morning) review them as proposed time entries, fix them up, and add them. A
-    day's notes have to become time before the next day's can start.
+  - *Notes* — add the job you're on, then jot what you do under it as you go
+    (and add a second job when you move to one). At the end of the day (or the
+    next morning) each job's notes become hours: the timeline suggests them,
+    you confirm, and one entry per job carries the notes as its description. A
+    day's notes have to become hours before the next day's can start.
   - *Manual entry*, either way — a start and end time (overnight shifts included)
     or just a duration, on any past day.
 - **No "are you sure?".** Discarding an accidental timer or deleting an entry is

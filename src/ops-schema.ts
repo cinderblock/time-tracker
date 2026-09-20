@@ -39,6 +39,13 @@ const location = z
 
 export const MAX_ENTRY_SECONDS = 24 * 3600;
 
+/**
+ * A 'note' says what was done. A 'start' marks being on a job from that
+ * moment — made when a job is added to the day — and has no words of its own.
+ */
+export const NOTE_KINDS = ["note", "start"] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
+
 export const opPayloads = {
   "timer.start": z.object({
     entryId: id,
@@ -80,13 +87,17 @@ export const opPayloads = {
   "entry.delete": z.object({ entryId: id, at: instant }),
   "entry.restore": z.object({ entryId: id, at: instant }),
 
-  "note.create": z.object({
-    noteId: id,
-    at: instant,
-    text: z.string().trim().min(1, "Write something").max(NOTE_MAX_LENGTH),
-    jobId: id.nullable().optional(),
-    location,
-  }),
+  "note.create": z
+    .object({
+      noteId: id,
+      at: instant,
+      kind: z.enum(NOTE_KINDS).optional(),
+      text: z.string().trim().max(NOTE_MAX_LENGTH).optional(),
+      jobId: id.nullable().optional(),
+      location,
+    })
+    .refine((p) => p.kind === "start" || (p.text ?? "").length > 0, "Write something")
+    .refine((p) => p.kind !== "start" || p.jobId != null, "A start needs a job"),
   "note.update": z.object({
     noteId: id,
     text: z.string().trim().min(1).max(NOTE_MAX_LENGTH).optional(),
@@ -100,14 +111,23 @@ export const opPayloads = {
     workDate,
     lines: z
       .array(
-        z.object({
-          entryId: id,
-          jobId: id,
-          startedAt: instant,
-          endedAt: instant,
-          note,
-          noteIds: z.array(id).min(1),
-        }),
+        z
+          .object({
+            entryId: id,
+            jobId: id,
+            note,
+            noteIds: z.array(id).min(1),
+            // Either a span, or a duration on the day.
+            startedAt: instant.optional(),
+            endedAt: instant.optional(),
+            durationSeconds: z.number().int().positive().max(MAX_ENTRY_SECONDS).optional(),
+          })
+          .refine(
+            (l) =>
+              (l.startedAt != null && l.endedAt != null && l.durationSeconds == null) ||
+              (l.startedAt == null && l.endedAt == null && l.durationSeconds != null),
+            "Give either a start and end time, or a duration",
+          ),
       )
       .min(1)
       .max(100),

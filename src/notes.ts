@@ -3,12 +3,15 @@ import { db } from "./db.server.ts";
 import { type LocationFix, createManualEntry } from "./entries.ts";
 import { requireBookableJob } from "./jobs.ts";
 import { OpError } from "./op-error.ts";
+import type { NoteKind } from "./ops-schema.ts";
 import { rollupProblems } from "./rollup.ts";
 import { workDateOf } from "./time.ts";
 
 /**
- * Day notes: quick "what I'm doing now" jottings, later rolled up into time
- * entries. A note that has been rolled up is part of an entry and is frozen.
+ * Day notes: quick "what I'm doing now" jottings under the job they're
+ * about, later turned into time entries. A 'start' is a note with no words
+ * that marks being on a job from that moment. A note that has been turned
+ * into time is part of an entry and is frozen.
  */
 
 export interface DayNote {
@@ -16,6 +19,8 @@ export interface DayNote {
   userId: number;
   at: number;
   workDate: string;
+  kind: NoteKind;
+  /** Empty for a start. */
   text: string;
   jobId: string | null;
   rolledIntoEntryId: string | null;
@@ -26,19 +31,21 @@ interface NoteRow {
   user_id: number;
   at: number;
   work_date: string;
+  kind: NoteKind;
   text: string;
   job_id: string | null;
   rolled_into_entry_id: string | null;
   deleted_at: number | null;
 }
 
-const COLUMNS = "id, user_id, at, work_date, text, job_id, rolled_into_entry_id, deleted_at";
+const COLUMNS = "id, user_id, at, work_date, kind, text, job_id, rolled_into_entry_id, deleted_at";
 
 const toNote = (r: NoteRow): DayNote => ({
   id: r.id,
   userId: r.user_id,
   at: r.at,
   workDate: r.work_date,
+  kind: r.kind,
   text: r.text,
   jobId: r.job_id,
   rolledIntoEntryId: r.rolled_into_entry_id,
@@ -95,25 +102,31 @@ export function createNote(args: {
   userId: number;
   noteId: string;
   at: number;
-  text: string;
+  kind?: NoteKind;
+  text?: string;
   jobId?: string | null;
   location?: LocationFix | null;
   deviceId: string;
   now: number;
 }): DayNote {
   if (getRow(args.noteId)) throw new OpError("conflict", "That note already exists.");
+  const kind = args.kind ?? "note";
+  const text = (args.text ?? "").trim();
+  if (kind === "note" && !text) throw new OpError("invalid", "Write something.");
+  if (kind === "start" && !args.jobId) throw new OpError("invalid", "A start needs a job.");
   const jobId = args.jobId ? requireBookableJob(args.jobId).id : null;
   db()
     .query(
-      `INSERT INTO day_notes (id, user_id, at, work_date, text, job_id, device_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO day_notes (id, user_id, at, work_date, kind, text, job_id, device_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       args.noteId,
       args.userId,
       args.at,
       workDateOf(args.at),
-      args.text.trim(),
+      kind,
+      kind === "start" ? "" : text,
       jobId,
       args.deviceId,
       args.now,
@@ -137,6 +150,9 @@ export function updateNote(args: {
 }): DayNote {
   const row = ownLiveNote(args.userId, args.noteId);
   assertNotRolled(row);
+  if (row.kind === "start" && args.text !== undefined) {
+    throw new OpError("invalid", "A start has no words of its own; add a note under the job instead.");
+  }
   const jobId = args.jobId ? requireBookableJob(args.jobId).id : args.jobId;
   const at = args.at ?? row.at;
   db()
@@ -165,15 +181,24 @@ export function restoreNote(args: { userId: number; noteId: string; now: number 
 }
 
 /**
- * Commit a reviewed rollup: create one entry per line and mark its notes as
- * rolled into it. All or nothing — the caller runs this in one transaction.
+ * Commit a reviewed rollup: create one entry per line — a span, or a duration
+ * on the day — and mark its notes as rolled into it. All or nothing — the
+ * caller runs this in one transaction.
  */
 export function commitRollup(args: {
   userId: number;
   /** Who committed it, when not the person themselves. */
   actorUserId?: number;
   workDate: string;
-  lines: { entryId: string; jobId: string; startedAt: number; endedAt: number; note?: string | null; noteIds: string[] }[];
+  lines: {
+    entryId: string;
+    jobId: string;
+    startedAt?: number | null;
+    endedAt?: number | null;
+    durationSeconds?: number | null;
+    note?: string | null;
+    noteIds: string[];
+  }[];
   deviceId: string;
   clientTime: number;
   now: number;
@@ -194,13 +219,15 @@ export function commitRollup(args: {
 
   const created: string[] = [];
   for (const line of args.lines) {
+    const spanned = line.startedAt != null && line.endedAt != null;
     createManualEntry({
       userId: args.userId,
       entryId: line.entryId,
       jobId: line.jobId,
       note: line.note,
-      startedAt: line.startedAt,
-      endedAt: line.endedAt,
+      ...(spanned
+        ? { startedAt: line.startedAt!, endedAt: line.endedAt! }
+        : { workDate: args.workDate, durationSeconds: line.durationSeconds! }),
       source: "note_rollup",
       deviceId: args.deviceId,
       clientTime: args.clientTime,

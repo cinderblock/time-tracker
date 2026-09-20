@@ -82,6 +82,7 @@ export function loadDay(userId: number, workDate: string): DayModel {
     notes: listNotesForDate(userId, workDate).map((n) => ({
       id: n.id,
       at: n.at,
+      kind: n.kind,
       text: n.text,
       jobId: n.jobId,
       jobName: n.jobId ? (jobNames.get(n.jobId) ?? null) : null,

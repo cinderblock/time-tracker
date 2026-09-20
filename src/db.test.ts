@@ -57,7 +57,7 @@ describe("migrations", () => {
     const path = freshFile();
     initDb(path, () => {});
     const first = migrationRows(path);
-    expect(first.map((r) => r.name)).toEqual(["001_initial", "002_tracking_mode"]);
+    expect(first.map((r) => r.name)).toEqual(["001_initial", "002_tracking_mode", "003_note_kind"]);
     expect(first[0]!.fingerprint).toMatch(/^[0-9a-f]{16}$/);
 
     reopen(path);

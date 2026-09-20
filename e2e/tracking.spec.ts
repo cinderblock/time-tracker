@@ -254,7 +254,7 @@ test("create a job on the spot while starting a timer, at a customer that's new 
   await page.goto("/");
 });
 
-test("switch to notes mode: no timer is offered; notes are jotted, then turned into time", async () => {
+test("switch to notes mode: add a job for the day, jot under it, and turn each job's notes into hours", async () => {
   await page.goto("/account");
   await page.getByRole("radio", { name: "Notes through the day" }).check();
   await expect(page.locator(".mantine-Notification-root").filter({ hasText: "You'll jot notes" })).toBeVisible();
@@ -262,59 +262,88 @@ test("switch to notes mode: no timer is offered; notes are jotted, then turned i
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Start a timer" })).toHaveCount(0);
   await expect(page.getByText(/You track with notes/)).toBeVisible();
-  const noteBox = page.getByPlaceholder("What are you working on now?");
-  await noteBox.fill("Measuring the east wall");
-  await pickJob(page.getByPlaceholder("Job (optional)").first(), "Bravo Site");
-  await page.getByRole("button", { name: "Add note" }).click();
-  await expect(page.getByText("Measuring the east wall")).toBeVisible();
 
-  await noteBox.fill("Cutting studs");
-  await page.getByRole("button", { name: "Add note" }).click();
-  await expect(page.getByText("Cutting studs")).toBeVisible();
+  // The first job of the day: from now on, that's what's being done.
+  await pickJob(page.getByPlaceholder("Add a job for today — type to search"), "Bravo Site");
+  const bravo = page.getByRole("group", { name: "Riverside:Bravo Site" });
+  await expect(bravo.getByText("Started")).toBeVisible();
+  await bravo.getByPlaceholder("What did you do?").fill("Measuring the east wall");
+  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(bravo.getByText("Measuring the east wall")).toBeVisible();
+  await bravo.getByPlaceholder("What did you do?").fill("Cutting studs");
+  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(bravo.getByText("Cutting studs")).toBeVisible();
 
-  await page.getByRole("button", { name: "Turn 2 notes into time" }).click();
-  const review = page.getByRole("dialog", { name: "Turn notes into time" });
-  // Both notes are on Bravo and consecutive, so they merge into one line.
-  await expect(review.getByText("2 notes")).toBeVisible();
-  // They were written moments apart; give the line a real span.
-  await review.getByLabel("From").fill("08:00");
-  await review.getByLabel("Last note runs until").fill("09:15");
-  await review.getByRole("button", { name: "Add 1 entry" }).click();
-  await expect(review).toBeHidden();
+  // A second job, later in the day.
+  await pickJob(page.getByPlaceholder("Add a job for today — type to search"), "Alpha Site");
+  const alpha = page.getByRole("group", { name: "Riverside:Alpha Site" });
+  await expect(alpha.getByText("Started")).toBeVisible();
+  await alpha.getByPlaceholder("What did you do?").fill("Site walk");
+  await alpha.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(alpha.getByText("Site walk")).toBeVisible();
 
+  // Bravo's notes ran until Alpha started, moments later; the hours are set by hand.
+  await bravo.getByRole("button", { name: "Turn 2 notes into hours" }).click();
+  const dialog = page.getByRole("dialog", { name: "Hours for Riverside:Bravo Site" });
+  await expect(dialog.getByLabel("Note")).toHaveValue("Measuring the east wall; Cutting studs");
+  await expect(dialog.getByLabel("Worked until")).toHaveCount(0);
+  await dialog.getByLabel("Hours").fill("1");
+  await dialog.getByLabel("Minutes").fill("15");
+  await dialog.getByRole("button", { name: "Add 1h 15m to Bravo Site" }).click();
+  await expect(dialog).toBeHidden();
   const row = entryRows().filter({ hasText: "Measuring the east wall; Cutting studs" });
   await expect(row.getByText("from notes")).toBeVisible();
+  await expect(row.getByText("Duration only")).toBeVisible();
   await expect(row.getByText("1h 15m")).toBeVisible();
-  await expect(page.getByText("added to time")).toHaveCount(2);
-  await expect(page.getByRole("button", { name: /Turn \d+ notes? into time/ })).toHaveCount(0);
+  await expect(bravo.getByText("added to time")).toHaveCount(3);
+  await expect(bravo.getByRole("button", { name: /into hours/ })).toHaveCount(0);
+
+  // Alpha runs to the end of the day, so it asks when that was.
+  await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
+  const alphaDialog = page.getByRole("dialog", { name: "Hours for Riverside:Alpha Site" });
+  await expect(alphaDialog.getByLabel("Worked until")).toBeVisible();
+  await alphaDialog.getByLabel("Hours").fill("0");
+  await alphaDialog.getByLabel("Minutes").fill("45");
+  await alphaDialog.getByRole("button", { name: "Add 45m to Alpha Site" }).click();
+  await expect(alphaDialog).toBeHidden();
+  await expect(entryRows().filter({ hasText: "Site walk" }).getByText("45m")).toBeVisible();
+  await expect(page.getByRole("button", { name: /into hours/ })).toHaveCount(0);
 });
 
-test("in notes mode, yesterday's notes have to become time before today's can start", async () => {
-  // A note left on yesterday, as a phone that synced late would leave it.
+test("in notes mode, yesterday's notes have to become hours before today's can start", async () => {
+  // A note left on yesterday with no job, as another device might leave it.
   const at = Date.now() - 86_400_000;
   const yesterday = new Date(at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
   await send(ctx.request, "note.create", { noteId: uuidv7(), at, text: "Left over from yesterday" });
 
   await page.reload();
   const held = page.getByRole("alert").filter({ hasText: "isn't finished" });
-  await expect(held).toContainText("Turn its note into time before today's notes start.");
-  await expect(page.getByPlaceholder("What are you working on now?")).toHaveCount(0);
+  await expect(held).toContainText("Turn its note into hours before today's notes start.");
+  await expect(page.getByPlaceholder("Add a job for today — type to search")).toHaveCount(0);
   await held.getByRole("link", { name: /^Go to / }).click();
   await expect(page).toHaveURL(new RegExp(`/day/${yesterday}$`));
-  await expect(page.getByText("Left over from yesterday")).toBeVisible();
   await expect(page.getByRole("button", { name: "Next day" })).toBeDisabled();
-  await expect(page.getByText("Turn this day's notes into time to move on.")).toBeVisible();
+  await expect(page.getByText("Turn this day's notes into hours to move on.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Turn 1 note into time" }).click();
-  const review = page.getByRole("dialog", { name: "Turn notes into time" });
-  await pickJob(review.getByPlaceholder("Pick a job"), "Alpha Site");
-  await review.getByLabel("From").fill("13:00");
-  await review.getByLabel("Last note runs until").fill("14:00");
-  await review.getByRole("button", { name: "Add 1 entry" }).click();
-  await expect(review).toBeHidden();
+  // Without a job it can't become hours: give it one.
+  const orphan = page.getByRole("group", { name: "No job yet" });
+  await expect(orphan.getByText("Left over from yesterday")).toBeVisible();
+  await orphan.getByRole("button", { name: "Edit" }).click();
+  await pickJob(orphan.getByRole("combobox"), "Alpha Site");
+  await orphan.getByRole("button", { name: "Save" }).click();
+  const alpha = page.getByRole("group", { name: "Riverside:Alpha Site" });
+  await expect(alpha.getByText("Left over from yesterday")).toBeVisible();
 
-  // The way forward opens, and today takes notes again.
+  await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
+  const dialog = page.getByRole("dialog", { name: "Hours for Riverside:Alpha Site" });
+  await expect(dialog.getByLabel("Worked until")).toBeVisible();
+  await dialog.getByLabel("Hours").fill("1");
+  await dialog.getByLabel("Minutes").fill("0");
+  await dialog.getByRole("button", { name: "Add 1h to Alpha Site" }).click();
+  await expect(dialog).toBeHidden();
+
+  // The way forward opens, and today takes a job again.
   await page.getByRole("link", { name: "Next day" }).click();
   await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
-  await expect(page.getByPlaceholder("What are you working on now?")).toBeVisible();
+  await expect(page.getByPlaceholder("Add a job for today — type to search")).toBeVisible();
 });

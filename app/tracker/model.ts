@@ -1,3 +1,4 @@
+import type { NoteKind } from "../../src/ops-schema.ts";
 import type { TrackingMode } from "../../src/tracking-mode.ts";
 
 /**
@@ -44,6 +45,9 @@ export interface EntryView {
 export interface NoteView {
   id: string;
   at: number;
+  /** A 'start' marks being on the job from `at`, with no words of its own. */
+  kind: NoteKind;
+  /** Empty for a start. */
   text: string;
   jobId: string | null;
   jobName: string | null;

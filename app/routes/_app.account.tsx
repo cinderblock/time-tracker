@@ -168,7 +168,7 @@ function TrackingModeSetting({ mode }: { mode: TrackingMode }) {
           <Radio
             value="notes"
             label="Notes through the day"
-            description="Jot what you're working on as you go. At the end of the day, turn the notes into time — the next day waits until you have."
+            description="Add the job you're on and jot what you do under it as you go. At the end of the day, turn each job's notes into hours — the next day waits until you have."
             disabled={busy}
           />
         </Stack>

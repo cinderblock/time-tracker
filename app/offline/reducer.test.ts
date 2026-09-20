@@ -219,6 +219,18 @@ describe("the reducer mirrors the server", () => {
     mirror([op("note.update", { noteId: n, at: NINE - 24 * HOUR })]);
   });
 
+  test("a job started for the day, notes under it, and its hours made as one entry", () => {
+    const [start, n1, entry] = [uuidv7(), uuidv7(), uuidv7()];
+    mirror([
+      op("note.create", { noteId: start, at: NINE, kind: "start", jobId: jobA }),
+      op("note.create", { noteId: n1, at: NINE + HOUR, text: "Framing", jobId: jobA }),
+      op("rollup.commit", {
+        workDate: DAY,
+        lines: [{ entryId: entry, jobId: jobA, durationSeconds: 5400, note: "Framing", noteIds: [start, n1] }],
+      }),
+    ]);
+  });
+
   test("a job created on the spot, then used", () => {
     const [child, id] = [uuidv7(), uuidv7()];
     mirror([

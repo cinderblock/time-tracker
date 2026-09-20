@@ -3,9 +3,9 @@ import {
   Badge,
   Button,
   Card,
-  CloseButton,
   Group,
   Modal,
+  NumberInput,
   Stack,
   Text,
   TextInput,
@@ -14,11 +14,11 @@ import {
 } from "@mantine/core";
 import { TimeInput } from "@mantine/dates";
 import { useMediaQuery } from "@mantine/hooks";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
-import { type RollupLine, proposeRollup, rollupProblems } from "../../src/rollup.ts";
+import { joinNotes, proposeRollup, rollupProblems } from "../../src/rollup.ts";
 import {
   addDays,
   formatClock,
@@ -29,27 +29,31 @@ import {
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
+import { splitJobName } from "./job-groups.ts";
 import { JobSelect } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
 
 /**
- * Notes mode: jot what you're doing as you go, then turn the day's notes into
- * time entries at the end of the day (or the next morning). A day's notes
- * have to become time before the next day can take any, so nothing is left
- * half-done.
+ * Notes mode, by job. Adding a job to the day marks being on it from that
+ * moment; notes then go under that job as the work happens. At the end of
+ * the day each job's notes are turned into hours — one entry per job, its
+ * notes as the description — and a day's notes must all be hours before the
+ * next day can start.
  *
- * In timer mode this panel only shows a day's leftover notes (from before a
- * switch), so they can still be turned into time.
+ * In timer mode the panel only shows a day's leftover notes (from before a
+ * switch), so they can still be turned into hours.
  */
 export function NotesPanel() {
   const { model, hrefFor } = useTracker();
-  const [reviewing, setReviewing] = useState(false);
-  const pendingNotes = model.notes.filter((n) => !n.rolledIntoEntryId);
   const isToday = model.workDate === model.today;
   const notesMode = model.mode === "notes";
-  // An earlier day's notes come first; until they're time, today takes none.
+  // An earlier day's notes come first; until they're hours, today takes none.
   const heldBy = notesMode && isToday ? (model.notesToRollUp ?? null) : null;
-  const canJot = notesMode && isToday && !heldBy;
+  const canAdd = notesMode && isToday && !heldBy;
+  const sections = useMemo(() => groupByJob(model.notes), [model.notes]);
+  // The section whose note box should take the cursor next.
+  const [focusJob, setFocusJob] = useState<string | null>(null);
+  const clearFocus = useCallback(() => setFocusJob(null), []);
 
   if (!notesMode && model.notes.length === 0) return null;
 
@@ -60,7 +64,8 @@ export function NotesPanel() {
         <Alert color="yellow" title={`${formatWorkDate(heldBy.date)} isn't finished`}>
           <Stack gap="xs">
             <Text size="sm">
-              Turn {heldBy.count === 1 ? "its note" : `its ${heldBy.count} notes`} into time before today's notes start.
+              Turn {heldBy.count === 1 ? "its note" : `its ${heldBy.count} notes`} into hours before today's notes
+              start.
             </Text>
             <Group>
               <Button component={Link} to={hrefFor(heldBy.date)} size="sm">
@@ -70,41 +75,174 @@ export function NotesPanel() {
           </Stack>
         </Alert>
       )}
-      {canJot && <QuickNote />}
-      {model.notes.length === 0 ? (
-        !heldBy && (
-          <Text c="dimmed" size="sm">
-            {model.partial
-              ? "Notes for this day aren't on this device."
-              : canJot
-                ? "Jot what you're working on as you switch tasks. At the end of the day, turn the notes into time."
-                : "No notes on this day."}
-          </Text>
-        )
-      ) : (
-        model.notes.map((n) => <NoteRow key={n.id} note={n} />)
-      )}
-      {pendingNotes.length > 0 && (
-        <Group>
-          <Button onClick={() => setReviewing(true)}>
-            Turn {pendingNotes.length} note{pendingNotes.length === 1 ? "" : "s"} into time
-          </Button>
-        </Group>
-      )}
-      <RollupReview opened={reviewing} onClose={() => setReviewing(false)} notes={pendingNotes} />
+      {canAdd && <AddJob sections={sections} onAdded={setFocusJob} />}
+      {sections.length === 0
+        ? !heldBy && (
+            <Text c="dimmed" size="sm">
+              {model.partial
+                ? "Notes for this day aren't on this device."
+                : canAdd
+                  ? "Add the job you're on, then jot what you do as you go. At the end of the day, turn each job's notes into hours."
+                  : "No notes on this day."}
+            </Text>
+          )
+        : sections.map((s) => (
+            <JobSection
+              key={s.key}
+              section={s}
+              canAdd={canAdd}
+              focused={focusJob != null && focusJob === s.jobId}
+              onFocused={clearFocus}
+            />
+          ))}
     </Stack>
   );
 }
 
-function QuickNote() {
-  const { model, dispatch, location } = useTracker();
-  const [text, setText] = useState("");
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+interface Section {
+  key: string;
+  jobId: string | null;
+  jobName: string | null;
+  /** In time order; the first is usually the start marker. */
+  notes: NoteView[];
+  startedAt: number;
+  pending: NoteView[];
+}
 
-  // Default the job to whatever the last note was about.
-  const lastJob = model.notes.at(-1)?.jobId ?? null;
-  useEffect(() => setJobId((current) => current ?? lastJob), [lastJob]);
+/** The day's notes by job, sections in the order the jobs were started. */
+function groupByJob(notes: readonly NoteView[]): Section[] {
+  const byJob = new Map<string | null, NoteView[]>();
+  for (const n of notes) {
+    const list = byJob.get(n.jobId) ?? [];
+    list.push(n);
+    byJob.set(n.jobId, list);
+  }
+  return [...byJob.entries()]
+    .map(([jobId, list]) => ({
+      key: jobId ?? "none",
+      jobId,
+      jobName: list[0]!.jobName,
+      notes: list,
+      startedAt: list[0]!.at,
+      pending: list.filter((n) => !n.rolledIntoEntryId),
+    }))
+    .sort((a, b) => a.startedAt - b.startedAt);
+}
+
+/** Pick a job to be on from now. One already on the day just takes the cursor. */
+function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: string) => void }) {
+  const { dispatch, location } = useTracker();
+  const [value, setValue] = useState<string | null>(null);
+
+  async function pick(jobId: string | null) {
+    setValue(null);
+    if (!jobId) return;
+    if (sections.some((s) => s.jobId === jobId)) {
+      onAdded(jobId);
+      return;
+    }
+    const result = await dispatch("note.create", {
+      noteId: uuidv7(),
+      at: Date.now(),
+      kind: "start",
+      jobId,
+      location: location(),
+    });
+    if (result.ok) onAdded(jobId);
+  }
+
+  return <JobSelect value={value} onChange={(id) => void pick(id)} placeholder="Add a job for today — type to search" />;
+}
+
+function JobSection({
+  section,
+  canAdd,
+  focused,
+  onFocused,
+}: {
+  section: Section;
+  canAdd: boolean;
+  focused: boolean;
+  onFocused: () => void;
+}) {
+  const { model } = useTracker();
+  const [hours, setHours] = useState(false);
+  const name = section.jobId ? (section.jobName ?? "Unknown job") : null;
+  const { customer, job: title } = splitJobName(name ?? "");
+  const written = section.pending.filter((n) => n.kind === "note").length;
+
+  return (
+    <Card withBorder padding="sm" role="group" aria-label={name ?? "No job yet"}>
+      <Stack gap="xs">
+        <Group justify="space-between" align="start" wrap="nowrap">
+          <Stack gap={0} style={{ minWidth: 0 }}>
+            <Text fw={600}>{name ? title : "No job yet"}</Text>
+            {customer && (
+              <Text size="xs" c="dimmed">
+                {customer}
+              </Text>
+            )}
+          </Stack>
+          <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+            since {formatClock(section.startedAt, model.timezone)}
+          </Text>
+        </Group>
+
+        {section.notes.map((n) => (
+          <NoteRow key={n.id} note={n} />
+        ))}
+
+        {section.jobId ? (
+          canAdd && <NoteBox jobId={section.jobId} jobName={name!} autoFocus={focused} onFocused={onFocused} />
+        ) : (
+          <Text size="sm" c="dimmed">
+            Give these notes a job (edit each one) to turn them into hours.
+          </Text>
+        )}
+
+        {section.jobId && section.pending.length > 0 && (
+          <Group>
+            <Button size="sm" variant="light" onClick={() => setHours(true)}>
+              {written > 0 ? `Turn ${written} note${written === 1 ? "" : "s"} into hours` : "Turn into hours"}
+            </Button>
+          </Group>
+        )}
+        {section.jobId && (
+          <HoursDialog
+            opened={hours}
+            onClose={() => setHours(false)}
+            jobId={section.jobId}
+            jobName={name!}
+            pending={section.pending}
+          />
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+/** A note for one job, written as the work happens. */
+function NoteBox({
+  jobId,
+  jobName,
+  autoFocus,
+  onFocused,
+}: {
+  jobId: string;
+  jobName: string;
+  autoFocus: boolean;
+  onFocused: () => void;
+}) {
+  const { dispatch, location } = useTracker();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!autoFocus) return;
+    ref.current?.focus();
+    onFocused();
+  }, [autoFocus, onFocused]);
 
   async function add(event: React.FormEvent) {
     event.preventDefault();
@@ -122,26 +260,22 @@ function QuickNote() {
   }
 
   return (
-    <Card withBorder padding="sm">
-      <form onSubmit={add}>
-        <Stack gap="xs">
-          <TextInput
-            placeholder="What are you working on now?"
-            aria-label="Note"
-            value={text}
-            onChange={(e) => setText(e.currentTarget.value)}
-            maxLength={NOTE_MAX_LENGTH}
-            size="md"
-          />
-          <JobSelect value={jobId} onChange={setJobId} placeholder="Job (optional)" />
-          <Group justify="flex-end">
-            <Button type="submit" loading={busy} disabled={!text.trim()}>
-              Add note
-            </Button>
-          </Group>
-        </Stack>
-      </form>
-    </Card>
+    <form onSubmit={add}>
+      <Group gap="xs" align="end" wrap="nowrap">
+        <TextInput
+          ref={ref}
+          placeholder="What did you do?"
+          aria-label={`Note for ${jobName}`}
+          value={text}
+          onChange={(e) => setText(e.currentTarget.value)}
+          maxLength={NOTE_MAX_LENGTH}
+          style={{ flex: 1 }}
+        />
+        <Button type="submit" loading={busy} disabled={!text.trim()}>
+          Add
+        </Button>
+      </Group>
+    </form>
   );
 }
 
@@ -152,6 +286,7 @@ function NoteRow({ note }: { note: NoteView }) {
   const [text, setText] = useState(note.text);
   const [jobId, setJobId] = useState(note.jobId);
   const rolled = note.rolledIntoEntryId != null;
+  const start = note.kind === "start";
 
   async function save() {
     const result = await dispatch("note.update", {
@@ -164,7 +299,11 @@ function NoteRow({ note }: { note: NoteView }) {
 
   async function remove() {
     const result = await dispatch("note.delete", { noteId: note.id, at: Date.now() });
-    if (result.ok) undoToast("Note deleted.", () => dispatch("note.restore", { noteId: note.id, at: Date.now() }));
+    if (result.ok) {
+      undoToast(start ? "Start removed." : "Note deleted.", () =>
+        dispatch("note.restore", { noteId: note.id, at: Date.now() }),
+      );
+    }
   }
 
   if (editing) {
@@ -178,7 +317,7 @@ function NoteRow({ note }: { note: NoteView }) {
             autosize
             aria-label="Note text"
           />
-          <JobSelect value={jobId} onChange={setJobId} placeholder="Job (optional)" />
+          <JobSelect value={jobId} onChange={setJobId} placeholder="Job" required />
           <Group justify="space-between">
             <Button variant="subtle" color="red" size="xs" onClick={() => void remove()} disabled={pending}>
               Delete
@@ -198,104 +337,118 @@ function NoteRow({ note }: { note: NoteView }) {
   }
 
   return (
-    <Card withBorder padding="sm" opacity={rolled ? 0.6 : 1}>
-      <Group justify="space-between" wrap="nowrap" align="start">
-        <Stack gap={2} style={{ minWidth: 0 }}>
-          <Group gap="xs">
-            <Text size="sm" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
-              {formatClock(note.at, model.timezone)}
-            </Text>
-            {note.jobName && (
-              <Badge size="sm" variant="light">
-                {note.jobName}
-              </Badge>
-            )}
-            {rolled && (
-              <Badge size="sm" variant="light" color="gray">
-                added to time
-              </Badge>
-            )}
-          </Group>
-          <Text size="sm">{note.text}</Text>
-        </Stack>
-        {!rolled && (
+    <Group justify="space-between" wrap="nowrap" align="start" opacity={rolled ? 0.6 : 1}>
+      <Group gap="xs" wrap="nowrap" align="start" style={{ minWidth: 0 }}>
+        <Text size="sm" c="dimmed" style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+          {formatClock(note.at, model.timezone)}
+        </Text>
+        <Text size="sm" c={start ? "dimmed" : undefined} fs={start ? "italic" : undefined}>
+          {start ? "Started" : note.text}
+        </Text>
+        {rolled && (
+          <Badge size="sm" variant="light" color="gray">
+            added to time
+          </Badge>
+        )}
+      </Group>
+      {!rolled &&
+        (start ? (
+          <Button size="compact-xs" variant="subtle" color="gray" onClick={() => void remove()} disabled={pending}>
+            Remove
+          </Button>
+        ) : (
           <Button size="compact-xs" variant="subtle" onClick={() => setEditing(true)}>
             Edit
           </Button>
-        )}
-      </Group>
-    </Card>
+        ))}
+    </Group>
   );
 }
 
-interface DraftLine {
-  key: string;
-  jobId: string | null;
-  start: string;
-  end: string;
-  note: string;
-  noteIds: string[];
-}
-
-function toDraft(line: RollupLine, tz: string): DraftLine {
-  return {
-    key: line.key,
-    jobId: line.jobId,
-    start: zonedTimeInput(line.startedAt, tz),
-    end: zonedTimeInput(line.endedAt, tz),
-    note: line.note,
-    noteIds: line.noteIds,
-  };
-}
-
-/** Review the proposed lines, fix them up, and commit them as entries. */
-function RollupReview({ opened, onClose, notes }: { opened: boolean; onClose: () => void; notes: NoteView[] }) {
+/**
+ * Turn one job's pending notes into hours: the timeline over the whole day
+ * suggests them (this job's runs, each until the next note of another job),
+ * the person confirms or changes them, and one duration entry is made with
+ * the notes as its description.
+ */
+function HoursDialog({
+  opened,
+  onClose,
+  jobId,
+  jobName,
+  pending,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  jobId: string;
+  jobName: string;
+  pending: NoteView[];
+}) {
   const { model, dispatch } = useTracker();
   const narrow = useMediaQuery("(max-width: 36em)");
   const tz = model.timezone;
   const date = model.workDate;
   const isToday = date === model.today;
-  const [lines, setLines] = useState<DraftLine[]>([]);
+  const { job: title } = splitJobName(jobName);
   const [endTime, setEndTime] = useState("");
+  const [hours, setHours] = useState<number | string>(0);
+  const [minutes, setMinutes] = useState<number | string>(0);
+  const [touched, setTouched] = useState(false);
+  const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Fresh proposal each time the review opens — and only then. The notes are
-  // read through a ref: the list is rebuilt on every data refresh (creating a
-  // job from inside this dialog causes one), which must not wipe the edits.
-  // The last line ends now (today) or an hour after the last note (a past
-  // day); the person confirms either.
-  const notesRef = useRef(notes);
-  notesRef.current = notes;
+  // This job runs to the end of the day when the day's last note is one of its pending ones.
+  const lastNote = model.notes.at(-1);
+  const runsToEnd = lastNote != null && lastNote.jobId === jobId && lastNote.rolledIntoEntryId == null;
+  const lastAt = model.notes.length ? Math.max(...model.notes.map((n) => n.at)) : 0;
+
+  // Fresh each time it opens — and only then. Read through refs: the model is
+  // rebuilt on every data refresh, which must not wipe what's been typed.
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
   useEffect(() => {
-    const notes = notesRef.current;
-    if (!opened || notes.length === 0) return;
-    const lastAt = Math.max(...notes.map((n) => n.at));
+    if (!opened) return;
     const suggestedEnd = isToday ? Math.max(Date.now(), lastAt) : lastAt + 3600_000;
     const roundedEnd = Math.ceil(suggestedEnd / 300_000) * 300_000;
     setEndTime(zonedTimeInput(roundedEnd, tz));
-    setLines(proposeRollup(notes, roundedEnd).map((l) => toDraft(l, tz)));
+    setNote(joinNotes(pendingRef.current.map((n) => n.text)));
+    setTouched(false);
     setError(null);
-  }, [opened, isToday, tz]);
+    setBusy(false);
+  }, [opened, isToday, tz, lastAt]);
 
-  // The end-of-day time only moves the last line's end.
-  function changeEnd(value: string) {
-    setEndTime(value);
-    setLines((ls) => ls.map((l, i) => (i === ls.length - 1 ? { ...l, end: value } : l)));
-  }
+  // The end of the day, from the field (a time before the last note means after midnight).
+  const endAt = useMemo(() => {
+    if (!endTime) return lastAt;
+    const at = zonedTimeToInstant(date, endTime, tz);
+    return at <= lastAt ? zonedTimeToInstant(addDays(date, 1), endTime, tz) : at;
+  }, [endTime, date, tz, lastAt]);
 
-  const resolved = useMemo(
-    () =>
-      lines.map((l) => {
-        const startedAt = l.start ? zonedTimeToInstant(date, l.start, tz) : Number.NaN;
-        let endedAt = l.end ? zonedTimeToInstant(date, l.end, tz) : Number.NaN;
-        if (endedAt <= startedAt) endedAt = zonedTimeToInstant(addDays(date, 1), l.end, tz); // past midnight
-        return { ...l, startedAt, endedAt };
-      }),
-    [lines, date, tz],
-  );
-  const problems = lines.length === 0 ? ["There's nothing to add."] : rollupProblems(resolved);
-  const total = resolved.reduce((s, l) => s + (l.endedAt > l.startedAt ? (l.endedAt - l.startedAt) / 1000 : 0), 0);
+  // This job's runs, over the whole day's notes; only their pending part counts.
+  const spans = useMemo(() => {
+    const pendingIds = new Set(pending.map((n) => n.id));
+    const byId = new Map(model.notes.map((n) => [n.id, n]));
+    const out: { startedAt: number; endedAt: number }[] = [];
+    for (const line of proposeRollup(model.notes, endAt)) {
+      if (line.jobId !== jobId) continue;
+      const mine = line.noteIds.filter((id) => pendingIds.has(id));
+      if (mine.length === 0) continue;
+      const startedAt = mine.length === line.noteIds.length ? line.startedAt : byId.get(mine[0]!)!.at;
+      if (line.endedAt > startedAt) out.push({ startedAt, endedAt: line.endedAt });
+    }
+    return out;
+  }, [model.notes, pending, jobId, endAt]);
+  const suggested = spans.reduce((sum, s) => sum + Math.round((s.endedAt - s.startedAt) / 1000), 0);
+
+  useEffect(() => {
+    if (touched) return;
+    setHours(Math.floor(suggested / 3600));
+    setMinutes(Math.round((suggested % 3600) / 60));
+  }, [suggested, touched]);
+
+  const seconds = (Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60;
+  const problems = rollupProblems([{ jobId, durationSeconds: seconds }]);
 
   async function commit() {
     setBusy(true);
@@ -304,14 +457,15 @@ function RollupReview({ opened, onClose, notes }: { opened: boolean; onClose: ()
       "rollup.commit",
       {
         workDate: date,
-        lines: resolved.map((l) => ({
-          entryId: uuidv7(),
-          jobId: l.jobId!,
-          startedAt: l.startedAt,
-          endedAt: l.endedAt,
-          note: l.note.trim() || null,
-          noteIds: l.noteIds,
-        })),
+        lines: [
+          {
+            entryId: uuidv7(),
+            jobId,
+            durationSeconds: seconds,
+            note: note.trim() || null,
+            noteIds: pending.map((n) => n.id),
+          },
+        ],
       },
       { quiet: true },
     );
@@ -320,78 +474,70 @@ function RollupReview({ opened, onClose, notes }: { opened: boolean; onClose: ()
     else setError(result.error);
   }
 
-  const update = (key: string, patch: Partial<DraftLine>) =>
-    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
-
   return (
-    <Modal opened={opened} onClose={onClose} title="Turn notes into time" centered size="lg" fullScreen={narrow}>
+    <Modal opened={opened} onClose={onClose} title={`Hours for ${jobName}`} centered fullScreen={narrow}>
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          Each note counts until the next one. Check the jobs and times, remove anything that wasn't work (like
-          lunch), then add them.
+          From the notes, {title} ran{" "}
+          {spans.length === 0
+            ? "for no time at all"
+            : spans
+                .map((s) => `${formatClock(s.startedAt, tz)} – ${formatClock(s.endedAt, tz)}`)
+                .join(" and ")}
+          {spans.length > 0 ? `: ${formatDurationHuman(suggested)}` : ""}. Change it if that's not right.
         </Text>
-        <TimeInput label="Last note runs until" value={endTime} onChange={(e) => changeEnd(e.currentTarget.value)} />
-
-        {lines.map((l) => (
-          <Card key={l.key} withBorder padding="sm">
-            <Stack gap="xs">
-              <Group justify="space-between" align="start" wrap="nowrap">
-                <Text size="sm" fw={500} style={{ flex: 1 }}>
-                  {l.noteIds.length} note{l.noteIds.length === 1 ? "" : "s"}
-                </Text>
-                <CloseButton
-                  aria-label="Remove this line"
-                  onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
-                />
-              </Group>
-              <JobSelect
-                value={l.jobId}
-                onChange={(jobId) => update(l.key, { jobId })}
-                placeholder="Pick a job"
-                required
-                error={l.jobId ? null : "Needs a job"}
-              />
-              <Group grow>
-                <TimeInput label="From" value={l.start} onChange={(e) => update(l.key, { start: e.currentTarget.value })} />
-                <TimeInput label="To" value={l.end} onChange={(e) => update(l.key, { end: e.currentTarget.value })} />
-              </Group>
-              <Textarea
-                label="Note"
-                value={l.note}
-                onChange={(e) => update(l.key, { note: e.currentTarget.value })}
-                autosize
-                maxLength={NOTE_MAX_LENGTH}
-              />
-            </Stack>
-          </Card>
-        ))}
-
-        {problems.length > 0 && lines.length > 0 && (
-          <Alert color="yellow">
-            {problems.map((p) => (
-              <div key={p}>{p}</div>
-            ))}
-          </Alert>
+        {runsToEnd && (
+          <TimeInput label="Worked until" value={endTime} onChange={(e) => setEndTime(e.currentTarget.value)} />
         )}
+        <Group grow align="start">
+          <NumberInput
+            label="Hours"
+            value={hours}
+            onChange={(v) => {
+              setTouched(true);
+              setHours(v);
+            }}
+            min={0}
+            max={24}
+            allowDecimal={false}
+          />
+          <NumberInput
+            label="Minutes"
+            value={minutes}
+            onChange={(v) => {
+              setTouched(true);
+              setMinutes(v);
+            }}
+            min={0}
+            max={59}
+            step={5}
+            allowDecimal={false}
+          />
+        </Group>
+        <Textarea
+          label="Note"
+          description="Goes with the hours, to accounting."
+          value={note}
+          onChange={(e) => setNote(e.currentTarget.value)}
+          maxLength={NOTE_MAX_LENGTH}
+          autosize
+          minRows={2}
+          maxRows={6}
+        />
         {error && (
           <Alert color="red" role="alert">
             {error}
           </Alert>
         )}
-
-        <Group justify="space-between">
-          <Text fw={600}>Total {formatDurationHuman(total)}</Text>
-          <Group gap="xs">
-            <Button variant="default" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={() => void commit()} loading={busy} disabled={problems.length > 0}>
-              Add {lines.length} entr{lines.length === 1 ? "y" : "ies"}
-            </Button>
-          </Group>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => void commit()} loading={busy} disabled={problems.length > 0}>
+            Add {formatDurationHuman(seconds)} to {title}
+          </Button>
         </Group>
       </Stack>
     </Modal>
   );
 }
-

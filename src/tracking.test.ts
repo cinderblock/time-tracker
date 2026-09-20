@@ -495,6 +495,58 @@ describe("notes and rollup", () => {
     expect(listNotesForDate(userId, TODAY)[0]!.rolledIntoEntryId).toBeNull();
   });
 
+  test("a start marker bounds the timeline but adds no words; duration lines are checked too", () => {
+    const lines = proposeRollup(
+      [
+        { id: "s", at: NINE, text: "", jobId: jobA },
+        { id: "a", at: NINE + HOUR, text: "Framing", jobId: jobA },
+        { id: "b", at: NINE + 2 * HOUR, text: "", jobId: jobB },
+      ],
+      NINE + 3 * HOUR,
+    );
+    expect(lines.map((l) => [l.jobId, l.startedAt, l.endedAt, l.note])).toEqual([
+      [jobA, NINE, NINE + 2 * HOUR, "Framing"],
+      [jobB, NINE + 2 * HOUR, NINE + 3 * HOUR, ""],
+    ]);
+    expect(rollupProblems([{ jobId: jobA, durationSeconds: 3600 }])).toEqual([]);
+    expect(rollupProblems([{ jobId: jobA, durationSeconds: 0 }])).toContain("Every line needs some time.");
+    expect(rollupProblems([{ jobId: jobA, durationSeconds: 25 * 3600 }])).toContain("A line can't be longer than 24 hours.");
+    expect(rollupProblems([{ jobId: jobA, startedAt: NINE }])).toContain("A line needs both a start and an end, or a duration.");
+  });
+
+  test("a start marks being on a job; its notes become hours as one entry with the notes as the description", () => {
+    const start = uuidv7();
+    ok(send("note.create", { noteId: start, at: NINE, kind: "start", jobId: jobA }));
+    expect(listNotesForDate(userId, TODAY)[0]).toMatchObject({ kind: "start", text: "", jobId: jobA });
+    rejected(send("note.create", { noteId: uuidv7(), at: NINE, kind: "start" }), "invalid"); // a start needs a job
+    rejected(send("note.create", { noteId: uuidv7(), at: NINE, text: "   ", jobId: jobA }), "invalid"); // a note needs words
+    rejected(send("note.update", { noteId: start, text: "Actually" }), "invalid"); // a start has none
+
+    const n1 = uuidv7();
+    ok(send("note.create", { noteId: n1, at: NINE + HOUR, text: "Framing", jobId: jobA }));
+    const entryId = uuidv7();
+    ok(
+      send("rollup.commit", {
+        workDate: TODAY,
+        lines: [{ entryId, jobId: jobA, durationSeconds: 2 * 3600, note: "Framing", noteIds: [start, n1] }],
+      }),
+    );
+    expect(getEntry(entryId)).toMatchObject({
+      jobId: jobA,
+      workDate: TODAY,
+      durationSeconds: 7200,
+      note: "Framing",
+      source: "note_rollup",
+      segments: [],
+    });
+    expect(listNotesForDate(userId, TODAY).map((n) => n.rolledIntoEntryId)).toEqual([entryId, entryId]);
+    // A line is a span or a duration, never neither.
+    rejected(
+      send("rollup.commit", { workDate: TODAY, lines: [{ entryId: uuidv7(), jobId: jobA, noteIds: [uuidv7()] }] }),
+      "invalid",
+    );
+  });
+
   test("in notes mode, the latest earlier day with notes not yet turned into time holds later days", () => {
     const yesterday = NINE - 24 * HOUR; // 2026-09-15
     const older = NINE - 4 * 24 * HOUR; // 2026-09-12

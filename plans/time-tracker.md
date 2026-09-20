@@ -261,11 +261,16 @@ the Account page; decision 13):
 1. **Timer** — start / pause / stop, persisted as `time_segments` so a pause is a real
    gap rather than a subtracted number. A job, its customer, or a global setting can
    require a note before a stop is accepted.
-2. **Sporadic notes → daily rollup** — `day_notes` captured freely through the day,
-   then a review screen (end of day, or next morning) groups them into `time_entries`.
-   The rollup is a *proposal* the user edits and commits; committing is one op. A
-   day's notes must become time before a later day can take notes (the tracking
-   screen says which day is waiting and links to it; that day's "next" is disabled).
+2. **Notes by job → hours per job** — adding a job to the day makes a `start`
+   note (kind `start`, no words: "on this job from now"); `day_notes` then go
+   under their job as the work happens. At the end of the day (or next morning)
+   each job's notes are turned into hours: the timeline over the whole day
+   (each note runs until the next; a start bounds like any other) suggests the
+   duration, the person confirms it, and one duration `time_entries` row per job
+   carries the notes as its description (`rollup.commit`, one op; a line may be
+   a span or a duration). A day's notes must become hours before a later day can
+   take notes (the tracking screen says which day is waiting and links to it;
+   that day's "next" is disabled). See `plans/notes-by-job.md`.
 
 **Manual** entry — type a duration, or a start and stop time — is available in both
 (same `time_entries` row, `source='manual'`).
