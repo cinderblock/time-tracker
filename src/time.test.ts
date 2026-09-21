@@ -6,7 +6,9 @@ import {
   formatClock,
   formatDuration,
   formatDurationHuman,
+  formatDurationInput,
   formatWorkDate,
+  parseDuration,
   weekdayOf,
   workDateOf,
   zonedTimeInput,
@@ -91,6 +93,61 @@ describe("decimalHours", () => {
     expect(decimalHours(3600)).toBe(1);
     expect(decimalHours(5400)).toBe(1.5);
     expect(decimalHours(1000)).toBe(0.28);
+  });
+});
+
+describe("parseDuration", () => {
+  test("reads a bare number as hours, decimals included", () => {
+    expect(parseDuration("2")).toBe(7200);
+    expect(parseDuration("1.5")).toBe(5400);
+    expect(parseDuration(".75")).toBe(2700);
+    expect(parseDuration(" 0.25 ")).toBe(900);
+    // 90 means ninety hours, not ninety minutes; the caller's limit says so.
+    expect(parseDuration("90")).toBe(90 * 3600);
+  });
+
+  test("reads clock style", () => {
+    expect(parseDuration("1:30")).toBe(5400);
+    expect(parseDuration("0:45")).toBe(2700);
+    expect(parseDuration(":45")).toBe(2700);
+    expect(parseDuration("12:05")).toBe(12 * 3600 + 300);
+    expect(parseDuration("1:30:30")).toBe(5430);
+  });
+
+  test("reads named units, in any spacing", () => {
+    expect(parseDuration("90m")).toBe(5400);
+    expect(parseDuration("1h30m")).toBe(5400);
+    expect(parseDuration("1h 30")).toBe(5400);
+    expect(parseDuration("1 hr 30 min")).toBe(5400);
+    expect(parseDuration("1.5H")).toBe(5400);
+    expect(parseDuration("45 minutes")).toBe(2700);
+    expect(parseDuration("2h")).toBe(7200);
+  });
+
+  test("rounds to the minute unless seconds were asked for", () => {
+    // 7.33 h is 7:19:48; storing that would redisplay as 7:20 and silently
+    // rewrite the entry on the next save.
+    expect(parseDuration("7.33")).toBe(7 * 3600 + 20 * 60);
+    expect(parseDuration("90s")).toBe(90);
+    expect(parseDuration("1m30s")).toBe(90);
+  });
+
+  test("refuses what it can't read", () => {
+    for (const bad of ["", "   ", "abc", "-1", "1:60", "1:2:3:4", "1x", "1h2h", "30m1h", "1,5", "1.5.5", "h"]) {
+      expect(parseDuration(bad)).toBeNull();
+    }
+  });
+});
+
+describe("formatDurationInput", () => {
+  test("always writes the hour, so the field round-trips", () => {
+    expect(formatDurationInput(5400)).toBe("1:30");
+    expect(formatDurationInput(2700)).toBe("0:45");
+    expect(formatDurationInput(0)).toBe("0:00");
+    expect(formatDurationInput(5430)).toBe("1:30:30");
+    for (const seconds of [0, 60, 2700, 5400, 5430, 86_399]) {
+      expect(parseDuration(formatDurationInput(seconds))).toBe(seconds);
+    }
   });
 });
 

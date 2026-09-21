@@ -37,7 +37,9 @@ repository. All of that is deployment configuration or an admin setting.
     entry per job carries the notes as its description. A day's notes have to
     become hours before the next day's can start.
   - *Manual entry*, either way — a start and end time (overnight shifts included)
-    or just a duration, on any past day.
+    or just a duration, on any past day. A duration is one field, written the way
+    it's said: `1:30`, `1.5` or `90m` all mean an hour and a half, and the field
+    says back what it understood.
 - **People submit their own time.** A day is a draft until the person who worked
   it says it's done. Submitting freezes each entry's rate, locks it, and hands it
   to the accounting system. It's theirs to take back — fix the day and submit it

@@ -273,7 +273,9 @@ the Account page; decision 13):
    that day's "next" is disabled). See `plans/notes-by-job.md`.
 
 **Manual** entry — type a duration, or a start and stop time — is available in both
-(same `time_entries` row, `source='manual'`).
+(same `time_entries` row, `source='manual'`). A duration is one field, read by
+`parseDuration` in `src/time.ts`: decimal hours, clock style or named units all
+land on the same seconds. See `plans/one-duration-field.md`.
 
 Jobs sit under customers (decision 12): a customer is the top of the job tree and
 never takes time; everything below it does.

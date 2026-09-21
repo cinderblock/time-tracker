@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { JOB_NAME_MAX_LENGTH, NOTE_MAX_LENGTH } from "./limits.ts";
+import { JOB_NAME_MAX_LENGTH, MAX_ENTRY_SECONDS, NOTE_MAX_LENGTH } from "./limits.ts";
 import { UUID_PATTERN } from "./uuid.ts";
 
 /**
@@ -36,8 +36,6 @@ const location = z
   })
   .nullable()
   .optional();
-
-export const MAX_ENTRY_SECONDS = 24 * 3600;
 
 /**
  * A 'note' says what was done. A 'start' marks being on a job from that

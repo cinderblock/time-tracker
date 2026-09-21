@@ -47,8 +47,8 @@ async function sendNow(result: string | RegExp) {
   await expect(toast(result).last()).toBeVisible();
 }
 
-/** Add time on the tracking screen as a plain duration. */
-async function addTime(job: string, hours: string, minutes: string) {
+/** Add time on the tracking screen as a plain duration, however it's written. */
+async function addTime(job: string, duration: string) {
   await page.goto("/");
   await page.getByRole("button", { name: "Add time manually" }).click();
   const dialog = page.getByRole("dialog", { name: "Add time" });
@@ -57,8 +57,7 @@ async function addTime(job: string, hours: string, minutes: string) {
   await jobInput.fill(job);
   await page.getByRole("option", { name: job, exact: true }).click();
   await dialog.getByText("Just a duration").click();
-  await dialog.getByLabel("Hours").fill(hours);
-  await dialog.getByLabel("Minutes").fill(minutes);
+  await dialog.getByLabel("Time worked").fill(duration);
   await dialog.getByRole("button", { name: "Add time" }).click();
   await expect(dialog).toBeHidden();
 }
@@ -133,8 +132,8 @@ test("link a person, pick default items, and send submitted time", async () => {
   await acme.getByLabel("New job for Acme").fill("Pop-up job");
   await acme.getByRole("button", { name: "Add job", exact: true }).click();
   await expect(page.getByRole("group", { name: "Acme › Pop-up job" }).getByText("not in QuickBooks yet")).toBeVisible();
-  await addTime("Phase 2", "2", "0");
-  await addTime("Pop-up job", "0", "45");
+  await addTime("Phase 2", "2");
+  await addTime("Pop-up job", "45m");
   await signOffWeek();
 
   await page.goto("/admin/accounting");
@@ -196,7 +195,7 @@ test("a job made here can be created in QuickBooks instead", async () => {
 });
 
 test("while QuickBooks is closed nothing is lost, and it goes once it's back", async () => {
-  await addTime("Phase 2", "0", "30");
+  await addTime("Phase 2", "0:30");
   await signOffWeek();
   await bridgeControl("down", { down: true });
   await page.goto("/admin/accounting");
@@ -211,7 +210,7 @@ test("while QuickBooks is closed nothing is lost, and it goes once it's back", a
 });
 
 test("a refusal is shown, and can be retried", async () => {
-  await addTime("Phase 2", "0", "15");
+  await addTime("Phase 2", "0.25");
   await signOffWeek();
   await page.goto("/admin/accounting");
   // After the page's own health check, so it's the time that's refused.

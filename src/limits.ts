@@ -16,3 +16,5 @@ export const CATEGORY_NAME_MAX_LENGTH = 60;
 export const BRANDING_LIMITS = { name: 60, shortName: 12 } as const;
 /** Hourly rates are money per hour; anything above this is a typo. */
 export const MAX_HOURLY_RATE = 100_000;
+/** One entry covers at most a day — a longer one is a slip, not a shift. */
+export const MAX_ENTRY_SECONDS = 24 * 3600;

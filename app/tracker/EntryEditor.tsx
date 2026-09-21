@@ -1,23 +1,21 @@
-import {
-  Alert,
-  Button,
-  Group,
-  Modal,
-  NumberInput,
-  SegmentedControl,
-  Stack,
-  Text,
-  TextInput,
-  Textarea,
-} from "@mantine/core";
+import { Alert, Button, Group, Modal, SegmentedControl, Stack, Text, TextInput, Textarea } from "@mantine/core";
 import { TimeInput } from "@mantine/dates";
 import { useMediaQuery } from "@mantine/hooks";
 import { useEffect, useRef, useState } from "react";
 
 import { jobLabel } from "../../src/job-names.ts";
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
-import { addDays, formatDurationHuman, workDateOf, zonedTimeInput, zonedTimeToInstant } from "../../src/time.ts";
+import {
+  addDays,
+  formatDurationHuman,
+  formatDurationInput,
+  parseDuration,
+  workDateOf,
+  zonedTimeInput,
+  zonedTimeToInstant,
+} from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
+import { DurationInput, durationProblem } from "../components/duration-input.tsx";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { JobSelect } from "./JobPicker.tsx";
 import type { EntryView } from "./model.ts";
@@ -52,8 +50,7 @@ export function EntryEditor({
   const [date, setDate] = useState(defaultDate);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [hours, setHours] = useState<number | string>(0);
-  const [minutes, setMinutes] = useState<number | string>(0);
+  const [duration, setDuration] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,8 +71,7 @@ export function EntryEditor({
       setDate(entry.startedAt != null ? workDateOf(entry.startedAt, tz) : entry.workDate);
       setStart(entry.startedAt != null ? zonedTimeInput(entry.startedAt, tz) : "");
       setEnd(entry.endedAt != null ? zonedTimeInput(entry.endedAt, tz) : "");
-      setHours(Math.floor(entry.durationSeconds / 3600));
-      setMinutes(Math.round((entry.durationSeconds % 3600) / 60));
+      setDuration(formatDurationInput(entry.durationSeconds));
       setNote(entry.note ?? "");
     } else {
       setMode("times");
@@ -83,8 +79,7 @@ export function EntryEditor({
       setDate(defaultDate);
       setStart("");
       setEnd("");
-      setHours(0);
-      setMinutes(0);
+      setDuration("");
       setNote("");
     }
   }, [opened, entry]);
@@ -95,7 +90,7 @@ export function EntryEditor({
   const overnight = startAt != null && endAt != null && endAt <= startAt;
   if (overnight && endAt != null) endAt = zonedTimeToInstant(addDays(date, 1), end, tz);
   const durationFromTimes = startAt != null && endAt != null ? Math.round((endAt - startAt) / 1000) : null;
-  const typedSeconds = (Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60;
+  const typedSeconds = parseDuration(duration) ?? 0;
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -117,9 +112,10 @@ export function EntryEditor({
           { quiet: true },
         );
       } else {
-        if (typedSeconds <= 0) {
+        const problem = durationProblem(duration);
+        if (problem) {
           setBusy(false);
-          return setError("Enter how long you worked.");
+          return setError(problem);
         }
         result = await dispatch(
           "entry.create",
@@ -140,6 +136,11 @@ export function EntryEditor({
         { quiet: true },
       );
     } else {
+      const problem = durationProblem(duration);
+      if (problem) {
+        setBusy(false);
+        return setError(problem);
+      }
       result = await dispatch(
         "entry.update",
         {
@@ -217,18 +218,7 @@ export function EntryEditor({
               )}
             </Stack>
           ) : (
-            <Group grow align="start">
-              <NumberInput label="Hours" value={hours} onChange={setHours} min={0} max={24} allowDecimal={false} />
-              <NumberInput
-                label="Minutes"
-                value={minutes}
-                onChange={setMinutes}
-                min={0}
-                max={59}
-                step={5}
-                allowDecimal={false}
-              />
-            </Group>
+            <DurationInput label="Time worked" value={duration} onChange={setDuration} required />
           )}
 
           <Textarea

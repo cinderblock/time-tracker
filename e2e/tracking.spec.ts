@@ -260,8 +260,9 @@ test("add time by hand, as a plain duration", async () => {
   const dialog = page.getByRole("dialog", { name: "Add time" });
   await pickJob(dialog.getByRole("combobox", { name: /^Job/ }), "Bravo Site");
   await dialog.getByText("Just a duration").click();
-  await dialog.getByLabel("Hours").fill("1");
-  await dialog.getByLabel("Minutes").fill("30");
+  // One field, decimal hours; it says back what it understood.
+  await dialog.getByLabel("Time worked").fill("1.5");
+  await expect(dialog.getByText("1h 30m")).toBeVisible();
   await dialog.getByLabel("Note").fill("Paperwork");
   await dialog.getByRole("button", { name: "Add time" }).click();
   await expect(dialog).toBeHidden();
@@ -274,9 +275,9 @@ test("add time by hand, as a plain duration", async () => {
 test("edit an entry's times; an end before the start runs past midnight", async () => {
   await entryRows().filter({ hasText: "Paperwork" }).getByRole("button", { name: /^Edit / }).click();
   const dialog = page.getByRole("dialog", { name: "Edit entry" });
-  // A typed-in duration is edited as a duration.
-  await expect(dialog.getByLabel("Hours")).toHaveValue("1");
-  await dialog.getByLabel("Minutes").fill("45");
+  // A typed-in duration is edited as a duration, in clock form.
+  await expect(dialog.getByLabel("Time worked")).toHaveValue("1:30");
+  await dialog.getByLabel("Time worked").fill("1h45");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
   await expect(entryRows().filter({ hasText: "Paperwork" }).getByText("1h 45m")).toBeVisible();
@@ -369,8 +370,7 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Bravo Site" });
   await expect(dialog.getByLabel("Note")).toHaveValue("Measuring the east wall; Cutting studs");
   await expect(dialog.getByLabel("Worked until")).toHaveCount(0);
-  await dialog.getByLabel("Hours").fill("1");
-  await dialog.getByLabel("Minutes").fill("15");
+  await dialog.getByLabel("Time worked").fill("1:15");
   await dialog.getByRole("button", { name: "Add 1h 15m to Bravo Site" }).click();
   await expect(dialog).toBeHidden();
   const row = entryRows().filter({ hasText: "Measuring the east wall; Cutting studs" });
@@ -384,8 +384,7 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
   const alphaDialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
   await expect(alphaDialog.getByLabel("Worked until")).toBeVisible();
-  await alphaDialog.getByLabel("Hours").fill("0");
-  await alphaDialog.getByLabel("Minutes").fill("45");
+  await alphaDialog.getByLabel("Time worked").fill("45m");
   await alphaDialog.getByRole("button", { name: "Add 45m to Alpha Site" }).click();
   await expect(alphaDialog).toBeHidden();
   await expect(entryRows().filter({ hasText: "Site walk" }).getByText("45m")).toBeVisible();
@@ -419,8 +418,7 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
   const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
   await expect(dialog.getByLabel("Worked until")).toBeVisible();
-  await dialog.getByLabel("Hours").fill("1");
-  await dialog.getByLabel("Minutes").fill("0");
+  await dialog.getByLabel("Time worked").fill("1");
   await dialog.getByRole("button", { name: "Add 1h to Alpha Site" }).click();
   await expect(dialog).toBeHidden();
 

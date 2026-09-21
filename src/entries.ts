@@ -2,7 +2,7 @@ import { audit } from "./audit.ts";
 import { db } from "./db.server.ts";
 import { type EntryStatus, isEditable, lockedReason } from "./entry-status.ts";
 import { requireBookableJob, resolveJob } from "./jobs.ts";
-import { MAX_ENTRY_SECONDS } from "./ops-schema.ts";
+import { MAX_ENTRY_SECONDS } from "./limits.ts";
 import { OpError } from "./op-error.ts";
 import { requireNoteOnStop } from "./settings.ts";
 import { workDateOf } from "./time.ts";

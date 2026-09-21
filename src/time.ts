@@ -85,6 +85,90 @@ export function decimalHours(totalSeconds: number): number {
   return Math.round((totalSeconds / 3600) * 100) / 100;
 }
 
+// ---- durations as people type them -----------------------------------------------
+
+/** Seconds in each unit a typed duration may name. */
+const DURATION_UNITS: Record<string, number> = {
+  h: 3600,
+  hr: 3600,
+  hrs: 3600,
+  hour: 3600,
+  hours: 3600,
+  m: 60,
+  min: 60,
+  mins: 60,
+  minute: 60,
+  minutes: 60,
+  s: 1,
+  sec: 1,
+  secs: 1,
+  second: 1,
+  seconds: 1,
+};
+
+/** "1h30m", "90m", "1h 30" — a run of amounts, each smaller than the last. */
+function parseUnitRun(text: string): { seconds: number; exact: boolean } | null {
+  const token = /(\d+(?:\.\d+)?|\.\d+)([a-z]*)/y;
+  let seconds = 0;
+  // Seconds per unit of the token before this one: each must be smaller, so
+  // "1h2h" and "30m1h" are typos rather than sums.
+  let previous = Infinity;
+  let exact = false;
+  let at = 0;
+  while (at < text.length) {
+    token.lastIndex = at;
+    const match = token.exec(text);
+    if (!match) return null;
+    at = token.lastIndex;
+    const name = match[2]!;
+    // A number with no unit trails the one before it, as "1h30" is 1h 30m.
+    const unit = name ? DURATION_UNITS[name] : previous === 3600 ? 60 : previous === 60 ? 1 : undefined;
+    if (unit === undefined || unit >= previous) return null;
+    seconds += Number(match[1]) * unit;
+    if (unit === 1) exact = true;
+    previous = unit;
+  }
+  return { seconds, exact };
+}
+
+/**
+ * Seconds from a duration as someone types it, or null if it can't be read.
+ *
+ * Decimal hours ("1.5", ".75", "2"), clock style ("1:30", ":45", "1:30:00")
+ * and named units ("90m", "1h30m", "1 hr 30 min") all work. A bare number is
+ * hours, which is what the field it replaced asked for; 90 is therefore 90
+ * hours, and the caller's own limit is what catches that.
+ *
+ * The result is whole minutes unless seconds were explicitly typed — a
+ * duration that redisplays as something else would silently rewrite the entry
+ * it came from the next time it was saved.
+ */
+export function parseDuration(input: string): number | null {
+  const text = input.trim().toLowerCase().replace(/\s+/g, "");
+  if (!text) return null;
+
+  const clock = /^(\d*):([0-5]?\d)(?::([0-5]?\d))?$/.exec(text);
+  if (clock) return Number(clock[1] || 0) * 3600 + Number(clock[2]) * 60 + Number(clock[3] ?? 0);
+
+  if (/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(text)) return Math.round((Number(text) * 3600) / 60) * 60;
+
+  const run = parseUnitRun(text);
+  if (!run) return null;
+  return run.exact ? Math.round(run.seconds) : Math.round(run.seconds / 60) * 60;
+}
+
+/**
+ * "1:30" — a duration as the value of a field `parseDuration` reads back,
+ * exactly. Unlike `formatDuration`, the hour is always written: "45:00" in a
+ * duration field means forty-five hours, not forty-five minutes.
+ */
+export function formatDurationInput(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const minutes = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+  const head = `${Math.floor(s / 3600)}:${minutes}`;
+  return s % 60 === 0 ? head : `${head}:${String(s % 60).padStart(2, "0")}`;
+}
+
 // ---- zone-aware conversions ------------------------------------------------------
 //
 // The browser needs these because the organisation's timezone (whose calendar

@@ -5,7 +5,6 @@ import {
   Card,
   Group,
   Modal,
-  NumberInput,
   Stack,
   Text,
   TextInput,
@@ -25,11 +24,14 @@ import {
   addDays,
   formatClock,
   formatDurationHuman,
+  formatDurationInput,
   formatWorkDate,
+  parseDuration,
   zonedTimeInput,
   zonedTimeToInstant,
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
+import { DurationInput } from "../components/duration-input.tsx";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
 import { JobSelect } from "./JobPicker.tsx";
@@ -464,8 +466,7 @@ function HoursDialog({
   const isToday = date === model.today;
   const { name: title } = jobPath(jobName);
   const [endTime, setEndTime] = useState("");
-  const [hours, setHours] = useState<number | string>(0);
-  const [minutes, setMinutes] = useState<number | string>(0);
+  const [duration, setDuration] = useState("");
   const [touched, setTouched] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -516,11 +517,11 @@ function HoursDialog({
 
   useEffect(() => {
     if (touched) return;
-    setHours(Math.floor(suggested / 3600));
-    setMinutes(Math.round((suggested % 3600) / 60));
+    // The notes' own seconds are noise here — nobody means "2:07:43".
+    setDuration(formatDurationInput(Math.round(suggested / 60) * 60));
   }, [suggested, touched]);
 
-  const seconds = (Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60;
+  const seconds = parseDuration(duration) ?? 0;
   const problems = rollupProblems([{ jobId, durationSeconds: seconds }]);
 
   async function commit() {
@@ -569,31 +570,14 @@ function HoursDialog({
         {runsToEnd && (
           <TimeInput label="Worked until" value={endTime} onChange={(e) => setEndTime(e.currentTarget.value)} />
         )}
-        <Group grow align="start">
-          <NumberInput
-            label="Hours"
-            value={hours}
-            onChange={(v) => {
-              setTouched(true);
-              setHours(v);
-            }}
-            min={0}
-            max={24}
-            allowDecimal={false}
-          />
-          <NumberInput
-            label="Minutes"
-            value={minutes}
-            onChange={(v) => {
-              setTouched(true);
-              setMinutes(v);
-            }}
-            min={0}
-            max={59}
-            step={5}
-            allowDecimal={false}
-          />
-        </Group>
+        <DurationInput
+          label="Time worked"
+          value={duration}
+          onChange={(v) => {
+            setTouched(true);
+            setDuration(v);
+          }}
+        />
         <Textarea
           label="Note"
           description="Goes with the hours, to accounting."
