@@ -30,7 +30,7 @@ import {
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
-import { useFlight } from "./flight.tsx";
+import { useFlight, whereItIs } from "./flight.tsx";
 import { splitJobName } from "./job-groups.ts";
 import { JobSelect } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
@@ -287,9 +287,10 @@ function NoteBox({
 
 /**
  * One line of the day. A note that hasn't become hours yet opens for editing
- * from anywhere on its row — the whole row is the tap target, as an entry's is
- * — with a pencil fading in on hover to say so where there's a mouse. The
- * start marker can only be removed, and a rolled-up note is just a record.
+ * from anywhere on its row — the whole row is the tap target, as an entry's
+ * is — with a pencil to say so: drawn on a touch device, where there is no
+ * other clue, and faded in on hover where there's a mouse. The start marker
+ * can only be removed, and a rolled-up note is just a record.
  */
 function NoteRow({ note }: { note: NoteView }) {
   const { model, dispatch, pending } = useTracker();
@@ -526,6 +527,7 @@ function HoursDialog({
     setBusy(true);
     setError(null);
     const entryId = uuidv7();
+    const leaves = whereItIs(from.current);
     const result = await dispatch(
       "rollup.commit",
       {
@@ -548,7 +550,7 @@ function HoursDialog({
       return;
     }
     // The row is already on the other side of the screen; show it getting there.
-    flyToEntry(entryId, formatDurationHuman(seconds), from.current);
+    flyToEntry(entryId, formatDurationHuman(seconds), leaves);
     onClose();
   }
 

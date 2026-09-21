@@ -45,10 +45,11 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
 6. **A start marker can be removed but not reworded**; its time is edited by
    removing it and adding the job again.
 7. **A note row is its own edit control** (2026-09-21). Tapping anywhere on it
-   opens it, as tapping an entry row does; with a mouse a pencil fades in on
-   the row to say so, and on a touch device that pencil isn't drawn at all, so
-   the note gets the row's full width where width is scarce. There is no
-   text "Edit" button to squeeze — see the clipping finding in
+   opens it, as tapping an entry row does, and a pencil says so: drawn on a
+   touch device, faded in on hover where there's a mouse. (It was hidden on
+   touch at first, to give the note the row's full width; that traded the only
+   clue a note can be edited for ~22px, and the width wasn't worth it.) There
+   is no text "Edit" button to squeeze — see the clipping finding in
    `plans/time-tracker.md`.
 
 ## Plan / steps

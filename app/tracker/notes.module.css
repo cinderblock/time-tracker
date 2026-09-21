@@ -7,9 +7,9 @@
  * never shrink; the text takes what's left.
  *
  * With a mouse the action fades in on the row, so a quiet row stays quiet.
- * On a phone there is no hover, so it stays drawn — except the pencil, which
- * is only a hint: the whole row is the tap target there, and dropping it
- * gives the note the full width where width is scarce.
+ * On a phone there is no hover to fade anything in, so it stays drawn — the
+ * pencil included: without it nothing says a note can be opened at all, and
+ * a hint you can only find by guessing isn't worth the width it saves.
  */
 
 .row {
@@ -44,10 +44,6 @@
 }
 
 @media (hover: none) {
-  .pencil {
-    display: none;
-  }
-
   /* No pointer to aim with: the row's whole width, and a little more of the
    * gap above and below it, opens the note. The negative margin keeps the
    * rows sitting where they did — this buys reach, not space. */

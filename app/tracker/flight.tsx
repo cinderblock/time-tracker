@@ -5,22 +5,42 @@ import classes from "./flight.module.css";
 /**
  * Time seen moving from one column of the day to the other.
  *
- * When a change turns work into hours — a job's notes rolled up — the new row
- * is already on the right of the screen by the time the dialog closes, and it
- * simply appears there. `flyToEntry` sends a pill carrying the duration from
- * where the change was made to the row it became, and flashes the row as it
- * lands, so the flow is something you watch rather than something you work
- * out. Nothing depends on it finishing: the data is in place first, and a
- * person who asked for no motion just gets the flash.
+ * Work becomes hours in two ways — a timer stops (or is switched away from),
+ * and a job's notes are turned into time — and both end with the left column
+ * losing something and the right column quietly holding it. `flyToEntry`
+ * sends a pill carrying the duration from where the change was made to the
+ * row it belongs to, and flashes the row as it lands, so the flow is
+ * something you watch rather than something you work out. Nothing depends on
+ * it finishing: the data is in place first, and a person who asked for no
+ * motion just gets the flash.
  */
+
+/** A point on the page, in document coordinates — scrolling doesn't move it. */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/**
+ * Note where something is *now*, to fly from once the change has gone
+ * through. Take this before making the change, not after: stopping a timer
+ * unmounts the card it was on, and React empties the ref before the dispatch
+ * resolves — by then there is nothing left to measure.
+ */
+export function whereItIs(el: HTMLElement | null): Point | null {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width === 0 && r.height === 0) return null;
+  return { x: r.left + r.width / 2 + window.scrollX, y: r.top + r.height / 2 + window.scrollY };
+}
 
 interface Flight {
   /**
    * Send `label` from `from` to the entry row `entryId`, then flash that row.
-   * Call it once the change has succeeded, with the element the change was
-   * made from; a missing or detached source only flashes the row.
+   * Call it once the change has succeeded, with the point `whereItIs` took
+   * beforehand; without one, the row just flashes.
    */
-  flyToEntry(entryId: string, label: string, from: HTMLElement | null): void;
+  flyToEntry(entryId: string, label: string, from: Point | null): void;
   /** The entry row that has just landed, if any. */
   landed: string | null;
 }
@@ -28,7 +48,7 @@ interface Flight {
 interface Pending {
   entryId: string;
   label: string;
-  from: HTMLElement;
+  from: Point;
 }
 
 /** Outside a provider — or on the server — this is inert, not an error. */
@@ -93,10 +113,10 @@ export function landingClass(landed: string | null, entryId: string): string | u
 }
 
 /**
- * The pill in flight. It measures both ends itself, at the moment it flies:
- * the page may have scrolled since the change was made, and on a phone the
- * row it is flying to is usually below the fold — so bring that into view
- * first, and let the scrolling finish before taking any measurement.
+ * The pill in flight. On a phone the row it is flying to is usually below the
+ * fold, so it brings that into view first and lets the scrolling finish
+ * before measuring anything — including the source, which is held in
+ * document coordinates precisely so that scroll can't strand it.
  */
 function Ghost({ pending, onArrived }: { pending: Pending; onArrived: (entryId: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -115,13 +135,9 @@ function Ghost({ pending, onArrived }: { pending: Pending; onArrived: (entryId: 
         return;
       }
       const to = centre(await reveal(row));
-      const source = pending.from.getBoundingClientRect();
-      // Detached between the change and the flight: nothing to fly from.
-      if (source.width === 0 && source.height === 0) {
-        flashTheRow();
-        return;
-      }
-      const from = centre(source);
+      // Back to viewport coordinates, *after* any scrolling has settled — the
+      // source may well have moved up the screen to make room for the row.
+      const from = { x: pending.from.x - window.scrollX, y: pending.from.y - window.scrollY };
       if (cancelled) return;
       ghost.style.left = `${to.x}px`;
       ghost.style.top = `${to.y}px`;
@@ -184,7 +200,9 @@ async function waitFor<T>(get: () => T | null, ms = 1500): Promise<T | null> {
 async function reveal(el: HTMLElement): Promise<DOMRect> {
   const rect = el.getBoundingClientRect();
   if (rect.top >= 0 && rect.bottom <= window.innerHeight) return rect;
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  // `nearest`, not `center`: move the page as little as will do. Stopping a
+  // timer shouldn't throw the screen away from the button just tapped.
+  el.scrollIntoView({ block: "nearest", behavior: "smooth" });
   const started = performance.now();
   let last = rect.top;
   for (;;) {

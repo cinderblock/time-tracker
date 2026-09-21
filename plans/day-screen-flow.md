@@ -41,9 +41,11 @@ the left side *becomes* the right side. Two changes:
    ghost is a small pill carrying the duration; it flies to the row, which
    then flashes once. The flight starts *after* the dialog has closed, so it
    isn't hidden under the modal overlay.
-4. **The mechanism is general but only wired to the rollup**, which is what was
-   asked for. Stopping a timer is the same shape of flow and would be a few
-   lines — offer it, don't assume it.
+4. **Every way work becomes hours flies the same way** (2026-09-21): a job's
+   notes rolled up, a timer stopped, and a timer switched away from. The
+   timer's row already exists while it runs (an open entry is listed, with a
+   "running" badge), so nothing appears there on stop — but the card on the
+   left *goes*, and the pill is what says where its time went.
 5. **Web Animations API, not a library.** One `element.animate()` call for the
    ghost and a CSS keyframe for the landing flash.
 6. **`prefers-reduced-motion` skips the flight**; the row still flashes, since
@@ -81,10 +83,24 @@ the left side *becomes* the right side. Two changes:
   there at the same time can also sweep the file mid-load. Give the worktree
   its own `bun install` — 28s with a warm cache.
 
+- **Take the source's position before the change, not after.** Stopping a
+  timer unmounts the card it was on, and React empties that ref *before*
+  `dispatch` resolves (the outbox applies the change optimistically on
+  enqueue), so reading `ref.current` afterwards gives `null` — and a detached
+  element measures 0×0 anyway. `whereItIs()` snapshots the point up front, in
+  **document** coordinates, so the scroll that brings the row into view can't
+  strand it; the flight converts back to the viewport once that scroll has
+  settled. Caught by the e2e test for the timer flight, which found no pill.
 - The destination row can be off screen on a phone (the Time column is below
   the notes). Scroll it into view first, then wait for the rect to stop
   moving — a smooth scroll's duration is the browser's business, so measure
-  by comparing successive frames rather than by a fixed delay.
+  by comparing successive frames rather than by a fixed delay. `block:
+  "nearest"`, so stopping a timer doesn't throw the screen away from the
+  button just tapped.
+- A running timer is *already* a row in the right column (an open entry is
+  listed, with a "running" badge), so stopping one makes nothing appear
+  there. The flight still earns its place: the card on the left goes, and the
+  pill is what says where its time went.
 - Mantine's `Modal` fades out over ~200ms. Starting the flight immediately
   puts the ghost under a dissolving overlay; it waits for the close instead.
 - The optimistic model already holds the new entry by the time
@@ -102,8 +118,9 @@ the left side *becomes* the right side. Two changes:
 
 ## Open questions for the user
 
-1. Stopping a timer moves time to the right column too. Want the same flight
-   there? (Recommendation: yes, for one consistent story.)
+None. The timer's flight was asked for and built (decision 4), and the
+scroll that brings an off-screen row into view uses `block: "nearest"` so
+stopping a timer doesn't throw the screen away from the button just tapped.
 
 ## Things not to do
 

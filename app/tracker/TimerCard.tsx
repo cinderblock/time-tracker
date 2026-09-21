@@ -1,11 +1,12 @@
 import { Badge, Button, Card, Group, Modal, Stack, Text, Textarea, Title } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
-import { formatClock, formatDuration } from "../../src/time.ts";
+import { formatClock, formatDuration, formatDurationHuman } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
+import { useFlight, whereItIs } from "./flight.tsx";
 import { splitJobName } from "./job-groups.ts";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import { type EntryView, type JobView, liveSeconds } from "./model.ts";
@@ -49,8 +50,11 @@ function StartTimer() {
 
 function RunningTimer({ entry }: { entry: EntryView }) {
   const { model, dispatch, dispatchAll, pending, location } = useTracker();
+  const { flyToEntry } = useFlight();
   const now = useNow();
   const undoToast = useUndoToast();
+  // Where the time flies from when the timer ends and this card goes away.
+  const card = useRef<HTMLDivElement>(null);
   const [note, setNote] = useState(entry.note ?? "");
   const [noteError, setNoteError] = useState<string | null>(null);
   const [switchTo, setSwitchTo] = useState<JobView | null>(null);
@@ -70,23 +74,37 @@ function RunningTimer({ entry }: { entry: EntryView }) {
     await dispatch("entry.update", { entryId: entry.id, note: note.trim() || null }, { background: true });
   }
 
+  /**
+   * The time this timer will have recorded once it stops at `at` — what the
+   * card is showing, and so what flies to the row it settles into.
+   */
+  function settled(at: number) {
+    return formatDurationHuman(liveSeconds(entry, at));
+  }
+
   async function stop() {
     if (needsNote) {
       setNoteError("This job needs a note before the timer can stop.");
       return;
     }
     setNoteError(null);
+    const at = Date.now();
+    // Before the dispatch: a successful stop takes this card off the screen.
+    const from = whereItIs(card.current);
     const result = await dispatch("timer.stop", {
       entryId: entry.id,
-      at: Date.now(),
+      at,
       note: noteDirty ? note.trim() || null : undefined,
       location: location(),
     });
     if (!result.ok && result.code === "note_required") setNoteError(result.error);
+    // This card is about to be replaced by "Start a timer": say where its time went.
+    else if (result.ok) flyToEntry(entry.id, settled(at), from);
   }
 
   async function doSwitch(job: JobView, closingNote?: string) {
     const at = Date.now();
+    const from = whereItIs(card.current);
     const ops: { type: "timer.stop" | "timer.start"; payload: unknown }[] = [];
     // Stop explicitly when there's a note to attach; otherwise the start
     // implies the stop at the same instant.
@@ -100,7 +118,12 @@ function RunningTimer({ entry }: { entry: EntryView }) {
     const results = await dispatchAll(ops);
     const blocked = results.find((r) => !r.ok && r.code === "note_required");
     if (blocked) setSwitchTo(job);
-    else setSwitchTo(null);
+    else {
+      setSwitchTo(null);
+      // The card stays, but it is the new job's now — the old job's time has
+      // gone to the record, so it travels there too.
+      flyToEntry(entry.id, settled(at), from);
+    }
     setOtherJob(null);
   }
 
@@ -117,7 +140,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
   }
 
   return (
-    <Card withBorder padding="lg" radius="md" shadow="sm">
+    <Card ref={card} withBorder padding="lg" radius="md" shadow="sm">
       <Stack gap="md">
         <Group justify="space-between" align="start" wrap="nowrap">
           <Stack gap={2}>
