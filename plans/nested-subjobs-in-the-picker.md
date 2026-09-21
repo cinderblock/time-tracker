@@ -152,7 +152,7 @@ everything else.
    sync refusal messages.
 5. [x] Tests: unit for the rule and the names; e2e picks up that "Phase 1" is
    now a heading until an admin switches its hours on.
-6. [ ] README and this plan; typecheck, unit, chromium e2e; commit.
+6. [x] README and this plan; typecheck, unit, chromium + qb-bridge e2e; commit.
 
 ## Findings / gotchas
 
@@ -241,22 +241,32 @@ everything else.
   the worktree checked out at that commit — the peer's submit/approval work
   included — for **46 passed, 1 skipped (screenshots), 0 failed**.
 
+- 2026-09-21, round two — Per-job `takes_time` with the sub-jobs default
+  (migration 005), the "Takes hours" switch on the Jobs page, and the display
+  sweep that leaves no ":" on screen. Typecheck clean; 293 unit tests; the
+  chromium and qb-bridge e2e projects together **55 passed, 0 failed** in the
+  verification worktree, re-run at the commit itself. `job-picker-nested.png`
+  now shows "Phase 1 sub-jobs only" greyed with Deck and Roof set in under it,
+  and the field reading "Riverside › Alpha Site". Committed as 5d3f1c4.
+
 ## Open questions for the user
 
-1. Should a job with sub-jobs stop taking hours (the "usually" in the
-   request)? Today it still can. The picker already draws the unbookable case,
-   so the change is one line in `src/jobs.ts`
-   (`bookable: open && parentId != null && !hasChildren`) plus a rule about
-   time already booked to such a job. Not done without a yes — it would
-   silently make jobs unpickable at TWILL.
-2. Want the same leaf-first treatment on the recent-job buttons and the timer
-   card heading ("Deck", with "Riverside:Phase 1" beneath, instead of
-   "Phase 1:Deck" over "Riverside")? Decision 7 left it out to stay clear of
-   another session's files.
-3. The Reports page's Job filter is still a flat list of full paths, on
-   purpose: there a customer *is* a valid choice ("Includes its sub-jobs"), so
-   the picker's rules don't apply. It could be nested with an indent the same
-   way if the list gets long enough to bother.
+Both of round one's questions were answered on 2026-09-21 and are built:
+a job with sub-jobs takes no hours by default (R1), and every screen names a
+job leaf-first with its place beneath (R3). What's left:
+
+1. **Data keeps its colons** — the CSV's Job column, what goes to QuickBooks,
+   and the fake QuickBooks in the tests. Assumed rather than asked, because
+   those are interop and QuickBooks' own convention. Say the word if the CSV
+   should read like the screens do.
+2. The Reports page's Job filter is a flat list, now written with "›": there a
+   customer *is* a valid choice ("Includes its sub-jobs"), so the picker's
+   rules don't apply. It could be nested with an indent the same way if the
+   list gets long enough to bother.
+3. A job stops taking hours the moment a sub-job appears under it — including
+   when a QuickBooks pull adds one. Nobody is told; the job simply stops being
+   offered. If that lands badly in practice, the Jobs page could flag jobs
+   that changed answer since the last pull.
 
 ## Things not to do
 
