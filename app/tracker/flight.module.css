@@ -1,0 +1,38 @@
+/*
+ * The hours a job's notes became, seen moving from the workbench column to
+ * the record — a pill carrying the duration, flying to the row it becomes,
+ * which then flashes once. Nothing here is load-bearing: the row is already
+ * in place before the flight starts, so a browser that skips the animation
+ * (or a person who asked for no motion) loses only the explanation.
+ */
+
+.ghost {
+  position: fixed;
+  /* Over Mantine's modal layer (200): the flight begins as the dialog goes. */
+  z-index: 1000;
+  pointer-events: none;
+  /* Hidden until it has both ends measured; the flight fades it in. */
+  opacity: 0;
+  padding: 4px 10px;
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-primary-color-filled);
+  color: var(--mantine-color-white);
+  font-size: var(--mantine-font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--mantine-shadow-md);
+}
+
+/* A ring rather than a fill, so the row's own colours are left alone. */
+.landed {
+  animation: land 900ms ease-out;
+}
+
+@keyframes land {
+  from {
+    box-shadow: 0 0 0 3px var(--mantine-primary-color-filled);
+  }
+  to {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}

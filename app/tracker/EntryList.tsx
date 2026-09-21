@@ -5,9 +5,13 @@ import { isEditable } from "../../src/entry-status.ts";
 import { formatClock, formatDurationHuman } from "../../src/time.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { EntryEditor } from "./EntryEditor.tsx";
+import { landingClass, useFlight } from "./flight.tsx";
 import { type EntryView, liveSeconds } from "./model.ts";
 
-/** The day's entries. Tap one to edit; delete right from the row, with undo. */
+/**
+ * The day's record: the hours it holds, and where they came from. Tap one to
+ * edit; delete right from the row, with undo.
+ */
 export function EntryList() {
   const { model } = useTracker();
   const now = useNow(30_000);
@@ -17,9 +21,16 @@ export function EntryList() {
 
   return (
     <Stack gap="sm">
-      <Group justify="space-between" align="baseline">
-        <Title order={3}>Time</Title>
-        <Text fw={600}>{formatDurationHuman(total)}</Text>
+      <Group justify="space-between" align="baseline" wrap="nowrap">
+        <Stack gap={0}>
+          <Title order={3}>Time</Title>
+          <Text size="xs" c="dimmed">
+            {model.mode === "notes" ? "Hours made from the day's notes." : "Hours from the day's timers."}
+          </Text>
+        </Stack>
+        <Text fw={600} style={{ whiteSpace: "nowrap" }}>
+          {formatDurationHuman(total)}
+        </Text>
       </Group>
 
       {model.entries.length === 0 ? (
@@ -53,6 +64,7 @@ export function EntryList() {
 
 function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | undefined; onEdit: () => void }) {
   const { model, dispatch, pending } = useTracker();
+  const { landed } = useFlight();
   const undoToast = useUndoToast();
   const tz = model.timezone;
   const running = entry.status === "open";
@@ -110,7 +122,8 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
   );
 
   return (
-    <Card withBorder padding="sm">
+    // `data-entry-id` is how a flight finds the row it is flying to.
+    <Card withBorder padding="sm" data-entry-id={entry.id} className={landingClass(landed, entry.id)}>
       <Group justify="space-between" wrap="nowrap" align="start" gap="sm">
         {locked ? (
           <div style={{ flex: 1, minWidth: 0 }}>{details}</div>

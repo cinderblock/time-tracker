@@ -30,6 +30,7 @@ import {
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
+import { useFlight } from "./flight.tsx";
 import { splitJobName } from "./job-groups.ts";
 import { JobSelect } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
@@ -169,12 +170,14 @@ function JobSection({
 }) {
   const { model } = useTracker();
   const [hours, setHours] = useState(false);
+  // Where this job's hours fly from when its notes become time.
+  const card = useRef<HTMLDivElement>(null);
   const name = section.jobId ? (section.jobName ?? "Unknown job") : null;
   const { customer, job: title } = splitJobName(name ?? "");
   const written = section.pending.filter((n) => n.kind === "note").length;
 
   return (
-    <Card withBorder padding="sm" role="group" aria-label={name ?? "No job yet"}>
+    <Card ref={card} withBorder padding="sm" role="group" aria-label={name ?? "No job yet"}>
       <Stack gap="xs">
         <Group justify="space-between" align="start" wrap="nowrap">
           <Stack gap={0} style={{ minWidth: 0 }}>
@@ -216,6 +219,7 @@ function JobSection({
             jobId={section.jobId}
             jobName={name!}
             pending={section.pending}
+            from={card}
           />
         )}
       </Stack>
@@ -441,14 +445,18 @@ function HoursDialog({
   jobId,
   jobName,
   pending,
+  from,
 }: {
   opened: boolean;
   onClose: () => void;
   jobId: string;
   jobName: string;
   pending: NoteView[];
+  /** The job's card: where its hours are seen to leave from. */
+  from: React.RefObject<HTMLDivElement | null>;
 }) {
   const { model, dispatch } = useTracker();
+  const { flyToEntry } = useFlight();
   const narrow = useMediaQuery("(max-width: 36em)");
   const tz = model.timezone;
   const date = model.workDate;
@@ -517,13 +525,14 @@ function HoursDialog({
   async function commit() {
     setBusy(true);
     setError(null);
+    const entryId = uuidv7();
     const result = await dispatch(
       "rollup.commit",
       {
         workDate: date,
         lines: [
           {
-            entryId: uuidv7(),
+            entryId,
             jobId,
             durationSeconds: seconds,
             note: note.trim() || null,
@@ -534,8 +543,13 @@ function HoursDialog({
       { quiet: true },
     );
     setBusy(false);
-    if (result.ok) onClose();
-    else setError(result.error);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    // The row is already on the other side of the screen; show it getting there.
+    flyToEntry(entryId, formatDurationHuman(seconds), from.current);
+    onClose();
   }
 
   return (

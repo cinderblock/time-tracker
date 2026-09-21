@@ -5,42 +5,55 @@ import { formatDurationHuman } from "../../src/time.ts";
 import { type ActingFor, TrackerProvider, useNow, useTracker } from "./context.tsx";
 import { DayHeader } from "./DayHeader.tsx";
 import { EntryList } from "./EntryList.tsx";
+import { FlightProvider } from "./flight.tsx";
 import { type DayModel, liveSeconds } from "./model.ts";
 import { NotesPanel } from "./NotesPanel.tsx";
+import classes from "./screen.module.css";
 import { TimerPanel } from "./TimerCard.tsx";
 
 /**
- * The tracking screen for one day. On a phone everything stacks, the way of
- * recording time first — a timer, or the day's notes, whichever the person
- * tracks with; on a wide screen that sits beside the day's entries.
+ * The tracking screen for one day, in two columns: the workbench — a timer,
+ * or the day's notes, whichever the person tracks with — and the day's
+ * entries, the record those become. The workbench sits on a tinted surface so
+ * the two read as different things, and hours made from notes are seen to
+ * cross from one to the other (`flight.tsx`).
+ *
+ * On a phone the columns stack, the workbench first.
  */
 export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor?: ActingFor }) {
   return (
     <TrackerProvider model={model} actingFor={actingFor}>
-      <Stack gap="lg" maw={1100}>
-        <ActingForNotice />
-        <DayHeader />
-        <OfflineNotice />
-        <Grid gap="lg">
-          <Grid.Col span={{ base: 12, md: 6 }}>
-            <Stack gap="lg">
-              {model.workDate !== model.today ? (
-                <OpenTimerElsewhere />
-              ) : model.mode === "notes" ? (
-                // Notes mode offers no timer — but one that's running must still be stoppable.
-                model.open && <TimerPanel />
-              ) : (
-                <TimerPanel />
-              )}
-              <NotesPanel />
-              <ModeHint />
-            </Stack>
-          </Grid.Col>
-          <Grid.Col span={{ base: 12, md: 6 }}>
-            <EntryList />
-          </Grid.Col>
-        </Grid>
-      </Stack>
+      <FlightProvider>
+        <Stack gap="lg" maw={1100}>
+          <ActingForNotice />
+          <DayHeader />
+          <OfflineNotice />
+          <Grid gap="lg">
+            <Grid.Col span={{ base: 12, md: 6 }}>
+              <Stack gap="sm">
+                {/* Tinted — and, on a past day with nothing to record, not there
+                    at all: the panels inside decide that by rendering nothing,
+                    and `:empty` takes the surface away with them. */}
+                <Stack gap="lg" className={classes.workbench}>
+                  {model.workDate !== model.today ? (
+                    <OpenTimerElsewhere />
+                  ) : model.mode === "notes" ? (
+                    // Notes mode offers no timer — but one that's running must still be stoppable.
+                    model.open && <TimerPanel />
+                  ) : (
+                    <TimerPanel />
+                  )}
+                  <NotesPanel />
+                </Stack>
+                <ModeHint />
+              </Stack>
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 6 }}>
+              <EntryList />
+            </Grid.Col>
+          </Grid>
+        </Stack>
+      </FlightProvider>
     </TrackerProvider>
   );
 }

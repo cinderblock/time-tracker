@@ -1,0 +1,21 @@
+/*
+ * The day in two columns. The left is the workbench — what's being recorded
+ * right now, a timer or the day's notes — and the right is the record itself.
+ * They looked like one wall of cards, so the workbench sits on a tinted
+ * surface: one boundary, which the hours are then seen to cross when a job's
+ * notes become time (see flight.module.css).
+ *
+ * On a phone the columns stack, and the tint reads as the same boundary drawn
+ * horizontally.
+ */
+
+.workbench {
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-md);
+}
+
+/* A past day in timer mode records nothing: no panel, so no surface either. */
+.workbench:empty {
+  display: none;
+}
