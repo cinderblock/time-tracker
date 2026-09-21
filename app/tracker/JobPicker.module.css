@@ -1,0 +1,9 @@
+/*
+ * A job that only holds sub-jobs is drawn as a disabled option: it can't be
+ * chosen, but it is the path to the jobs under it, so it has to stay legible.
+ * Mantine dims a disabled option to 0.35, which nothing inside it can undo.
+ */
+.option[data-combobox-disabled] {
+  opacity: 0.75;
+  cursor: default;
+}

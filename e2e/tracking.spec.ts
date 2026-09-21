@@ -139,6 +139,59 @@ test("switch jobs in one step; the first timer stops as the second starts", asyn
   await page.keyboard.press("Escape");
 });
 
+test("a job's sub-jobs nest under it, instead of lines repeating its name", async () => {
+  // A customer whose job has sub-jobs, the shape QuickBooks sends.
+  const hillside = uuidv7();
+  const phase = uuidv7();
+  await send(ctx.request, "job.create", { jobId: hillside, name: "Hillside" });
+  await send(ctx.request, "job.create", { jobId: phase, name: "Phase 1", parentId: hillside });
+  await send(ctx.request, "job.create", { jobId: uuidv7(), name: "Roof", parentId: phase });
+  await send(ctx.request, "job.create", { jobId: uuidv7(), name: "Deck", parentId: phase });
+  await page.reload();
+
+  // The manual-entry picker: inspecting the running timer's would switch it.
+  await page.getByRole("button", { name: "Add time manually" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add time" });
+  const picker = dialog.getByRole("combobox", { name: /^Job/ });
+  await picker.click();
+  const dropdown = page.getByRole("listbox");
+
+  // Every row carries its own name; where it sits is drawn, not spelled out.
+  await expect(dropdown.getByRole("option", { name: "Phase 1", exact: true })).toBeVisible();
+  await expect(dropdown.getByRole("option", { name: "Deck", exact: true })).toBeVisible();
+  await expect(dropdown.getByRole("option", { name: "Phase 1:Deck", exact: true })).toHaveCount(0);
+  const leftEdge = async (name: string) =>
+    (await dropdown.getByRole("option", { name, exact: true }).locator("span").first().boundingBox())!.x;
+  expect(await leftEdge("Deck")).toBeGreaterThan(await leftEdge("Phase 1"));
+  // Siblings in order, under the job they belong to.
+  expect(await leftEdge("Roof")).toBe(await leftEdge("Deck"));
+  const dir = process.env.E2E_SCREENSHOTS;
+  if (dir) await page.screenshot({ path: `${dir}/job-picker-nested.png` });
+
+  // Searching keeps the jobs above a match, so the way to it still reads —
+  // and drops a customer with nothing left under it.
+  await picker.fill("Deck");
+  await expect(dropdown.getByRole("option", { name: "Deck", exact: true })).toBeVisible();
+  await expect(dropdown.getByRole("option", { name: "Phase 1", exact: true })).toBeVisible();
+  await expect(dropdown.getByRole("option", { name: "Roof", exact: true })).toHaveCount(0);
+  await expect(dropdown.getByText("Hillside", { exact: true })).toBeVisible();
+  await expect(dropdown.getByText("Riverside", { exact: true })).toHaveCount(0);
+
+  // Chosen, the whole path names it.
+  await dropdown.getByRole("option", { name: "Deck", exact: true }).click();
+  await expect(picker).toHaveValue("Hillside:Phase 1:Deck");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
+
+  // The Jobs page nests them the same way, each named within the row above it.
+  const admin = await ctx.newPage();
+  await admin.goto("/admin/jobs");
+  const parent = admin.getByRole("group", { name: "Hillside:Phase 1", exact: true });
+  await expect(parent.getByText("Phase 1", { exact: true })).toBeVisible();
+  await expect(parent.getByRole("group", { name: "Hillside:Phase 1:Deck" }).getByText("Deck", { exact: true })).toBeVisible();
+  await admin.close();
+});
+
 test("an accidental timer is discarded without a question, and undo brings it back", async () => {
   await timerCard().getByRole("button", { name: "Discard this timer" }).click();
   await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();

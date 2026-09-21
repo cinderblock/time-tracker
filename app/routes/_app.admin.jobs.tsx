@@ -14,7 +14,7 @@ import { handleForm, stringField } from "../actions.server.ts";
 import { requireAdmin } from "../auth.server.ts";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
 import { pageTitle } from "../meta.ts";
-import { nameWithin } from "../tracker/job-groups.ts";
+import { type JobNode, jobTree, nameWithin } from "../tracker/job-groups.ts";
 import type { Route } from "./+types/_app.admin.jobs";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -36,7 +36,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       name: j.name,
       fullName: j.fullName,
       parentId: j.parentId,
-      customerId: j.customerId,
       active: j.active,
       requiresNote: j.requiresNote,
       noteRequired: j.noteRequired,
@@ -101,10 +100,8 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
   const rows = useFetcher<typeof action>();
   useActionFeedback(rows.data);
 
-  // Customers with their jobs (nested ones included, by full name).
-  const customers = jobs
-    .filter((j) => j.parentId == null)
-    .map((customer) => ({ customer, jobs: jobs.filter((j) => j.customerId === customer.id && j.id !== customer.id) }));
+  // Customers with their jobs, a job's sub-jobs nested under it.
+  const customers = jobTree(jobs);
   const isOpen = (c: JobItem) => c.active && c.remoteActive;
   const open = customers.filter((c) => isOpen(c.customer));
   const closed = customers.filter((c) => !isOpen(c.customer));
@@ -212,7 +209,7 @@ function NewCustomerForm() {
   );
 }
 
-function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: JobItem[]; fetcher: RowsFetcher }) {
+function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: JobNode<JobItem>[]; fetcher: RowsFetcher }) {
   const busy = fetcher.state !== "idle";
   const submit = (intent: string, value: string) =>
     fetcher.submit({ intent, jobId: customer.id, value }, { method: "post" });
@@ -238,32 +235,52 @@ function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: Jo
             onChange={(e) => submit("requires-note", String(e.currentTarget.checked))}
           />
         </Group>
-        <Stack gap="sm" pl="md" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }}>
+        <Nested>
           {jobs.length === 0 && (
             <Text size="sm" c="dimmed">
               No jobs yet. Time can't be booked to a customer itself.
             </Text>
           )}
-          {jobs.map((job) => (
-            <JobRow key={job.id} job={job} customer={customer} fetcher={fetcher} />
+          {jobs.map((node) => (
+            <JobRow
+              key={node.job.id}
+              node={node}
+              parent={customer}
+              ruleFrom={customer.requiresNote ? customer : null}
+              fetcher={fetcher}
+            />
           ))}
           <AddJobForm customer={customer} />
-        </Stack>
+        </Nested>
       </Stack>
     </Card>
   );
 }
 
-function JobRow({ job, customer, fetcher }: { job: JobItem; customer: JobItem; fetcher: RowsFetcher }) {
+/** A job, named within the row above it, with its own sub-jobs nested under it. */
+function JobRow({
+  node,
+  parent,
+  ruleFrom,
+  fetcher,
+}: {
+  node: JobNode<JobItem>;
+  parent: JobItem;
+  /** The nearest row above that asks for a note, if one does. */
+  ruleFrom: JobItem | null;
+  fetcher: RowsFetcher;
+}) {
+  const job = node.job;
   const busy = fetcher.state !== "idle";
   const submit = (intent: string, value: string) => fetcher.submit({ intent, jobId: job.id, value }, { method: "post" });
-  // The rule comes from above: the job's own switch can't turn it off.
+  // The rule comes from a row above — its customer, or a job it sits under —
+  // and the job's own switch can't turn it off.
   const inherited = job.noteRequired && !job.requiresNote;
 
   return (
     <Box role="group" aria-label={job.fullName} opacity={job.active ? 1 : 0.6}>
       <Stack gap={4}>
-        <NameLine job={job} label={nameWithin(job, customer)} fetcher={fetcher} />
+        <NameLine job={job} label={nameWithin(job, parent)} fetcher={fetcher} />
         <Group gap="lg">
           <Switch
             size="sm"
@@ -274,14 +291,36 @@ function JobRow({ job, customer, fetcher }: { job: JobItem; customer: JobItem; f
           />
           <Switch
             size="sm"
-            label={inherited ? "Needs a note (the customer's rule)" : "Needs a note"}
+            label={inherited && ruleFrom ? `Needs a note (${ruleFrom.name}'s rule)` : "Needs a note"}
             checked={job.noteRequired}
             disabled={busy || inherited}
             onChange={(e) => submit("requires-note", String(e.currentTarget.checked))}
           />
         </Group>
+        {node.children.length > 0 && (
+          <Nested>
+            {node.children.map((child) => (
+              <JobRow
+                key={child.job.id}
+                node={child}
+                parent={job}
+                ruleFrom={job.requiresNote ? job : ruleFrom}
+                fetcher={fetcher}
+              />
+            ))}
+          </Nested>
+        )}
       </Stack>
     </Box>
+  );
+}
+
+/** What sits under a customer or a job: set in from it, with a line down the side. */
+function Nested({ children }: { children: React.ReactNode }) {
+  return (
+    <Stack gap="sm" pl="md" style={{ borderLeft: "2px solid var(--mantine-color-default-border)" }}>
+      {children}
+    </Stack>
   );
 }
 

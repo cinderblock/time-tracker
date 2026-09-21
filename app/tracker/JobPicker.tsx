@@ -1,11 +1,26 @@
-import { Button, CheckIcon, Group, Modal, SegmentedControl, Select, Stack, Text, TextInput } from "@mantine/core";
+import {
+  Button,
+  CheckIcon,
+  type ComboboxItem,
+  type ComboboxParsedItem,
+  type ComboboxParsedItemGroup,
+  Group,
+  Modal,
+  type OptionsFilter,
+  SegmentedControl,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { useEffect, useMemo, useState } from "react";
 
 import { JOB_NAME_MAX_LENGTH } from "../../src/limits.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker } from "./context.tsx";
-import { groupJobs, listCustomers, nameWithin, splitJobName } from "./job-groups.ts";
+import { groupJobs, jobRows, listCustomers, splitJobName } from "./job-groups.ts";
+import classes from "./JobPicker.module.css";
 import type { JobView } from "./model.ts";
 
 /**
@@ -14,9 +29,27 @@ import type { JobView } from "./model.ts";
  */
 const RECENT = "recent:";
 
+/** How far a sub-job sits in from its parent, and the depth indenting stops at. */
+const INDENT_PX = 16;
+const INDENT_MAX = 4;
+
+/** What a row needs drawing that its option data doesn't carry. */
+interface PickerRow {
+  /** The job's own name; where it sits is drawn as nesting, not spelled out. */
+  name: string;
+  /** 0 for a job directly under its customer. */
+  depth: number;
+  /** Time can be booked here. If not, the row is only the way to its sub-jobs. */
+  bookable: boolean;
+  /** The ids of the jobs above it under the same customer. */
+  ancestors: string[];
+}
+
+const isGroup = (item: ComboboxParsedItem): item is ComboboxParsedItemGroup => "group" in item;
+
 /**
  * Searchable list of every bookable job: the recently used ones first, then
- * each customer's jobs under the customer's name. Plus "New job…".
+ * each customer's jobs, a job's sub-jobs nested under it. Plus "New job…".
  */
 export function JobSelect({
   value,
@@ -40,20 +73,57 @@ export function JobSelect({
 
   // Labels are full "Customer:Job" paths: they're what the input shows once
   // a job is chosen, and what typing matches against. Under a customer's
-  // heading only the job's own name is drawn.
-  const { data, shortNames, anyJobs } = useMemo(() => {
+  // heading a job draws its own name, indented to its depth, so a sub-job
+  // reads as one instead of repeating the job it belongs to.
+  const { data, rows, anyJobs } = useMemo(() => {
     const groups = groupJobs(model.jobs, model.recentJobIds);
-    const shortNames = new Map<string, string>();
-    const data: { group: string; items: { value: string; label: string }[] }[] = [];
+    const rows = new Map<string, PickerRow>();
+    const data: { group: string; items: ComboboxItem[] }[] = [];
     if (groups.recent.length > 0) {
       data.push({ group: "Recent", items: groups.recent.map((j) => ({ value: RECENT + j.id, label: j.fullName })) });
     }
     for (const { customer, jobs } of groups.customers) {
-      for (const job of jobs) shortNames.set(job.id, nameWithin(job, customer));
-      data.push({ group: customer.fullName, items: jobs.map((j) => ({ value: j.id, label: j.fullName })) });
+      const items: ComboboxItem[] = [];
+      // The ids on the way down to the row being added: its ancestors.
+      const path: string[] = [];
+      for (const { job, depth } of jobRows(jobs)) {
+        path.length = depth;
+        rows.set(job.id, { name: job.name, depth, bookable: job.bookable, ancestors: [...path] });
+        path.push(job.id);
+        // A job that takes no time of its own is the way to its sub-jobs, not a choice.
+        items.push({ value: job.id, label: job.fullName, disabled: !job.bookable });
+      }
+      data.push({ group: customer.fullName, items });
     }
-    return { data, shortNames, anyJobs: groups.customers.length > 0 };
+    return { data, rows, anyJobs: groups.customers.length > 0 };
   }, [model.jobs, model.recentJobIds]);
+
+  // Typing matches the full path, which on its own would leave a sub-job
+  // under nothing: keep the jobs above a match too, and drop a customer with
+  // nothing left under it (Mantine's own filter leaves the bare heading).
+  const filter: OptionsFilter = ({ options, search, limit }) => {
+    const query = search.trim().toLowerCase();
+    const hit = (option: ComboboxItem) => option.label.toLowerCase().includes(query);
+    const kept: ComboboxParsedItem[] = [];
+    let room = limit;
+    for (const item of options) {
+      if (room <= 0) break;
+      if (!isGroup(item)) {
+        if (hit(item)) {
+          kept.push(item);
+          room -= 1;
+        }
+        continue;
+      }
+      const shown = new Set(item.items.filter(hit).map((o) => o.value));
+      for (const value of [...shown]) for (const id of rows.get(value)?.ancestors ?? []) shown.add(id);
+      const items = item.items.filter((o) => shown.has(o.value)).slice(0, room);
+      if (items.length === 0) continue;
+      kept.push({ group: item.group, items });
+      room -= items.length;
+    }
+    return kept;
+  };
 
   return (
     <Stack gap={4}>
@@ -61,14 +131,31 @@ export function JobSelect({
         label={label}
         placeholder={placeholder}
         data={data}
+        filter={filter}
         value={value}
         onChange={(v) => onChange(v == null ? null : v.startsWith(RECENT) ? v.slice(RECENT.length) : v)}
-        renderOption={({ option, checked }) => (
-          <Group gap="xs" wrap="nowrap" justify="space-between" style={{ flex: 1 }}>
-            <span>{shortNames.get(option.value) ?? option.label}</span>
-            {checked && <CheckIcon size={12} />}
-          </Group>
-        )}
+        classNames={{ option: classes.option }}
+        renderOption={({ option, checked }) => {
+          const row = rows.get(option.value);
+          return (
+            <Group
+              gap="xs"
+              wrap="nowrap"
+              justify="space-between"
+              style={{ flex: 1, marginInlineStart: Math.min(row?.depth ?? 0, INDENT_MAX) * INDENT_PX }}
+            >
+              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                <span>{row?.name ?? option.label}</span>
+                {row && !row.bookable && (
+                  <Text span size="xs" c="dimmed">
+                    sub-jobs only
+                  </Text>
+                )}
+              </Group>
+              {checked && <CheckIcon size={12} />}
+            </Group>
+          );
+        }}
         searchable
         clearable={!required}
         // Tapping the job that's already chosen must not un-choose a required one.
