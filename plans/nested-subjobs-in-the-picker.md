@@ -137,6 +137,12 @@ as a pickable row for one that can.
 - Nesting made the "Needs a note (the customer's rule)" label wrong for a
   sub-job whose rule comes from the job above it. Each row now carries the
   nearest row above that asks for a note and names it.
+- **The "sub-jobs only" row cannot occur in the app as it stands**, so it is
+  the one part of this that a browser never exercised. `open` is inherited
+  (`src/jobs.ts`): closing a job closes everything under it, so a job that
+  can't take time never has a sub-job that can. The tree logic for it is
+  unit-tested, and it becomes real the moment open question 1 is answered
+  yes.
 - The e2e suite could not be verified in the shared checkout: a peer session's
   uncommitted sync/approvals work was in the build and `offline.spec.ts:130`
   hung with "1 to sync" undrained, which then took the app server down for
@@ -159,7 +165,9 @@ as a pickable row for one that can.
   The same suite in the shared checkout failed at `offline.spec.ts:130`
   ("1 to sync" never drained, taking the server down for every file after);
   that is the peer session's uncommitted sync work, since the identical files
-  pass in the clean worktree.
+  pass in the clean worktree. Committed as fde6798, then run once more with
+  the worktree checked out at that commit — the peer's submit/approval work
+  included — for **46 passed, 1 skipped (screenshots), 0 failed**.
 
 ## Open questions for the user
 
@@ -188,3 +196,13 @@ as a pickable row for one that can.
 - Don't touch `app/tracker/{EntryList,NotesPanel,TrackerScreen}.tsx`,
   `src/settings.ts` or the other files the peer session has open, and don't
   stage them.
+- **Don't `git commit --amend` in this checkout without re-reading `HEAD`
+  first.** It happened here: I committed `fde6798`, ran an e2e pass, and
+  amended to record the result — but in those minutes the peer session had
+  committed `6b8edc9` on top, so the amend rewrote *their* commit with my
+  message. Repaired with `git reset --mixed 6b8edc9` (their sha, message and
+  tree restored exactly; nothing was pushed, so no force-push was involved
+  and none was needed) and the plan update went on top as its own commit.
+  In a shared tree, "my last commit" stops being HEAD without warning:
+  check `git rev-parse HEAD` against the sha you got, or just make a new
+  commit.
