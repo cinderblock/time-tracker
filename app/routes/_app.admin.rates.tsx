@@ -18,6 +18,7 @@ import { useFetcher } from "react-router";
 
 import { createCategory, deleteCategory, listCategories, renameCategory } from "../../src/categories.ts";
 import { config } from "../../src/config.server.ts";
+import { jobLabel } from "../../src/job-names.ts";
 import { listJobs } from "../../src/jobs.ts";
 import { CATEGORY_NAME_MAX_LENGTH, MAX_HOURLY_RATE } from "../../src/limits.ts";
 import { formatRate } from "../../src/money.ts";
@@ -56,7 +57,7 @@ export function loader({ request, context }: Route.LoaderArgs) {
 
   const appliesTo = (r: Rate): string => {
     const person = r.userId != null ? (people.get(r.userId)?.name ?? "Someone") : "";
-    const job = r.jobId != null ? (jobs.get(r.jobId)?.fullName ?? "A job") : "";
+    const job = r.jobId != null ? jobLabel(jobs.get(r.jobId)?.fullName ?? "A job") : "";
     switch (r.scope) {
       case "global":
         return "Everyone";
@@ -106,7 +107,7 @@ export function loader({ request, context }: Route.LoaderArgs) {
     jobs: [...jobs.values()]
       .filter((j) => j.active)
       .sort((a, b) => a.fullName.localeCompare(b.fullName))
-      .map((j) => ({ value: j.id, label: j.fullName })),
+      .map((j) => ({ value: j.id, label: jobLabel(j.fullName) })),
   };
 }
 

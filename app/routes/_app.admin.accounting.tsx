@@ -5,6 +5,7 @@ import { accountingBackendOrError } from "../../src/accounting/index.ts";
 import { listCategories } from "../../src/categories.ts";
 import { config } from "../../src/config.server.ts";
 import { formatDateTime, formatRelative } from "../../src/format.ts";
+import { jobLabel } from "../../src/job-names.ts";
 import { listJobs } from "../../src/jobs.ts";
 import {
   categoryPayrollItems,
@@ -59,7 +60,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const items = listRemoteItems();
   const links = new Map(personLinks().map((l) => [l.userId, l]));
   const jobs = listJobs({ includeInactive: true });
-  const itemOption = (i: (typeof items)[number]) => ({ value: i.remoteId, label: i.active ? i.fullName : `${i.fullName} (inactive)` });
+  const itemOption = (i: (typeof items)[number]) => ({ value: i.remoteId, label: i.active ? jobLabel(i.fullName) : `${jobLabel(i.fullName)} (inactive)` });
   const peopleGroups = (["employee", "vendor", "other"] as const)
     .map((k) => ({
       group: { employee: "Employees", vendor: "Vendors", other: "Other names" }[k],
@@ -125,7 +126,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }),
     remoteJobs: remoteJobs.map((j) => ({
       value: j.id,
-      label: j.remoteActive ? j.fullName : `${j.fullName} (inactive)`,
+      label: j.remoteActive ? jobLabel(j.fullName) : `${jobLabel(j.fullName)} (inactive)`,
       customer: j.parentId == null,
     })),
     jobServiceItems: remoteJobs
@@ -523,7 +524,7 @@ function ProvisionalJob({ job, data, fetcher }: { job: Data["provisional"][numbe
       <Stack gap="xs">
         <Group justify="space-between" wrap="nowrap">
           <Group gap="xs">
-            <Text fw={500}>{job.fullName}</Text>
+            <Text fw={500}>{jobLabel(job.fullName)}</Text>
             {!job.active && (
               <Badge size="sm" color="gray" variant="light">
                 closed
@@ -553,7 +554,7 @@ function ProvisionalJob({ job, data, fetcher }: { job: Data["provisional"][numbe
         )}
         <Group gap="xs" align="end">
           <Select
-            aria-label={`Link ${job.fullName} to`}
+            aria-label={`Link ${jobLabel(job.fullName)} to`}
             placeholder={job.isJob ? "Link to a QuickBooks job…" : "Link to a QuickBooks customer or job…"}
             data={targets}
             searchable
@@ -642,7 +643,7 @@ function ItemsSection({ data }: { data: Data }) {
           <Table.Tbody>
             {data.jobServiceItems.map((j) => (
               <Table.Tr key={j.id}>
-                <Table.Td>{j.fullName}</Table.Td>
+                <Table.Td>{jobLabel(j.fullName)}</Table.Td>
                 <Table.Td>{data.serviceItems.find((i) => i.value === j.itemId)?.label ?? "Unknown item"}</Table.Td>
                 <Table.Td ta="right">
                   <Button

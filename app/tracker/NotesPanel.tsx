@@ -18,6 +18,7 @@ import { useMediaQuery } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 
+import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import { joinNotes, proposeRollup, rollupProblems } from "../../src/rollup.ts";
 import {
@@ -31,7 +32,6 @@ import {
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
-import { splitJobName } from "./job-groups.ts";
 import { JobSelect } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
 import classes from "./notes.module.css";
@@ -173,18 +173,18 @@ function JobSection({
   // Where this job's hours fly from when its notes become time.
   const card = useRef<HTMLDivElement>(null);
   const name = section.jobId ? (section.jobName ?? "Unknown job") : null;
-  const { customer, job: title } = splitJobName(name ?? "");
+  const { name: title, above: place } = jobPath(name ?? "");
   const written = section.pending.filter((n) => n.kind === "note").length;
 
   return (
-    <Card ref={card} withBorder padding="sm" role="group" aria-label={name ?? "No job yet"}>
+    <Card ref={card} withBorder padding="sm" role="group" aria-label={name ? jobLabel(name) : "No job yet"}>
       <Stack gap="xs">
         <Group justify="space-between" align="start" wrap="nowrap">
           <Stack gap={0} style={{ minWidth: 0 }}>
             <Text fw={600}>{name ? title : "No job yet"}</Text>
-            {customer && (
+            {place && (
               <Text size="xs" c="dimmed">
-                {customer}
+                {place}
               </Text>
             )}
           </Stack>
@@ -271,7 +271,7 @@ function NoteBox({
         <TextInput
           ref={ref}
           placeholder="What did you do?"
-          aria-label={`Note for ${jobName}`}
+          aria-label={`Note for ${jobLabel(jobName)}`}
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}
           maxLength={NOTE_MAX_LENGTH}
@@ -462,7 +462,7 @@ function HoursDialog({
   const tz = model.timezone;
   const date = model.workDate;
   const isToday = date === model.today;
-  const { job: title } = splitJobName(jobName);
+  const { name: title } = jobPath(jobName);
   const [endTime, setEndTime] = useState("");
   const [hours, setHours] = useState<number | string>(0);
   const [minutes, setMinutes] = useState<number | string>(0);
@@ -555,7 +555,7 @@ function HoursDialog({
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title={`Hours for ${jobName}`} centered fullScreen={narrow}>
+    <Modal opened={opened} onClose={onClose} title={`Hours for ${jobLabel(jobName)}`} centered fullScreen={narrow}>
       <Stack gap="md">
         <Text size="sm" c="dimmed">
           From the notes, {title} ran{" "}

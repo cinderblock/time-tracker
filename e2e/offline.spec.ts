@@ -71,7 +71,7 @@ test("set up, and let the service worker take over", async ({ browser }) => {
   await customer.getByRole("button", { name: "Add a job" }).click();
   await customer.getByLabel("New job for Delta").fill("Delta Dock");
   await customer.getByRole("button", { name: "Add job", exact: true }).click();
-  await expect(page.getByRole("group", { name: "Delta:Delta Dock" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Delta › Delta Dock" })).toBeVisible();
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();

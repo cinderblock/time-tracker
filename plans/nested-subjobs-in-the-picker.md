@@ -103,6 +103,57 @@ as a pickable row for one that can.
    wholesale — the words are right, the commit isn't mine. Nothing to undo.)
 8. [x] typecheck, unit tests and the chromium e2e project green; committed.
 
+## Round two (2026-09-21, after seeing it)
+
+The user's answers to the two open questions, which change the rules rather
+than the drawing:
+
+**R1. Whether a job takes hours is a per-job setting, and the default is that
+a job with sub-jobs does not.** So `bookable` stops being "any job under an
+open customer": a job that holds sub-jobs takes no hours *unless an admin says
+it does*, and an admin can equally say a childless job takes none. Stored as a
+nullable override (`jobs.takes_time`: NULL = follow the default, 1 = yes,
+0 = no), so the default keeps following the tree as sub-jobs come and go. This
+is what makes the picker's "sub-jobs only" row real rather than theoretical.
+
+**R2. No depth cap** — "as many layers as are configured". The indent step
+stays 16px and simply repeats; QuickBooks tops out at five levels anyway.
+
+**R3. The ":" path separator never appears inline in the UI.** Where the whole
+path has to read on one line it is `Riverside › Phase 1 › Deck`; where there
+are two lines it is the job's own name with its place dimmed beneath it (the
+user's choice, 2026-09-21):
+
+```
+Deck
+Riverside › Phase 1
+```
+
+Assumption stated rather than asked: data keeps colons — the CSV export's Job
+column, what goes to QuickBooks, and job names as QuickBooks reports them
+back. Those are interop, not display, and QuickBooks' own convention is the
+colon. The Accounting page *does* draw QuickBooks' names with "›" like
+everything else.
+
+### Round two steps
+
+1. [x] `src/job-names.ts`: `jobPath()` (name + the place above it) and
+   `jobLabel()` (one-line "›" breadcrumb), with tests. In `src/` because both
+   the server (reports, sync messages) and the browser need them.
+2. [x] `src/jobs.ts` + migration `005_takes_time`: `hasSubJobs`, `takesTime`
+   (the override), `bookable` from the pair; `requireBookableJob` explains
+   "only holds its sub-jobs"; `updateJob({ takesTime })`. Offline reducer
+   follows: a job created under another makes that one stop taking hours.
+3. [x] Admin Jobs page: a "Takes hours" switch per job, saying when it is
+   following the default and offering a way back to it.
+4. [x] Display sweep, no ":" left in the UI: picker (option labels, recents,
+   input), timer card, recent buttons, notes panel, entry list and its toasts,
+   calendar, rates, reports (+ `jobOptions`), accounting, Jobs-page messages,
+   sync refusal messages.
+5. [x] Tests: unit for the rule and the names; e2e picks up that "Phase 1" is
+   now a heading until an admin switches its hours on.
+6. [ ] README and this plan; typecheck, unit, chromium e2e; commit.
+
 ## Findings / gotchas
 
 - Mantine `Select` data groups are one level only (`{ group, items }`), and
@@ -151,6 +202,27 @@ as a pickable row for one that can.
   `E2E_PORT=3160` so it can't collide with the peer's own worktree run), and
   with `cpu-slots.mjs` for 3 slots, which queued behind theirs rather than
   overloading the machine.
+
+### Round two findings
+
+- The rule is structural: a job *holds* sub-jobs whether or not those are
+  open, so closing the only sub-job doesn't hand hours back to the parent.
+  Simpler to explain, and an admin who wants it back says so on the Jobs page.
+- A QuickBooks pull that adds a sub-job under a job people have been booking
+  to will quietly stop that job taking hours — the rule working as asked, but
+  worth knowing when someone says "my job vanished from the picker". Their
+  running timer is untouched; the job just stops being offered.
+- `jobs.takes_time` is NULL by default and `CHECK (takes_time IN (0, 1))`
+  still allows NULL (a CHECK only fails on a definite false).
+- Rows merged into another keep their `parent_id`, so `hasSubJobs` counts only
+  rows that haven't been merged away — otherwise a provisional job that was
+  linked elsewhere would leave its old parent looking like a holder forever.
+- Two e2e expectations are *data*, not display, and keep their colons: the
+  fake QuickBooks' own `fullName`s (`accounting.spec.ts`) and the CSV's Job
+  column (`timesheets.spec.ts`).
+- A disabled Mantine option still answers `getByRole("option")`, and its
+  accessible name now includes the hint — "Phase 1 sub-jobs only". Tests match
+  on that or on `data-combobox-disabled`.
 
 ## Progress log
 

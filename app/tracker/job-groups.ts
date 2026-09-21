@@ -96,16 +96,14 @@ export function groupJobs(jobs: readonly JobView[], recentIds: readonly string[]
   return { recent, customers: jobTree(jobs, (job) => job.bookable) };
 }
 
-/** A job's name within one of its parents: "Customer:Job:Sub" under "Customer:Job" is "Sub". */
+/**
+ * A job's name within one of its parents: "Customer:Job:Sub" under
+ * "Customer:Job" is "Sub". For anything else on screen, `src/job-names.ts`
+ * says how a path is written — never with the ":" it is stored with.
+ */
 export function nameWithin(job: Pick<JobLike, "fullName">, parent: Pick<JobLike, "fullName">): string {
   const prefix = `${parent.fullName}:`;
   return job.fullName.startsWith(prefix) ? job.fullName.slice(prefix.length) : job.fullName;
-}
-
-/** A "Customer:Job" path as its customer and the rest. A bare name has no customer. */
-export function splitJobName(fullName: string): { customer: string | null; job: string } {
-  const colon = fullName.indexOf(":");
-  return colon < 0 ? { customer: null, job: fullName } : { customer: fullName.slice(0, colon), job: fullName.slice(colon + 1) };
 }
 
 /** The customers a new job could go under, by name. */

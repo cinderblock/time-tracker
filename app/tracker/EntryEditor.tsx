@@ -14,6 +14,7 @@ import { TimeInput } from "@mantine/dates";
 import { useMediaQuery } from "@mantine/hooks";
 import { useEffect, useRef, useState } from "react";
 
+import { jobLabel } from "../../src/job-names.ts";
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import { addDays, formatDurationHuman, workDateOf, zonedTimeInput, zonedTimeToInstant } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
@@ -163,7 +164,7 @@ export function EntryEditor({
     setBusy(false);
     if (!result.ok) return;
     onClose();
-    undoToast(`Deleted ${entry.jobName}.`, () => dispatch("entry.restore", { entryId: entry.id, at: Date.now() }));
+    undoToast(`Deleted ${jobLabel(entry.jobName)}.`, () => dispatch("entry.restore", { entryId: entry.id, at: Date.now() }));
   }
 
   const title = !entry ? "Add time" : isOpenTimer ? "Edit running timer" : "Edit entry";

@@ -132,7 +132,7 @@ test("link a person, pick default items, and send submitted time", async () => {
   await acme.getByRole("button", { name: "Add a job" }).click();
   await acme.getByLabel("New job for Acme").fill("Pop-up job");
   await acme.getByRole("button", { name: "Add job", exact: true }).click();
-  await expect(page.getByRole("group", { name: "Acme:Pop-up job" }).getByText("not in QuickBooks yet")).toBeVisible();
+  await expect(page.getByRole("group", { name: "Acme › Pop-up job" }).getByText("not in QuickBooks yet")).toBeVisible();
   await addTime("Phase 2", "2", "0");
   await addTime("Pop-up job", "0", "45");
   await signOffWeek();
@@ -141,7 +141,7 @@ test("link a person, pick default items, and send submitted time", async () => {
   await expect(stat("Ready to send")).toContainText("1");
   await expect(stat("Waiting on a fix")).toContainText("1");
   const waiting = page.getByRole("alert").filter({ hasText: "Signed-off time that can't be sent yet" });
-  await expect(waiting).toContainText("The job “Acme:Pop-up job” was made here and isn't in the accounting system yet. (1 entry, 45m)");
+  await expect(waiting).toContainText("The job “Acme › Pop-up job” was made here and isn't in the accounting system yet. (1 entry, 45m)");
   await expect(waiting.getByRole("link", { name: "Link jobs" })).toBeVisible();
 
   await sendNow("Sent 1 request.");
@@ -162,11 +162,11 @@ test("link a person, pick default items, and send submitted time", async () => {
 
 test("a job made here is linked to the real one, and its time follows", async () => {
   const card = page.locator(".mantine-Card-root", { hasText: "Pop-up job" });
-  const link = card.getByRole("combobox", { name: "Link Acme:Pop-up job to" });
+  const link = card.getByRole("combobox", { name: "Link Acme › Pop-up job to" });
   await link.click();
   // Only QuickBooks jobs are offered: time never lands on a customer.
   await expect(page.getByRole("option", { name: "Acme", exact: true })).toHaveCount(0);
-  await page.getByRole("option", { name: "Acme:Phase 2", exact: true }).click();
+  await page.getByRole("option", { name: "Acme › Phase 2", exact: true }).click();
   await expect(toast("Linked. Its time now belongs to that job.")).toBeVisible();
   await expect(page.getByText("None. Every job is in QuickBooks.")).toBeVisible();
   await sendNow("Sent 1 request.");
@@ -177,7 +177,7 @@ test("a job made here is linked to the real one, and its time follows", async ()
 
   // The tracking screen shows the time under the real job now.
   await page.goto("/");
-  await expect(page.locator(".mantine-Card-root", { hasText: "45m" })).toContainText("Acme:Phase 2");
+  await expect(page.locator(".mantine-Card-root", { hasText: "45m" })).toContainText("Phase 2");
   await expect(page.getByText("in accounting")).toHaveCount(2);
 });
 
@@ -187,7 +187,7 @@ test("a job made here can be created in QuickBooks instead", async () => {
   await acme.getByRole("button", { name: "Add a job" }).click();
   await acme.getByLabel("New job for Acme").fill("Brand New Site");
   await acme.getByRole("button", { name: "Add job", exact: true }).click();
-  await expect(page.getByRole("group", { name: "Acme:Brand New Site" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Acme › Brand New Site" })).toBeVisible();
   await page.goto("/admin/accounting");
   await page.locator(".mantine-Card-root", { hasText: "Brand New Site" }).getByRole("button", { name: "Create in QuickBooks" }).click();
   await expect(toast("It will be created at the next contact. Sent 1 request.")).toBeVisible();

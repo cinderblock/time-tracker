@@ -62,6 +62,7 @@ export function loadDay(userId: number, workDate: string): DayModel {
       parentId: j.parentId,
       requiresNote: j.noteRequired,
       bookable: j.bookable,
+      takesTime: j.takesTime,
       provisional: j.provisional,
     }));
 

@@ -455,6 +455,17 @@ const migrations: Migration[] = [
          WHERE approved_at IS NOT NULL;
     `,
   },
+  {
+    name: "005_takes_time",
+    sql: `
+        -- Whether time can be booked to this job itself, overriding the
+        -- default. NULL follows the rule: a job that holds sub-jobs takes no
+        -- hours of its own, anything else under a customer does. An admin
+        -- sets it either way on the Jobs page; see src/jobs.ts.
+        ALTER TABLE jobs ADD COLUMN takes_time INTEGER
+          CHECK (takes_time IN (0, 1));
+    `,
+  },
 ];
 
 /**

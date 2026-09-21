@@ -2,12 +2,12 @@ import { Badge, Button, Card, Group, Modal, Stack, Text, Textarea, Title } from 
 import { useMediaQuery } from "@mantine/hooks";
 import { useEffect, useRef, useState } from "react";
 
+import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import { formatClock, formatDuration, formatDurationHuman } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
-import { splitJobName } from "./job-groups.ts";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import { type EntryView, type JobView, liveSeconds } from "./model.ts";
 
@@ -61,7 +61,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
   const [otherJob, setOtherJob] = useState<string | null>(null);
   const paused = entry.runningSince == null;
   const tz = model.timezone;
-  const { customer, job: jobTitle } = splitJobName(entry.jobName);
+  const { name: jobTitle, above: jobPlace } = jobPath(entry.jobName);
 
   // Keep the field in step when the entry changes underneath (another device).
   useEffect(() => setNote(entry.note ?? ""), [entry.id, entry.note]);
@@ -134,7 +134,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
 
   async function discard() {
     await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
-    undoToast(`Discarded the ${entry.jobName} timer.`, () =>
+    undoToast(`Discarded the ${jobLabel(entry.jobName)} timer.`, () =>
       dispatch("entry.restore", { entryId: entry.id, at: Date.now() }),
     );
   }
@@ -150,9 +150,9 @@ function RunningTimer({ entry }: { entry: EntryView }) {
             <Title order={3} lh={1.2}>
               {jobTitle}
             </Title>
-            {customer && (
+            {jobPlace && (
               <Text size="sm" c="dimmed">
-                {customer}
+                {jobPlace}
               </Text>
             )}
           </Stack>
@@ -267,7 +267,7 @@ function SwitchNoteModal({
   const [text, setText] = useState(initial);
   useEffect(() => setText(initial), [initial, job]);
   return (
-    <Modal opened={job != null} onClose={onCancel} title={`Note for ${fromJob}`} centered fullScreen={narrow}>
+    <Modal opened={job != null} onClose={onCancel} title={`Note for ${jobLabel(fromJob)}`} centered fullScreen={narrow}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -276,7 +276,7 @@ function SwitchNoteModal({
       >
         <Stack>
           <Text size="sm">
-            {fromJob} needs a note before its timer stops. Then the timer switches to {job?.fullName}.
+            {jobLabel(fromJob)} needs a note before its timer stops. Then the timer switches to {job ? jobLabel(job.fullName) : ""}.
           </Text>
           <Textarea
             label="What did you do?"

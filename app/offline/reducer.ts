@@ -124,8 +124,12 @@ function applyOne(s: State, op: Op): void {
         parentId: parent?.id ?? null,
         requiresNote: parent?.requiresNote ?? false,
         bookable: parent != null,
+        takesTime: null,
         provisional: false,
       });
+      // The parent now holds a sub-job, so unless an admin has answered for
+      // it, it stops taking hours itself — the server's rule (src/jobs.ts).
+      if (parent && parent.parentId != null && parent.takesTime == null) parent.bookable = false;
       m.jobs.sort((a, b) => a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" }));
       return;
     }

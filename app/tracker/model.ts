@@ -15,8 +15,10 @@ export interface JobView {
   parentId: string | null;
   /** Stopping a timer here needs a note — its own rule or its customer's. */
   requiresNote: boolean;
-  /** Time can be booked here: a job under an open customer. A customer is listed for grouping only. */
+  /** Time can be booked here: an open job that takes hours itself. A customer is listed for grouping only. */
   bookable: boolean;
+  /** An admin's answer to "does this job take hours itself"; null follows the default. */
+  takesTime: boolean | null;
   provisional: boolean;
 }
 

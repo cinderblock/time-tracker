@@ -4,6 +4,7 @@ import { Link, useFetcher } from "react-router";
 
 import { accountingBackendOrError } from "../../src/accounting/index.ts";
 import { config } from "../../src/config.server.ts";
+import { jobLabel } from "../../src/job-names.ts";
 import { createJob, listJobs, updateJob } from "../../src/jobs.ts";
 import { JOB_NAME_MAX_LENGTH } from "../../src/limits.ts";
 import { OpError } from "../../src/op-error.ts";
@@ -39,6 +40,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       active: j.active,
       requiresNote: j.requiresNote,
       noteRequired: j.noteRequired,
+      takesTime: j.takesTime,
       provisional: j.provisional,
       remote: j.remoteId != null,
       remoteActive: j.remoteActive,
@@ -63,7 +65,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           parentId: stringField(form, "parentId") || null,
           actorUserId: user.id,
         });
-        return { ok: true, message: `Added “${job.fullName}”.` };
+        return { ok: true, message: `Added “${jobLabel(job.fullName)}”.` };
       } catch (err) {
         // createJob speaks the op dialect; this is a form.
         if (err instanceof OpError) throw new UserInputError(err.message);
@@ -72,15 +74,31 @@ export async function action({ request, context }: Route.ActionArgs) {
     },
     rename: (form) => {
       const job = updateJob({ id: stringField(form, "jobId"), name: stringField(form, "name"), actorUserId: user.id });
-      return { ok: true, message: `Renamed to “${job.fullName}”.` };
+      return { ok: true, message: `Renamed to “${jobLabel(job.fullName)}”.` };
     },
     active: (form) => {
       const job = updateJob({ id: stringField(form, "jobId"), active: flag(form, "value"), actorUserId: user.id });
-      return { ok: true, message: job.active ? `“${job.fullName}” is open again.` : `Closed “${job.fullName}”.` };
+      return {
+        ok: true,
+        message: job.active ? `“${jobLabel(job.fullName)}” is open again.` : `Closed “${jobLabel(job.fullName)}”.`,
+      };
     },
     "requires-note": (form) => {
       updateJob({ id: stringField(form, "jobId"), requiresNote: flag(form, "value"), actorUserId: user.id });
       return { ok: true, message: "" };
+    },
+    // "default" clears the answer, so the job follows the rule again.
+    "takes-time": (form) => {
+      const value = stringField(form, "value");
+      const job = updateJob({
+        id: stringField(form, "jobId"),
+        takesTime: value === "default" ? null : value === "true",
+        actorUserId: user.id,
+      });
+      return {
+        ok: true,
+        message: job.bookable ? `Time can be booked to “${jobLabel(job.fullName)}”.` : `“${jobLabel(job.fullName)}” holds its sub-jobs; hours go on those.`,
+      };
     },
     "global-note": (form) => {
       setRequireNoteOnStop(flag(form, "value"), user.id);
@@ -216,7 +234,7 @@ function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: Jo
   const open = customer.active && customer.remoteActive;
 
   return (
-    <Card withBorder padding="sm" opacity={open ? 1 : 0.7} role="group" aria-label={customer.fullName}>
+    <Card withBorder padding="sm" opacity={open ? 1 : 0.7} role="group" aria-label={jobLabel(customer.fullName)}>
       <Stack gap="sm">
         <NameLine job={customer} label={customer.fullName} fetcher={fetcher} />
         <Group gap="lg">
@@ -273,12 +291,15 @@ function JobRow({
   const job = node.job;
   const busy = fetcher.state !== "idle";
   const submit = (intent: string, value: string) => fetcher.submit({ intent, jobId: job.id, value }, { method: "post" });
+  // A job holding sub-jobs takes no hours itself unless an admin says so.
+  const hasSubJobs = node.children.length > 0;
+  const takesHours = job.takesTime ?? !hasSubJobs;
   // The rule comes from a row above — its customer, or a job it sits under —
   // and the job's own switch can't turn it off.
   const inherited = job.noteRequired && !job.requiresNote;
 
   return (
-    <Box role="group" aria-label={job.fullName} opacity={job.active ? 1 : 0.6}>
+    <Box role="group" aria-label={jobLabel(job.fullName)} opacity={job.active ? 1 : 0.6}>
       <Stack gap={4}>
         <NameLine job={job} label={nameWithin(job, parent)} fetcher={fetcher} />
         <Group gap="lg">
@@ -296,7 +317,31 @@ function JobRow({
             disabled={busy || inherited}
             onChange={(e) => submit("requires-note", String(e.currentTarget.checked))}
           />
+          <Switch
+            size="sm"
+            label="Takes hours"
+            checked={takesHours}
+            disabled={busy}
+            onChange={(e) => submit("takes-time", String(e.currentTarget.checked))}
+          />
         </Group>
+        {/* Only worth a word when it isn't the ordinary case of a job taking its own hours. */}
+        {(job.takesTime != null || hasSubJobs) && (
+          <Group gap="xs">
+            <Text size="xs" c="dimmed">
+              {job.takesTime == null
+                ? "It holds sub-jobs, so hours go on those."
+                : takesHours
+                  ? "Set here: hours go on this job."
+                  : "Set here: hours don't go on this job."}
+            </Text>
+            {job.takesTime != null && (
+              <Button size="compact-xs" variant="subtle" disabled={busy} onClick={() => submit("takes-time", "default")}>
+                Use the default
+              </Button>
+            )}
+          </Group>
+        )}
         {node.children.length > 0 && (
           <Nested>
             {node.children.map((child) => (
@@ -413,7 +458,7 @@ function AddJobForm({ customer }: { customer: JobItem }) {
       <Group align="end" gap="xs">
         <TextInput
           name="name"
-          label={`New job for ${customer.fullName}`}
+          label={`New job for ${jobLabel(customer.fullName)}`}
           maxLength={JOB_NAME_MAX_LENGTH}
           required
           autoFocus

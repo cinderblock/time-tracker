@@ -95,7 +95,7 @@ test("set up: a person, a customer and two jobs under it", async ({ browser }) =
     await customer.getByRole("button", { name: "Add a job" }).click();
     await customer.getByLabel("New job for Riverside").fill(name);
     await customer.getByRole("button", { name: "Add job", exact: true }).click();
-    await expect(page.getByRole("group", { name: `Riverside:${name}` })).toBeVisible();
+    await expect(page.getByRole("group", { name: `Riverside › ${name}` })).toBeVisible();
   }
 });
 
@@ -132,7 +132,7 @@ test("switch jobs in one step; the first timer stops as the second starts", asyn
   // The picker lists recent jobs first (by full path), then each customer's jobs by name.
   await page.getByPlaceholder("Another job — type to search").click();
   await expect(page.getByText("Recent", { exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Riverside:Bravo Site", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Riverside › Bravo Site", exact: true })).toBeVisible();
   await expect(page.getByRole("option", { name: "Bravo Site", exact: true })).toBeVisible();
   // A customer is a heading, never a choice.
   await expect(page.getByRole("option", { name: "Riverside", exact: true })).toHaveCount(0);
@@ -157,39 +157,65 @@ test("a job's sub-jobs nest under it, instead of lines repeating its name", asyn
   const dropdown = page.getByRole("listbox");
 
   // Every row carries its own name; where it sits is drawn, not spelled out.
-  await expect(dropdown.getByRole("option", { name: "Phase 1", exact: true })).toBeVisible();
+  // Phase 1 holds the other two, so it's the way to them rather than a choice.
+  const heading = dropdown.getByRole("option", { name: "Phase 1 sub-jobs only", exact: true });
+  await expect(heading).toBeVisible();
+  await expect(heading).toHaveAttribute("data-combobox-disabled", "true");
   await expect(dropdown.getByRole("option", { name: "Deck", exact: true })).toBeVisible();
-  await expect(dropdown.getByRole("option", { name: "Phase 1:Deck", exact: true })).toHaveCount(0);
-  const leftEdge = async (name: string) =>
-    (await dropdown.getByRole("option", { name, exact: true }).locator("span").first().boundingBox())!.x;
-  expect(await leftEdge("Deck")).toBeGreaterThan(await leftEdge("Phase 1"));
+  await expect(dropdown.getByRole("option", { name: /Phase 1.Deck/ })).toHaveCount(0);
+  const leftEdge = async (option: Locator) => (await option.locator("span").first().boundingBox())!.x;
+  const optionNamed = (name: string) => dropdown.getByRole("option", { name, exact: true });
+  expect(await leftEdge(optionNamed("Deck"))).toBeGreaterThan(await leftEdge(heading));
   // Siblings in order, under the job they belong to.
-  expect(await leftEdge("Roof")).toBe(await leftEdge("Deck"));
+  expect(await leftEdge(optionNamed("Roof"))).toBe(await leftEdge(optionNamed("Deck")));
   const dir = process.env.E2E_SCREENSHOTS;
   if (dir) await page.screenshot({ path: `${dir}/job-picker-nested.png` });
+
+  // Tapping the heading chooses nothing: the field keeps what it had.
+  const before = await picker.inputValue();
+  await heading.click();
+  await expect(picker).toHaveValue(before);
+  await expect(dropdown).toBeVisible();
 
   // Searching keeps the jobs above a match, so the way to it still reads —
   // and drops a customer with nothing left under it.
   await picker.fill("Deck");
   await expect(dropdown.getByRole("option", { name: "Deck", exact: true })).toBeVisible();
-  await expect(dropdown.getByRole("option", { name: "Phase 1", exact: true })).toBeVisible();
+  await expect(heading).toBeVisible();
   await expect(dropdown.getByRole("option", { name: "Roof", exact: true })).toHaveCount(0);
   await expect(dropdown.getByText("Hillside", { exact: true })).toBeVisible();
   await expect(dropdown.getByText("Riverside", { exact: true })).toHaveCount(0);
 
-  // Chosen, the whole path names it.
+  // Chosen, the whole path names it — with "›", never the stored ":".
   await dropdown.getByRole("option", { name: "Deck", exact: true }).click();
-  await expect(picker).toHaveValue("Hillside:Phase 1:Deck");
+  await expect(picker).toHaveValue("Hillside › Phase 1 › Deck");
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toBeHidden();
 
   // The Jobs page nests them the same way, each named within the row above it.
   const admin = await ctx.newPage();
   await admin.goto("/admin/jobs");
-  const parent = admin.getByRole("group", { name: "Hillside:Phase 1", exact: true });
+  const parent = admin.getByRole("group", { name: "Hillside › Phase 1", exact: true });
   await expect(parent.getByText("Phase 1", { exact: true })).toBeVisible();
-  await expect(parent.getByRole("group", { name: "Hillside:Phase 1:Deck" }).getByText("Deck", { exact: true })).toBeVisible();
+  await expect(parent.getByRole("group", { name: "Hillside › Phase 1 › Deck" }).getByText("Deck", { exact: true })).toBeVisible();
+
+  // Whether a job takes hours is the admin's to set: Phase 1 holds sub-jobs,
+  // so it takes none by default, and saying otherwise puts it back in reach.
+  const hours = parent.getByRole("switch", { name: "Takes hours" }).first();
+  await expect(hours).not.toBeChecked();
+  await expect(parent.getByText("It holds sub-jobs, so hours go on those.")).toBeVisible();
+  await hours.click({ force: true });
+  await expect(admin.locator(".mantine-Notification-root").filter({ hasText: "Time can be booked to “Hillside › Phase 1”" })).toBeVisible();
   await admin.close();
+
+  await page.reload();
+  await page.getByRole("button", { name: "Add time manually" }).click();
+  await page.getByRole("dialog", { name: "Add time" }).getByRole("combobox", { name: /^Job/ }).click();
+  const nowPickable = page.getByRole("listbox").getByRole("option", { name: "Phase 1", exact: true });
+  await expect(nowPickable).toBeVisible();
+  await expect(nowPickable).not.toHaveAttribute("data-combobox-disabled", "true");
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog", { name: "Add time" }).getByRole("button", { name: "Cancel" }).click();
 });
 
 test("an accidental timer is discarded without a question, and undo brings it back", async () => {
@@ -204,7 +230,7 @@ test("a job that needs a note won't stop without one", async () => {
   // Turn the requirement on for Alpha, in another tab.
   const admin = await ctx.newPage();
   await admin.goto("/admin/jobs");
-  const alphaRow = admin.getByRole("group", { name: "Riverside:Alpha Site" });
+  const alphaRow = admin.getByRole("group", { name: "Riverside › Alpha Site" });
   await alphaRow.getByRole("switch", { name: "Needs a note" }).click({ force: true });
   await expect(alphaRow.getByRole("switch", { name: "Needs a note" })).toBeChecked();
   await admin.close();
@@ -299,7 +325,9 @@ test("create a job on the spot while starting a timer, at a customer that's new 
   await expect(card.getByRole("heading", { name: "Charlie Emergency" })).toBeVisible();
   await expect(card.getByText("Delta Homes", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: "Stop" }).click();
-  await expect(entryRows().filter({ hasText: "Delta Homes:Charlie Emergency" })).toHaveCount(1);
+  const emergency = entryRows().filter({ hasText: "Charlie Emergency" });
+  await expect(emergency).toHaveCount(1);
+  await expect(emergency.getByText("Delta Homes", { exact: true })).toBeVisible();
 
   // Both are provisional, grouped on the Jobs page like any other.
   await page.goto("/admin/jobs");
@@ -319,7 +347,7 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
 
   // The first job of the day: from now on, that's what's being done.
   await pickJob(page.getByPlaceholder("Add a job for today — type to search"), "Bravo Site");
-  const bravo = page.getByRole("group", { name: "Riverside:Bravo Site" });
+  const bravo = page.getByRole("group", { name: "Riverside › Bravo Site" });
   await expect(bravo.getByText("Started")).toBeVisible();
   await bravo.getByPlaceholder("What did you do?").fill("Measuring the east wall");
   await bravo.getByRole("button", { name: "Add", exact: true }).click();
@@ -330,7 +358,7 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
 
   // A second job, later in the day.
   await pickJob(page.getByPlaceholder("Add a job for today — type to search"), "Alpha Site");
-  const alpha = page.getByRole("group", { name: "Riverside:Alpha Site" });
+  const alpha = page.getByRole("group", { name: "Riverside › Alpha Site" });
   await expect(alpha.getByText("Started")).toBeVisible();
   await alpha.getByPlaceholder("What did you do?").fill("Site walk");
   await alpha.getByRole("button", { name: "Add", exact: true }).click();
@@ -338,7 +366,7 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
 
   // Bravo's notes ran until Alpha started, moments later; the hours are set by hand.
   await bravo.getByRole("button", { name: "Turn 2 notes into hours" }).click();
-  const dialog = page.getByRole("dialog", { name: "Hours for Riverside:Bravo Site" });
+  const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Bravo Site" });
   await expect(dialog.getByLabel("Note")).toHaveValue("Measuring the east wall; Cutting studs");
   await expect(dialog.getByLabel("Worked until")).toHaveCount(0);
   await dialog.getByLabel("Hours").fill("1");
@@ -354,7 +382,7 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
 
   // Alpha runs to the end of the day, so it asks when that was.
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
-  const alphaDialog = page.getByRole("dialog", { name: "Hours for Riverside:Alpha Site" });
+  const alphaDialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
   await expect(alphaDialog.getByLabel("Worked until")).toBeVisible();
   await alphaDialog.getByLabel("Hours").fill("0");
   await alphaDialog.getByLabel("Minutes").fill("45");
@@ -385,11 +413,11 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
   await orphan.getByRole("button", { name: /^Edit / }).click();
   await pickJob(orphan.getByRole("combobox"), "Alpha Site");
   await orphan.getByRole("button", { name: "Save" }).click();
-  const alpha = page.getByRole("group", { name: "Riverside:Alpha Site" });
+  const alpha = page.getByRole("group", { name: "Riverside › Alpha Site" });
   await expect(alpha.getByText("Left over from yesterday")).toBeVisible();
 
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
-  const dialog = page.getByRole("dialog", { name: "Hours for Riverside:Alpha Site" });
+  const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
   await expect(dialog.getByLabel("Worked until")).toBeVisible();
   await dialog.getByLabel("Hours").fill("1");
   await dialog.getByLabel("Minutes").fill("0");

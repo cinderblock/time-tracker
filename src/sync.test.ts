@@ -5,7 +5,7 @@ import { approveEntries, reopenEntries, submitEntries } from "./approvals.ts";
 import { createCategory, setUserCategory } from "./categories.ts";
 import { db } from "./db.server.ts";
 import { getEntry } from "./entries.ts";
-import { getJob, listJobs, resolveJob } from "./jobs.ts";
+import { getJob, listJobs, resolveJob, updateJob } from "./jobs.ts";
 import { applyOp } from "./ops.ts";
 import type { OpPayload, OpResult, OpType } from "./ops-schema.ts";
 import {
@@ -258,7 +258,7 @@ describe("sending time", () => {
     const reasons = Object.fromEntries(syncOverview(now).blocked.map((b) => [b.entryId, [b.fix, b.reason]]));
     expect(reasons).toEqual({
       [zero]: ["entry", "Less than a minute of time: nothing to send. Delete it or fix its times."],
-      [provisional]: ["job", "The job “Walk-in:Repair” was made here and isn't in the accounting system yet."],
+      [provisional]: ["job", "The job “Walk-in › Repair” was made here and isn't in the accounting system yet."],
       [carols]: ["person", "Carol isn't linked to a name in the accounting system."],
       [bobs]: ["person", "Bob's name (Former Helper) is inactive in the accounting system."],
     });
@@ -321,11 +321,13 @@ describe("the approval gate", () => {
 describe("provisional jobs", () => {
   test("linking merges the job into the real one; the old id keeps working", async () => {
     await connected();
-    const sub = uuidv7();
-    ok(send(alice, "job.create", { jobId: sub, name: "Back room", parentId: local }));
     const id = work(alice, local, 45);
     const noteId = uuidv7();
     ok(send(alice, "note.create", { noteId, at: NINE, text: "arrived", jobId: local }));
+    // A sub-job turns up under it afterwards. Time already booked stays put;
+    // the job stops taking new hours unless an admin says it still does.
+    const sub = uuidv7();
+    ok(send(alice, "job.create", { jobId: sub, name: "Back room", parentId: local }));
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     const acme = jobByRemote("C-ACME").id;
     const phase2 = jobByRemote("C-ACME-2").id;
@@ -340,7 +342,9 @@ describe("provisional jobs", () => {
     expect(getJob(sub)!.parentId).toBe(phase2);
     expect(listJobs().map((j) => j.fullName)).toEqual(["Acme", "Acme:Phase 2", "Acme:Phase 2:Back room", "Walk-in"]);
 
-    // A phone that still has the old id offline books to the real job.
+    // A phone that still has the old id offline books to the real job — which
+    // now holds "Back room", so an admin says it takes hours of its own too.
+    updateJob({ id: phase2, takesTime: true, actorUserId: admin });
     const later = uuidv7();
     ok(send(alice, "timer.start", { entryId: later, jobId: local, at: NINE + 60 * MIN }));
     expect(getEntry(later)!.jobId).toBe(phase2);

@@ -2,6 +2,7 @@ import type { PulledLists, RemoteItem, RemoteJob, RemotePerson } from "./account
 import { audit } from "./audit.ts";
 import { getCategory } from "./categories.ts";
 import { db } from "./db.server.ts";
+import { jobLabel } from "./job-names.ts";
 import { getJob, resolveJob } from "./jobs.ts";
 import { QB_NAME_MAX_LENGTH } from "./accounting/qbxml.ts";
 import { setDefaultPayrollItemId, setDefaultServiceItemId, updateSyncState } from "./settings.ts";
@@ -258,14 +259,14 @@ export function linkJob(args: { jobId: string; targetId: string; actorUserId: nu
   db().transaction(() => {
     const job = getJob(args.jobId);
     if (!job || job.mergedInto) throw new UserInputError("That job no longer exists.");
-    if (job.remoteId) throw new UserInputError(`“${job.fullName}” is already in the accounting system.`);
+    if (job.remoteId) throw new UserInputError(`“${jobLabel(job.fullName)}” is already in the accounting system.`);
     const target = resolveJob(args.targetId);
     if (!target?.remoteId) throw new UserInputError("Pick a job from the accounting system.");
     if (target.id === job.id) throw new UserInputError("A job can't be linked to itself.");
     // Time is booked to jobs, never to a customer: a job's time has to land on a job.
     if (job.parentId && !target.parentId) {
       throw new UserInputError(
-        `“${target.fullName}” is a customer, and “${job.fullName}” is a job. Link it to one of that customer's jobs, or have it created there.`,
+        `“${jobLabel(target.fullName)}” is a customer, and “${jobLabel(job.fullName)}” is a job. Link it to one of that customer's jobs, or have it created there.`,
       );
     }
 
@@ -312,7 +313,7 @@ export function linkJob(args: { jobId: string; targetId: string; actorUserId: nu
 export function requestJobCreation(args: { jobId: string; create: boolean; actorUserId: number; now?: number }): void {
   const job = getJob(args.jobId);
   if (!job || job.mergedInto) throw new UserInputError("That job no longer exists.");
-  if (job.remoteId) throw new UserInputError(`“${job.fullName}” is already in the accounting system.`);
+  if (job.remoteId) throw new UserInputError(`“${jobLabel(job.fullName)}” is already in the accounting system.`);
   if (args.create) {
     if (job.name.length > QB_NAME_MAX_LENGTH) {
       throw new UserInputError(

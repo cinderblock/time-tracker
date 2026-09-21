@@ -1,6 +1,7 @@
 import { audit } from "./audit.ts";
 import { config } from "./config.server.ts";
 import { db } from "./db.server.ts";
+import { jobLabel } from "./job-names.ts";
 import { JOB_NAME_MAX_LENGTH } from "./limits.ts";
 import { OpError } from "./op-error.ts";
 import { UserInputError } from "./users.ts";
@@ -13,6 +14,13 @@ import { UserInputError } from "./users.ts";
  * booked to jobs only: a customer groups its jobs and never takes time
  * itself. Closing a customer closes its jobs, and a customer's "needs a
  * note" rule applies to them.
+ *
+ * A job that holds sub-jobs is, by default, a heading for them rather than a
+ * place for hours — the usual practice, since time booked to the parent and
+ * to its sub-jobs doesn't add up to anything anyone wants to read. It is a
+ * default, not a law: `takes_time` is an admin's answer for one job either
+ * way, and NULL means "follow the default", so the answer keeps up as
+ * sub-jobs come and go.
  *
  * With an accounting backend, customers and jobs normally arrive from it
  * (remote-lists.ts pulls them). Anyone may still create one here when the
@@ -49,7 +57,11 @@ export interface Job {
   active: boolean;
   /** Open, active in the accounting system and not merged — and so is everything above it. */
   open: boolean;
-  /** Time can be booked here: open, and a job rather than a customer. */
+  /** It has jobs under it, so by default it holds them rather than hours. */
+  hasSubJobs: boolean;
+  /** An admin's answer to "does this job take hours itself". Null follows the default. */
+  takesTime: boolean | null;
+  /** Time can be booked here: open, a job rather than a customer, and it takes hours. */
   bookable: boolean;
   createdBy: number | null;
   createdAt: number;
@@ -67,13 +79,14 @@ interface JobRow {
   sync_error: string | null;
   default_service_item_id: string | null;
   requires_note: number;
+  takes_time: number | null;
   active: number;
   created_by: number | null;
   created_at: number;
 }
 
 const COLUMNS =
-  "id, name, parent_id, remote_id, remote_active, provisional, merged_into, create_requested_at, sync_error, default_service_item_id, requires_note, active, created_by, created_at";
+  "id, name, parent_id, remote_id, remote_active, provisional, merged_into, create_requested_at, sync_error, default_service_item_id, requires_note, takes_time, active, created_by, created_at";
 
 function allRows(): JobRow[] {
   return db().query<JobRow, []>(`SELECT ${COLUMNS} FROM jobs`).all();
@@ -84,6 +97,11 @@ const selfOpen = (r: JobRow) => r.active === 1 && r.remote_active === 1 && r.mer
 /** Rows to Jobs, with everything that depends on the rows above each one. */
 function hydrate(rows: JobRow[]): Job[] {
   const byId = new Map(rows.map((r) => [r.id, r]));
+  // Rows merged into another live on as the row they became, so they don't
+  // make the row they used to sit under into a job that holds sub-jobs.
+  const parents = new Set(
+    rows.filter((r) => r.merged_into == null).map((r) => r.parent_id).filter((id): id is string => id != null),
+  );
   return rows.map((r) => {
     const names = [r.name];
     let open = selfOpen(r);
@@ -99,6 +117,8 @@ function hydrate(rows: JobRow[]): Job[] {
       top = p;
       p = p.parent_id ? byId.get(p.parent_id) : undefined;
     }
+    const hasSubJobs = parents.has(r.id);
+    const takesTime = r.takes_time == null ? null : r.takes_time === 1;
     return {
       id: r.id,
       name: r.name,
@@ -116,7 +136,11 @@ function hydrate(rows: JobRow[]): Job[] {
       noteRequired,
       active: r.active === 1,
       open,
-      bookable: open && r.parent_id != null,
+      hasSubJobs,
+      takesTime,
+      // A job holding sub-jobs is a heading for them, not a place for hours,
+      // unless an admin has said otherwise for this one.
+      bookable: open && r.parent_id != null && (takesTime ?? !hasSubJobs),
       createdBy: r.created_by,
       createdAt: r.created_at,
     };
@@ -162,12 +186,17 @@ export function resolveJob(id: string): Job | null {
 export function requireBookableJob(id: string): Job {
   const job = resolveJob(id);
   if (!job) throw new OpError("not_found", "That job doesn't exist.");
-  if (!job.active) throw new OpError("conflict", `“${job.fullName}” is closed. Pick another job.`);
+  if (!job.active) throw new OpError("conflict", `“${jobLabel(job.fullName)}” is closed. Pick another job.`);
   if (!job.remoteActive) {
-    throw new OpError("conflict", `“${job.fullName}” is inactive in the accounting system. Pick another job.`);
+    throw new OpError("conflict", `“${jobLabel(job.fullName)}” is inactive in the accounting system. Pick another job.`);
   }
-  if (!job.parentId) throw new OpError("conflict", `“${job.fullName}” is a customer. Pick one of its jobs.`);
-  if (!job.open) throw new OpError("conflict", `“${job.fullName}” is under a closed customer. Pick another job.`);
+  if (!job.parentId) throw new OpError("conflict", `“${jobLabel(job.fullName)}” is a customer. Pick one of its jobs.`);
+  if (!job.open) {
+    throw new OpError("conflict", `“${jobLabel(job.fullName)}” is under a closed customer. Pick another job.`);
+  }
+  if (!job.bookable) {
+    throw new OpError("conflict", `“${jobLabel(job.fullName)}” only holds its sub-jobs. Pick one of them.`);
+  }
   return job;
 }
 
@@ -208,7 +237,7 @@ export function createJob(args: {
   if (nameTaken(name, parentId, null)) {
     throw new OpError(
       "conflict",
-      parentId ? `“${parent!.fullName}” already has a job called “${name}”.` : `There's already a customer called “${name}”.`,
+      parentId ? `“${jobLabel(parent!.fullName)}” already has a job called “${name}”.` : `There's already a customer called “${name}”.`,
     );
   }
   if (getJob(args.id)) throw new OpError("conflict", "A job with that id already exists.");
@@ -237,6 +266,8 @@ export function updateJob(args: {
   name?: string;
   active?: boolean;
   requiresNote?: boolean;
+  /** Whether it takes hours itself; null goes back to following the default. */
+  takesTime?: boolean | null;
   actorUserId: number;
 }): Job {
   const job = getJob(args.id);
@@ -255,18 +286,24 @@ export function updateJob(args: {
   }
   const active = args.active ?? job.active;
   const requiresNote = args.requiresNote ?? job.requiresNote;
-  if (name === job.name && active === job.active && requiresNote === job.requiresNote) return job;
+  const takesTime = args.takesTime === undefined ? job.takesTime : args.takesTime;
+  if (job.parentId == null && takesTime != null) {
+    throw new UserInputError("A customer never takes hours itself. Set this on one of its jobs.");
+  }
+  if (name === job.name && active === job.active && requiresNote === job.requiresNote && takesTime === job.takesTime) {
+    return job;
+  }
 
   db()
-    .query("UPDATE jobs SET name = ?, active = ?, requires_note = ?, updated_at = ? WHERE id = ?")
-    .run(name, active ? 1 : 0, requiresNote ? 1 : 0, Date.now(), job.id);
+    .query("UPDATE jobs SET name = ?, active = ?, requires_note = ?, takes_time = ?, updated_at = ? WHERE id = ?")
+    .run(name, active ? 1 : 0, requiresNote ? 1 : 0, takesTime == null ? null : takesTime ? 1 : 0, Date.now(), job.id);
   audit({
     actorUserId: args.actorUserId,
     entity: "job",
     entityId: job.id,
     action: "update",
-    before: { name: job.name, active: job.active, requiresNote: job.requiresNote },
-    after: { name, active, requiresNote },
+    before: { name: job.name, active: job.active, requiresNote: job.requiresNote, takesTime: job.takesTime },
+    after: { name, active, requiresNote, takesTime },
   });
   return getJob(job.id)!;
 }

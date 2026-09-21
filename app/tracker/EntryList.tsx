@@ -2,6 +2,7 @@ import { Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from "
 import { useState } from "react";
 
 import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
+import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { formatClock, formatDurationHuman } from "../../src/time.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { EntryEditor } from "./EntryEditor.tsx";
@@ -81,14 +82,16 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
   async function remove() {
     const result = await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
     if (result.ok) {
-      undoToast(`Deleted ${entry.jobName}.`, () => dispatch("entry.restore", { entryId: entry.id, at: Date.now() }));
+      undoToast(`Deleted ${jobLabel(entry.jobName)}.`, () => dispatch("entry.restore", { entryId: entry.id, at: Date.now() }));
     }
   }
 
+  // The job's own name is the line to read; where it sits goes under it.
+  const { name: jobTitle, above: jobPlace } = jobPath(entry.jobName);
   const details = (
     <Stack gap={2}>
       <Group gap="xs" wrap="wrap">
-        <Text fw={500}>{entry.jobName}</Text>
+        <Text fw={500}>{jobTitle}</Text>
         {running && (
           <Badge size="sm" color={entry.runningSince != null ? "green" : "yellow"} variant="light">
             {entry.runningSince != null ? "running" : "paused"}
@@ -105,6 +108,11 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
           </Badge>
         )}
       </Group>
+      {jobPlace && (
+        <Text size="xs" c="dimmed">
+          {jobPlace}
+        </Text>
+      )}
       <Text size="sm" c="dimmed">
         {span}
       </Text>
@@ -130,7 +138,7 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
         {locked ? (
           <div style={{ flex: 1, minWidth: 0 }}>{details}</div>
         ) : (
-          <UnstyledButton onClick={onEdit} style={{ flex: 1, minWidth: 0 }} aria-label={`Edit ${entry.jobName}`}>
+          <UnstyledButton onClick={onEdit} style={{ flex: 1, minWidth: 0 }} aria-label={`Edit ${jobLabel(entry.jobName)}`}>
             {details}
           </UnstyledButton>
         )}

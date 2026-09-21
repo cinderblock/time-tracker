@@ -241,10 +241,10 @@ test("approvals can be switched on, and then time waits for an admin", async () 
 test("the calendar shows each block of time", async () => {
   const { page } = admin;
   await page.getByRole("link", { name: "Calendar" }).click();
-  const block = page.getByRole("link", { name: "Eddie Employee, Echo Co:Echo Works, 9:00 AM – 11:00 AM, approved" });
+  const block = page.getByRole("link", { name: "Eddie Employee, Echo Co › Echo Works, 9:00 AM – 11:00 AM, approved" });
   await expect(block).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Eddie Employee, Foxtrot Co:Foxtrot Farm, .* – now$/ })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Eddie Employee · 1h 30m · Foxtrot Co:Foxtrot Farm/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Eddie Employee, Foxtrot Co › Foxtrot Farm, .* – now$/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Eddie Employee · 1h 30m · Foxtrot Co › Foxtrot Farm/ })).toBeVisible();
   await shot(page, "calendar");
   await block.click();
   await expect(page).toHaveURL(new RegExp(`/admin/people/${employeeId}/time$`));

@@ -1,6 +1,7 @@
 import { Alert, Anchor, Card, Grid, Skeleton, Stack, Text } from "@mantine/core";
 import { Link } from "react-router";
 
+import { jobLabel } from "../../src/job-names.ts";
 import { formatDurationHuman } from "../../src/time.ts";
 import { type ActingFor, TrackerProvider, useNow, useTracker } from "./context.tsx";
 import { DayHeader } from "./DayHeader.tsx";
@@ -147,7 +148,7 @@ function OpenTimerElsewhere() {
   if (!open) return null;
   return (
     <Alert color="green" title="A timer is running">
-      {open.jobName} — {formatDurationHuman(now === undefined ? open.durationSeconds : liveSeconds(open, now))}.{" "}
+      {jobLabel(open.jobName)} — {formatDurationHuman(now === undefined ? open.durationSeconds : liveSeconds(open, now))}.{" "}
       <Anchor component={Link} to={hrefFor(model.today)}>
         Go to today
       </Anchor>

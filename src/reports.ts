@@ -1,6 +1,7 @@
 import { listCategories } from "./categories.ts";
 import { db } from "./db.server.ts";
 import { APPROVED_STATUSES, type EntryStatus, SIGNED_OFF_STATUSES } from "./entry-status.ts";
+import { jobLabel } from "./job-names.ts";
 import { listJobs } from "./jobs.ts";
 import { type RateScope, costOf, rateResolver } from "./rates.ts";
 import { addDays, datesBetween, decimalHours, formatClock } from "./time.ts";
@@ -215,7 +216,8 @@ function keyOf(l: ReportLine, by: GroupBy): [string, string] {
     case "customer":
       return [`c${l.customerId ?? ""}`, l.customerName];
     case "job":
-      return [`j${l.jobId ?? ""}`, l.jobName];
+      // The CSV keeps the stored "Customer:Job" path; a heading on screen doesn't.
+      return [`j${l.jobId ?? ""}`, jobLabel(l.jobName)];
     case "category":
       return [`k${l.categoryId ?? ""}`, l.categoryName ?? "No category"];
     case "day":

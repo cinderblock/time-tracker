@@ -3,6 +3,7 @@ import { audit } from "./audit.ts";
 import { db } from "./db.server.ts";
 import { type EntryStatus, sendableStatuses } from "./entry-status.ts";
 import { QB_NAME_MAX_LENGTH } from "./accounting/qbxml.ts";
+import { PATH_SEPARATOR } from "./job-names.ts";
 import { applyPull, categoryPayrollItems } from "./remote-lists.ts";
 import {
   defaultPayrollItemId,
@@ -193,11 +194,11 @@ function recordFor(e: EntryRow, l: Lookups): { record: TimeRecord } | NotReady {
   const chain = jobChain(l, e.job_id);
   const job = chain[0];
   if (e.job_id && !job) return { reason: "Its job no longer exists.", fix: "job" };
-  // Named by its full "Customer:Job" path, as the Jobs page shows it.
+  // Named by where it sits, the way the Jobs page writes it.
   const jobName = chain
     .map((j) => j.name)
     .reverse()
-    .join(":");
+    .join(PATH_SEPARATOR);
   if (job && !job.remoteId) {
     return { reason: `The job “${jobName}” was made here and isn't in the accounting system yet.`, fix: "job" };
   }

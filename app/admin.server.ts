@@ -1,5 +1,6 @@
 import { listCategories } from "../src/categories.ts";
 import { config } from "../src/config.server.ts";
+import { jobLabel } from "../src/job-names.ts";
 import { listJobs } from "../src/jobs.ts";
 import { GROUP_BYS, type GroupBy, type ReportFilter } from "../src/reports.ts";
 import { weekStartsOn } from "../src/settings.ts";
@@ -130,6 +131,6 @@ export function categoryOptions(): Option[] {
 export function jobOptions(): Option[] {
   return listJobs({ includeInactive: true }).map((j) => ({
     value: j.id,
-    label: j.active ? j.fullName : `${j.fullName} (closed)`,
+    label: j.active ? jobLabel(j.fullName) : `${jobLabel(j.fullName)} (closed)`,
   }));
 }

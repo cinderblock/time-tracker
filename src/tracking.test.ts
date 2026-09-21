@@ -362,6 +362,40 @@ describe("jobs", () => {
     expect(listEntriesForDate(userId, TODAY)).toHaveLength(0);
   });
 
+  test("a job that holds sub-jobs takes no hours itself, unless an admin says otherwise", () => {
+    const admin = createUser({ name: "Admin", role: "admin", actorUserId: null });
+    const sub = uuidv7();
+    ok(send("job.create", { jobId: sub, name: "Punch list", parentId: jobA }));
+    // The default follows the tree: hours go on the sub-job, not on Alpha.
+    expect(getJob(jobA)).toMatchObject({ hasSubJobs: true, takesTime: null, bookable: false });
+    expect(getJob(sub)).toMatchObject({ hasSubJobs: false, takesTime: null, bookable: true });
+    const refused = rejected(send("timer.start", { entryId: uuidv7(), jobId: jobA, at: NINE }), "conflict");
+    expect(refused).toContain("only holds its sub-jobs");
+    // The name in the refusal is written for people, so never with a ":".
+    expect(refused).toContain("Acme › Alpha");
+
+    // An admin can say this one takes hours anyway…
+    updateJob({ id: jobA, takesTime: true, actorUserId: admin.id });
+    expect(getJob(jobA)).toMatchObject({ takesTime: true, bookable: true });
+    const id = uuidv7();
+    ok(send("timer.start", { entryId: id, jobId: jobA, at: NINE }));
+    ok(send("timer.stop", { entryId: id, at: NINE + MIN }));
+
+    // …and back to the default, which still says no.
+    updateJob({ id: jobA, takesTime: null, actorUserId: admin.id });
+    expect(getJob(jobA)).toMatchObject({ takesTime: null, bookable: false });
+    // Time already booked stays where it is.
+    expect(getEntry(id)!.jobId).toBe(jobA);
+
+    // The same answer the other way: a job with no sub-jobs that takes none.
+    updateJob({ id: jobB, takesTime: false, actorUserId: admin.id });
+    expect(getJob(jobB)).toMatchObject({ hasSubJobs: false, bookable: false });
+    rejected(send("entry.create", { entryId: uuidv7(), jobId: jobB, workDate: TODAY, durationSeconds: 60 }), "conflict");
+
+    // A customer never takes hours, so there is nothing to answer there.
+    expect(() => updateJob({ id: customer, takesTime: true, actorUserId: admin.id })).toThrow("A customer never takes hours");
+  });
+
   test("a customer's note rule applies to its jobs, and closing it closes them", () => {
     const admin = createUser({ name: "Admin", role: "admin", actorUserId: null });
     updateJob({ id: customer, requiresNote: true, actorUserId: admin.id });

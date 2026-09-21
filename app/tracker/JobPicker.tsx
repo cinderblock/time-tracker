@@ -16,10 +16,11 @@ import {
 import { useMediaQuery } from "@mantine/hooks";
 import { useEffect, useMemo, useState } from "react";
 
+import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { JOB_NAME_MAX_LENGTH } from "../../src/limits.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { useTracker } from "./context.tsx";
-import { groupJobs, jobRows, listCustomers, splitJobName } from "./job-groups.ts";
+import { groupJobs, jobRows, listCustomers } from "./job-groups.ts";
 import classes from "./JobPicker.module.css";
 import type { JobView } from "./model.ts";
 
@@ -29,9 +30,8 @@ import type { JobView } from "./model.ts";
  */
 const RECENT = "recent:";
 
-/** How far a sub-job sits in from its parent, and the depth indenting stops at. */
+/** How far a sub-job sits in from the job above it, per layer of nesting. */
 const INDENT_PX = 16;
-const INDENT_MAX = 4;
 
 /** What a row needs drawing that its option data doesn't carry. */
 interface PickerRow {
@@ -71,16 +71,17 @@ export function JobSelect({
   const { model } = useTracker();
   const [creating, setCreating] = useState(false);
 
-  // Labels are full "Customer:Job" paths: they're what the input shows once
-  // a job is chosen, and what typing matches against. Under a customer's
-  // heading a job draws its own name, indented to its depth, so a sub-job
-  // reads as one instead of repeating the job it belongs to.
+  // An option's label is the whole path on one line ("Riverside › Phase 1 ›
+  // Deck"): it's what the input shows once a job is chosen, and what typing
+  // matches against. In the list itself a job draws its own name, indented to
+  // its depth, so a sub-job reads as one instead of repeating what it's under.
   const { data, rows, anyJobs } = useMemo(() => {
     const groups = groupJobs(model.jobs, model.recentJobIds);
     const rows = new Map<string, PickerRow>();
     const data: { group: string; items: ComboboxItem[] }[] = [];
     if (groups.recent.length > 0) {
-      data.push({ group: "Recent", items: groups.recent.map((j) => ({ value: RECENT + j.id, label: j.fullName })) });
+      const items = groups.recent.map((j) => ({ value: RECENT + j.id, label: jobLabel(j.fullName) }));
+      data.push({ group: "Recent", items });
     }
     for (const { customer, jobs } of groups.customers) {
       const items: ComboboxItem[] = [];
@@ -91,7 +92,7 @@ export function JobSelect({
         rows.set(job.id, { name: job.name, depth, bookable: job.bookable, ancestors: [...path] });
         path.push(job.id);
         // A job that takes no time of its own is the way to its sub-jobs, not a choice.
-        items.push({ value: job.id, label: job.fullName, disabled: !job.bookable });
+        items.push({ value: job.id, label: jobLabel(job.fullName), disabled: !job.bookable });
       }
       data.push({ group: customer.fullName, items });
     }
@@ -142,7 +143,7 @@ export function JobSelect({
               gap="xs"
               wrap="nowrap"
               justify="space-between"
-              style={{ flex: 1, marginInlineStart: Math.min(row?.depth ?? 0, INDENT_MAX) * INDENT_PX }}
+              style={{ flex: 1, marginInlineStart: (row?.depth ?? 0) * INDENT_PX }}
             >
               <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
                 <span>{row?.name ?? option.label}</span>
@@ -345,7 +346,7 @@ export function RecentJobButtons({
   return (
     <Group gap="xs" grow preventGrowOverflow={false} wrap="wrap">
       {recent.map((job) => {
-        const { customer, job: title } = splitJobName(job.fullName);
+        const { name, above } = jobPath(job.fullName);
         return (
           <Button
             key={job.id}
@@ -359,11 +360,11 @@ export function RecentJobButtons({
           >
             <Stack gap={0} align="center">
               <Text span size="sm" fw={600} lh={1.2}>
-                {title}
+                {name}
               </Text>
-              {customer && (
+              {above && (
                 <Text span size="xs" c="dimmed" lh={1.2}>
-                  {customer}
+                  {above}
                 </Text>
               )}
             </Stack>

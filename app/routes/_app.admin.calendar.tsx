@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router";
 
 import { config } from "../../src/config.server.ts";
 import { APPROVED_STATUSES, SIGNED_OFF_STATUSES } from "../../src/entry-status.ts";
+import { jobLabel } from "../../src/job-names.ts";
 import { calendarWeek } from "../../src/reports.ts";
 import { formatClock, formatDurationHuman, formatWorkDate, weekdayOf } from "../../src/time.ts";
 import { categoryOptions, idParam, peopleOptions, weekFromUrl } from "../admin.server.ts";
@@ -173,7 +174,7 @@ export default function Calendar({ loaderData }: Route.ComponentProps) {
                     to={`/admin/people/${u.userId}/time${d === today ? "" : `/${d}`}`}
                     style={{ cursor: "pointer", textTransform: "none" }}
                   >
-                    {names.get(u.userId)} · {formatDurationHuman(u.seconds)} · {u.jobName}
+                    {names.get(u.userId)} · {formatDurationHuman(u.seconds)} · {jobLabel(u.jobName)}
                   </Badge>
                 ))}
             </Stack>
@@ -238,7 +239,7 @@ function BlockView({
   const signedOff = SIGNED_OFF_STATUSES.has(b.status);
   const said = APPROVED_STATUSES.has(b.status) ? ", approved" : signedOff ? ", submitted" : "";
   const times = `${formatClock(b.start, data.timezone)} – ${running ? "now" : formatClock(b.end!, data.timezone)}`;
-  const label = `${name}, ${b.jobName}, ${times}${said}`;
+  const label = `${name}, ${jobLabel(b.jobName)}, ${times}${said}`;
 
   return (
     <Link
@@ -257,7 +258,7 @@ function BlockView({
         ["--block-text" as string]: `var(--mantine-color-${color}-light-color)`,
       }}
     >
-      <b>{name}</b> {b.jobName}
+      <b>{name}</b> {jobLabel(b.jobName)}
       {tall >= 40 && (
         <>
           <br />

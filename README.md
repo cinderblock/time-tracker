@@ -54,11 +54,15 @@ repository. All of that is deployment configuration or an admin setting.
 
 - **No "are you sure?".** Discarding an accidental timer or deleting an entry is
   one tap, with an Undo. Nothing is ever really deleted.
-- **Jobs belong to customers.** Time is booked to a job, never to a customer
-  itself; the picker lists the jobs used most recently first, then each
-  customer's jobs, with a job's sub-jobs nested under it rather than repeating
-  its name. Jobs — and customers — can be created on the spot while tracking;
-  admins open, close and rename them and choose which need notes.
+- **Jobs belong to customers, and jobs can hold sub-jobs.** Time is booked to a
+  job, never to a customer itself, and a job that holds sub-jobs takes no hours
+  of its own unless an admin says it does. The picker lists the jobs used most
+  recently first, then each customer's jobs, a job's sub-jobs nested under it —
+  however deep they go. On screen a job is its own name and where it sits
+  ("Deck", under "Riverside › Phase 1"), never the stored "Customer:Job" path.
+  Jobs — and customers — can be created on the spot while tracking; admins
+  open, close and rename them, choose which need notes, and say which take
+  hours.
 - **Location**, if a person turns it on for their device, is recorded with timer
   starts, stops and notes — samples at those moments, not a trail.
 

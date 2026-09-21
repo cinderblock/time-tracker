@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { type JobGroup, groupJobs, jobRows, jobTree, listCustomers, nameWithin, splitJobName } from "./job-groups.ts";
+import { type JobGroup, groupJobs, jobRows, jobTree, listCustomers, nameWithin } from "./job-groups.ts";
 import type { JobView } from "./model.ts";
 
 const job = (id: string, fullName: string, parentId: string | null, extra: Partial<JobView> = {}): JobView => ({
@@ -10,6 +10,7 @@ const job = (id: string, fullName: string, parentId: string | null, extra: Parti
   parentId,
   requiresNote: false,
   bookable: parentId != null,
+  takesTime: null,
   provisional: false,
   ...extra,
 });
@@ -95,12 +96,6 @@ describe("names", () => {
     expect(nameWithin(punch, acme)).toBe("Install:Punch list");
     expect(nameWithin(punch, install)).toBe("Punch list");
     expect(nameWithin(zetaAudit, acme)).toBe("Zeta Ltd:Audit");
-  });
-
-  test("splitJobName separates the customer from the rest", () => {
-    expect(splitJobName("Acme:Install:Punch list")).toEqual({ customer: "Acme", job: "Install:Punch list" });
-    expect(splitJobName("Acme")).toEqual({ customer: null, job: "Acme" });
-    expect(splitJobName("No job")).toEqual({ customer: null, job: "No job" });
   });
 
   test("listCustomers is the top-level rows by name", () => {
