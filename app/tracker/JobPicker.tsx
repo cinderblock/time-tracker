@@ -225,6 +225,11 @@ export function NewJobModal({
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
+    // This dialog is opened from inside another form (the entry editor's).
+    // React events bubble up the component tree, not the DOM, so a portal is
+    // no escape: without this, making a job here also submits that form —
+    // which answers "Pick a job." to a job being made.
+    event.stopPropagation();
     setBusy(true);
     setCustomerError(null);
     setError(null);
