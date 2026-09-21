@@ -109,6 +109,10 @@ the left side *becomes* the right side. Two changes:
 
 ## Progress log
 
+- 2026-09-21 — Deployed. The deployer pinned the digest built from the commit
+  that carries this work; the live build id matches the one the pre-publish
+  build produced, so what was verified is what is serving.
+
 - 2026-09-21 — Both changes built and verified, in a throwaway worktree
   because the shared checkout had two other sessions mid-change: typecheck,
   273 unit tests, 45 chromium e2e (one throwaway spec drove a commit and
