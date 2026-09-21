@@ -801,6 +801,14 @@ own phase; they are properties of the entry UI, not separate features.
   rendered HTML for `computed in America/Los_Angeles` finds nothing, because the
   markup is `computed in <!-- -->America/Los_Angeles`. Not a bug — but it will fool
   a naive HTML assertion, so match on the value alone.
+- **The offline fallback assumed weeks start on Sunday** (2026-09-20, found
+  when a deployment moved to Monday). `week_starts_on` is honoured by the day
+  screen, timesheets, the calendar and the report presets, but `offline/
+  loaders.ts` built its strip with `addDays(date, -weekdayOf(date))` for a day
+  never loaded on the device, putting it a day out. No copy stores the setting
+  as such — but every copy's `week` *starts* on it, so the latest copy answers:
+  `weekdayOf(latest.week[0].date)`. A setting the browser needs offline has to
+  be derivable from a stored copy, or stored in one.
 
 ## Progress log
 

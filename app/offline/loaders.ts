@@ -1,6 +1,6 @@
 import { isRouteErrorResponse } from "react-router";
 
-import { addDays, weekdayOf, workDateOf } from "../../src/time.ts";
+import { addDays, weekStartOf, weekdayOf, workDateOf } from "../../src/time.ts";
 import type { DayModel } from "../tracker/model.ts";
 import {
   type StoredDay,
@@ -93,7 +93,12 @@ async function offlineDay(requested: string | null): Promise<DayModel | null> {
   // recorded, and say so on screen.
   const latest = await getLatestSnapshot(shell.userId).catch(() => null);
   if (!latest) return null;
-  const weekStart = addDays(date, -weekdayOf(date));
+  // Which weekday weeks start on is an organisation setting, and no copy
+  // stores it as such — but every copy's week strip begins on it, so the
+  // latest copy says. Assuming Sunday here put the strip a day out for an
+  // organisation whose weeks start on Monday.
+  const firstDay = latest.week[0] ? weekdayOf(latest.week[0].date) : 0;
+  const weekStart = weekStartOf(date, firstDay);
   return offlineCopy(
     {
       ...latest,
