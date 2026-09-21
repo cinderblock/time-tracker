@@ -1,6 +1,6 @@
 import { listCategories } from "./categories.ts";
 import { db } from "./db.server.ts";
-import { APPROVED_STATUSES, type EntryStatus } from "./entry-status.ts";
+import { APPROVED_STATUSES, type EntryStatus, SIGNED_OFF_STATUSES } from "./entry-status.ts";
 import { listJobs } from "./jobs.ts";
 import { type RateScope, costOf, rateResolver } from "./rates.ts";
 import { addDays, datesBetween, decimalHours, formatClock } from "./time.ts";
@@ -9,9 +9,9 @@ import { addDays, datesBetween, decimalHours, formatClock } from "./time.ts";
  * Read-only views over everyone's time, for admins: report lines and their
  * summaries, the weekly timesheet grid, and the week calendar.
  *
- * Running timers count up to `now`. Costs use the rate frozen at approval for
- * approved time, and the rate currently in effect for everything else — an
- * estimate until the time is approved.
+ * Running timers count up to `now`. Costs use the rate frozen when time was
+ * submitted, and the rate currently in effect for everything else — an
+ * estimate until the time is signed off.
  */
 
 export interface ReportFilter {
@@ -47,8 +47,8 @@ export interface ReportLine {
   status: EntryStatus;
   source: "timer" | "manual" | "note_rollup";
   hourlyRate: number | null;
-  /** Where the rate came from: frozen at approval, or the scope it resolved from. */
-  rateFrom: "approval" | RateScope | null;
+  /** Where the rate came from: frozen when it was submitted, or the scope it resolved from. */
+  rateFrom: "submission" | RateScope | null;
   cost: number | null;
 }
 
@@ -142,9 +142,11 @@ export function reportLines(filter: ReportFilter, now: number = Date.now()): Rep
 
     const running = r.status === "open" && r.running_since != null;
     const seconds = r.duration_seconds + (running ? Math.max(0, Math.round((now - r.running_since!) / 1000)) : 0);
-    const approved = APPROVED_STATUSES.has(r.status);
-    const resolved = approved ? null : rate(r.user_id, r.job_id, r.work_date);
-    const hourlyRate = approved ? r.rate_snapshot : (resolved?.hourlyRate ?? null);
+    // Signed-off time carries the rate its submission froze; everything else
+    // is costed at the rate in effect now, and can still move.
+    const frozen = SIGNED_OFF_STATUSES.has(r.status);
+    const resolved = frozen ? null : rate(r.user_id, r.job_id, r.work_date);
+    const hourlyRate = frozen ? r.rate_snapshot : (resolved?.hourlyRate ?? null);
     const customerId = r.job_id ? rootOf(jobs, r.job_id) : null;
 
     lines.push({
@@ -166,7 +168,7 @@ export function reportLines(filter: ReportFilter, now: number = Date.now()): Rep
       status: r.status,
       source: r.source,
       hourlyRate,
-      rateFrom: approved ? (hourlyRate != null ? "approval" : null) : (resolved?.scope ?? null),
+      rateFrom: frozen ? (hourlyRate != null ? "submission" : null) : (resolved?.scope ?? null),
       cost: hourlyRate != null ? costOf(seconds, hourlyRate) : null,
     });
   }
@@ -183,7 +185,8 @@ export interface ReportGroup {
   key: string;
   label: string;
   seconds: number;
-  approvedSeconds: number;
+  /** Time that is final: submitted, and approved where that is required. */
+  signedOffSeconds: number;
   /** Sum of the costs that could be worked out. */
   cost: number;
   /** Time with no rate to cost it at. */
@@ -193,12 +196,12 @@ export interface ReportGroup {
 }
 
 function emptyGroup(key: string, label: string): ReportGroup {
-  return { key, label, seconds: 0, approvedSeconds: 0, cost: 0, unratedSeconds: 0, entries: 0, running: false };
+  return { key, label, seconds: 0, signedOffSeconds: 0, cost: 0, unratedSeconds: 0, entries: 0, running: false };
 }
 
 function add(g: ReportGroup, l: ReportLine): void {
   g.seconds += l.seconds;
-  if (APPROVED_STATUSES.has(l.status)) g.approvedSeconds += l.seconds;
+  if (SIGNED_OFF_STATUSES.has(l.status)) g.signedOffSeconds += l.seconds;
   if (l.cost != null) g.cost = Math.round((g.cost + l.cost) * 100) / 100;
   else g.unratedSeconds += l.seconds;
   g.entries++;
@@ -257,11 +260,11 @@ function cell(value: string | number | null): string {
 
 const STATUS_LABEL: Record<EntryStatus, string> = {
   open: "Running",
-  draft: "Not approved",
+  draft: "Not submitted",
   submitted: "Submitted",
   approved: "Approved",
   synced: "In accounting",
-  sync_failed: "Approved (accounting refused)",
+  sync_failed: "Signed off (accounting refused)",
 };
 
 export function linesToCsv(lines: readonly ReportLine[], timeZone: string): string {
@@ -301,25 +304,34 @@ export function linesToCsv(lines: readonly ReportLine[], timeZone: string): stri
 
 // ---- timesheet grid ---------------------------------------------------------------
 
-export interface SheetCell {
+/**
+ * Counts of a person's entries, in the three states a timesheet cares about.
+ * Disjoint: a stopped entry is in exactly one of them, and a running timer is
+ * in none (it shows as `running`).
+ */
+export interface SheetCounts {
+  /** Stopped, and its owner hasn't said it's done yet. */
+  unsubmitted: number;
+  /** Submitted. Waiting for an admin, where the organisation requires one. */
+  submitted: number;
+  /** An admin has approved it, whether or not it has been sent. */
+  approved: number;
+}
+
+export interface SheetCell extends SheetCounts {
   date: string;
   seconds: number;
   entries: number;
-  /** Stopped but not approved. */
-  drafts: number;
-  approved: number;
   running: boolean;
 }
 
-export interface SheetRow {
+export interface SheetRow extends SheetCounts {
   userId: number;
   name: string;
   categoryName: string | null;
   active: boolean;
   days: SheetCell[];
   seconds: number;
-  drafts: number;
-  approved: number;
   running: boolean;
 }
 
@@ -347,9 +359,18 @@ export function timesheet(
         name: p?.name ?? "Unknown person",
         categoryName: categoryId != null ? (categories.get(categoryId) ?? null) : null,
         active: p?.active ?? false,
-        days: days.map((date) => ({ date, seconds: 0, entries: 0, drafts: 0, approved: 0, running: false })),
+        days: days.map((date) => ({
+          date,
+          seconds: 0,
+          entries: 0,
+          unsubmitted: 0,
+          submitted: 0,
+          approved: 0,
+          running: false,
+        })),
         seconds: 0,
-        drafts: 0,
+        unsubmitted: 0,
+        submitted: 0,
         approved: 0,
         running: false,
       };
@@ -364,18 +385,14 @@ export function timesheet(
   for (const l of lines) {
     const row = rowFor(l.userId);
     const day = row.days.find((d) => d.date === l.workDate)!;
-    const approved = APPROVED_STATUSES.has(l.status);
-    const draft = l.status === "draft" || l.status === "submitted";
     day.seconds += l.seconds;
     day.entries++;
     row.seconds += l.seconds;
-    if (approved) {
-      day.approved++;
-      row.approved++;
-    }
-    if (draft) {
-      day.drafts++;
-      row.drafts++;
+    const bucket =
+      l.status === "draft" ? "unsubmitted" : l.status === "submitted" ? "submitted" : APPROVED_STATUSES.has(l.status) ? "approved" : null;
+    if (bucket) {
+      day[bucket]++;
+      row[bucket]++;
     }
     if (l.status === "open") day.running = row.running = true;
   }

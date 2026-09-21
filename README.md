@@ -1,15 +1,15 @@
 # Time Tracker
 
 A self-hosted time tracker for small teams: phone-first, installable, works
-offline, and pushes approved time into your accounting system.
+offline, and pushes submitted time into your accounting system.
 
 Built to replace a per-seat SaaS time tracker. It is deliberately **generic** —
 no organisation's name, hostname, colour or job list appears anywhere in this
 repository. All of that is deployment configuration or an admin setting.
 
 > **Status: feature-complete, not yet in production.** Passkey sign-in, people
-> management, time tracking (online or off), approval, rates, reports and sending
-> approved time to QuickBooks Desktop (through the
+> management, time tracking (online or off), submitting and optional approval,
+> rates, reports and sending time to QuickBooks Desktop (through the
 > [QB Bridge](https://github.com/cinderblock/quickbooks-desktop-sdk-bridge) or the
 > QuickBooks Web Connector) work end to end against a pretend QuickBooks; the
 > first real deployment is under way. See
@@ -38,12 +38,27 @@ repository. All of that is deployment configuration or an admin setting.
     become hours before the next day's can start.
   - *Manual entry*, either way — a start and end time (overnight shifts included)
     or just a duration, on any past day.
+- **People submit their own time.** A day is a draft until the person who worked
+  it says it's done. Submitting freezes each entry's rate, locks it, and hands it
+  to the accounting system. It's theirs to take back — fix the day and submit it
+  again, and a record already in QuickBooks is amended rather than duplicated.
+  Earlier days nobody submitted are listed on the day screen, and can be
+  submitted together. Nothing submits itself: time moves because someone says so.
+
+- **Approval is optional, and off by default.** Organisations that want a second
+  pair of eyes turn it on in Settings; submitted time then waits on the
+  Timesheets page until an admin approves it, and from that point only an admin
+  can reopen it. With it off, nobody has to approve anything for people to be
+  paid — admins can still submit for someone who hasn't got to it, and reopen a
+  week that needs fixing.
+
 - **No "are you sure?".** Discarding an accidental timer or deleting an entry is
   one tap, with an Undo. Nothing is ever really deleted.
 - **Jobs belong to customers.** Time is booked to a job, never to a customer
   itself; the picker lists the jobs used most recently first, then each
-  customer's jobs. Jobs — and customers — can be created on the spot while
-  tracking; admins open, close and rename them and choose which need notes.
+  customer's jobs, with a job's sub-jobs nested under it rather than repeating
+  its name. Jobs — and customers — can be created on the spot while tracking;
+  admins open, close and rename them and choose which need notes.
 - **Location**, if a person turns it on for their device, is recorded with timer
   starts, stops and notes — samples at those moments, not a trail.
 
@@ -55,11 +70,12 @@ repository. All of that is deployment configuration or an admin setting.
   first and keeps them for the next sign-in on that device.
 
 - **Admin views.**
-  - *Timesheets* — everyone's week as a people × days grid. Approve a person's
-    week in one tap (or everyone's), reopen it to allow changes. Approved time is
-    locked for everyone, admins included, and keeps the rate it was approved at.
+  - *Timesheets* — everyone's week as a people × days grid. Submit for someone who
+    hasn't got to it (or for everyone shown), approve where approval is required,
+    and reopen a week to allow changes. Signed-off time is locked for everyone,
+    admins included, and keeps the rate frozen when it was submitted.
   - *Calendar* — the week as blocks of time per person, pauses as gaps.
-  - *Reports* — hours, approved hours and cost over a date range, grouped by
+  - *Reports* — hours, signed-off hours and cost over a date range, grouped by
     person, customer, job, category or day, with a CSV download of every entry.
   - *Someone's day* — admins open any person's day on the same tracking screen to
     fill in or fix it; the change is recorded as made by the admin.
@@ -69,10 +85,10 @@ repository. All of that is deployment configuration or an admin setting.
   filtering and rates. Weeks start on whichever day your payroll week does.
 - **Settings.** Admins name the app and pick its colour (the header, the browser tab,
   passkey prompts and the home-screen icon all follow), and choose the first day of
-  the week.
+  the week, and whether submitted time waits for an admin to approve it.
 
-- **Sends approved time to QuickBooks Desktop.** Jobs, people and service and
-  payroll items come from QuickBooks; each approved entry becomes one QuickBooks
+- **Sends signed-off time to QuickBooks Desktop.** Jobs, people and service and
+  payroll items come from QuickBooks; each signed-off entry becomes one QuickBooks
   time record (date, person, job, duration, note, service item, payroll item,
   billable). Jobs made up while tracking are linked to the real job later — their
   time follows — or created in QuickBooks. QuickBooks being closed is normal:
@@ -160,7 +176,7 @@ annotated list. The ones worth calling out:
 | `TZ` | The wall-clock zone that decides which day a piece of work belongs to. QuickBooks stores a bare date with no zone, so a wrong value books evening work onto the following day. |
 | `ACCOUNTING_BACKEND` | `none` (default), `qb-bridge`, or `qb-webconnector`. A QuickBooks backend without its credentials stops the app at start rather than quietly sending nothing. |
 | `QB_BRIDGE_URL`, `QB_BRIDGE_API_KEY` | For `qb-bridge`. Use the bridge machine's IPv4 address: bridges that only accept private addresses refuse a hostname that resolves to public IPv6. |
-| `ACCOUNTING_SYNC_EVERY_SECONDS` | For `qb-bridge`: how often approved time is sent (default 60). `0` sends only when an admin presses Send now. |
+| `ACCOUNTING_SYNC_EVERY_SECONDS` | For `qb-bridge`: how often signed-off time is sent (default 60). `0` sends only when an admin presses Send now. |
 | `QBWC_USERNAME`, `QBWC_PASSWORD` | For `qb-webconnector`: what the Web Connector signs in with. The password is typed into the Web Connector once. |
 | `APP_NAME`, `APP_SHORT_NAME`, `APP_THEME_COLOR` | The name and colour until an admin sets them under Settings (they drive the UI theme and the generated PWA manifest). |
 | `APP_CURRENCY` | ISO 4217 code rates and costs are shown in (default `USD`). Display only. |
@@ -169,7 +185,7 @@ annotated list. The ones worth calling out:
 
 Everything accounting-shaped sits behind one interface in
 [`src/accounting/types.ts`](src/accounting/types.ts). The app core knows about
-jobs, people, service items and pushing approved time — never about qbXML.
+jobs, people, service items and pushing signed-off time — never about qbXML.
 
 | Kind | Status | Notes |
 | --- | --- | --- |
@@ -234,7 +250,7 @@ time.
 app/             React Router routes, UI, server-side loaders/actions
 app/tracker/     The time-tracking screen (also used by admins for someone else's day)
 app/offline/     Outbox, sync engine, device copies, offline loaders
-src/             Server-side modules (SQLite, auth flows, time, approval, reports, sync)
+src/             Server-side modules (SQLite, auth flows, time, sign-off, reports, sync)
 src/accounting/  Accounting backends and the qbXML encoder
 src/testing/     Test helpers: the software passkey authenticator, a pretend QuickBooks and bridge
 src/cli/         Operator commands (`bun run admin-link`)

@@ -9,6 +9,7 @@ import { FlightProvider } from "./flight.tsx";
 import { type DayModel, liveSeconds } from "./model.ts";
 import { NotesPanel } from "./NotesPanel.tsx";
 import classes from "./screen.module.css";
+import { SubmitDay } from "./SubmitDay.tsx";
 import { TimerPanel } from "./TimerCard.tsx";
 
 /**
@@ -49,7 +50,12 @@ export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor
               </Stack>
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 6 }}>
-              <EntryList />
+              <Stack gap="lg">
+                <EntryList />
+                {/* Under the record, because submitting is what you do once
+                    the record is right. */}
+                <SubmitDay />
+              </Stack>
             </Grid.Col>
           </Grid>
         </Stack>

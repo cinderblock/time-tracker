@@ -40,6 +40,12 @@ export interface EntryView {
   segmentCount: number;
   /** For an open timer: whether stopping it needs a note. */
   noteRequired: boolean;
+  /**
+   * An admin has approved this. Their sign-off isn't the person's to undo, so
+   * taking the day back leaves it alone. Always false where the organisation
+   * doesn't require approval.
+   */
+  adminApproved: boolean;
 }
 
 export interface NoteView {
@@ -78,6 +84,17 @@ export interface DayModel {
    */
   notesToRollUp: { date: string; count: number } | null;
   requireNoteOnStop: boolean;
+  /**
+   * Whether submitted time waits for an admin before it reaches the accounting
+   * system. Only changes what the screen says about submitting, not who may do
+   * it.
+   */
+  requireApproval: boolean;
+  /**
+   * Earlier days with time this person hasn't submitted, most recent first.
+   * Nothing submits itself, so this is what stops a day being forgotten.
+   */
+  unsubmittedDays: string[];
   /** The person's open timer, whichever day it belongs to. */
   open: EntryView | null;
   entries: EntryView[];

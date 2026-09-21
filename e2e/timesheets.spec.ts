@@ -9,8 +9,9 @@ import { formatWorkDate, today, zonedTimeToInstant } from "../src/time.ts";
 import { uuidv7 } from "../src/uuid.ts";
 
 /**
- * The admin side: rates and categories, the timesheet grid and approval, an
- * admin fixing someone's day, the calendar, reports and the CSV export.
+ * The admin side: rates and categories, the timesheet grid, submitting and
+ * optional approval, an admin fixing someone's day, the calendar, reports and
+ * the CSV export.
  *
  * Runs after auth.spec.ts, so `admin-link` hands out admin invites.
  * Set E2E_SCREENSHOTS=<dir> to save screenshots of the admin pages.
@@ -168,13 +169,22 @@ test("categories: add one and put someone in it", async () => {
   await expect(toast(page, "Eddie Employee is now in Field crew.")).toBeVisible();
 });
 
-test("timesheets: the week at a glance, filtered, and approved in one tap", async () => {
+test("a day with a timer still running can't be submitted", async () => {
+  const { page } = employee;
+  await page.reload();
+  await expect(page.getByText("Stop the timer first — a running timer can't be submitted.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Submit this day" })).toBeDisabled();
+});
+
+test("timesheets: the week at a glance, filtered, and submitted for someone in one tap", async () => {
   const { page } = admin;
   await page.getByRole("link", { name: "Timesheets" }).first().click();
   const eddie = page.getByRole("group", { name: "Eddie Employee" });
   await expect(eddie).toBeVisible();
   await expect(eddie.getByText("running")).toBeVisible();
-  await expect(eddie.getByRole("link", { name: new RegExp(`^Eddie Employee, ${formatWorkDate(TODAY)}: 3h 3\\dm, 2 to approve$`) })).toBeVisible();
+  await expect(
+    eddie.getByRole("link", { name: new RegExp(`^Eddie Employee, ${formatWorkDate(TODAY)}: 3h 3\\dm, 2 not submitted$`) }),
+  ).toBeVisible();
   await expect(page.getByRole("group", { name: "Paula Payroll" })).toBeVisible();
 
   await choose(page, "Category", "Field crew");
@@ -182,22 +192,50 @@ test("timesheets: the week at a glance, filtered, and approved in one tap", asyn
   await expect(page.getByRole("group", { name: "Paula Payroll" })).toHaveCount(0);
   await shot(page, "timesheets");
 
+  // Nobody has to approve anything: an admin submitting for someone is the
+  // safety net for a person who hasn't got to it.
+  await eddie.getByRole("button", { name: "Submit Eddie Employee's week" }).click();
+  await expect(
+    toast(page, "Eddie Employee: Submitted 2 entries. A running timer was left out; submit again once it stops."),
+  ).toBeVisible();
+  await expect(eddie.getByText("submitted", { exact: true })).toBeVisible();
+  await expect(eddie.getByRole("button", { name: "Reopen Eddie Employee's week" })).toBeVisible();
+  await expect(eddie.getByRole("link", { name: /, submitted$/ })).toHaveCount(0); // a running timer isn't submitted
+});
+
+test("the employee sees submitted time locked, and takes the day back themselves", async () => {
+  const { page } = employee;
+  await page.reload();
+  const framing = page.locator(".mantine-Card-root", { hasText: "Framing" });
+  await expect(framing.getByText("submitted", { exact: true })).toBeVisible();
+  await expect(framing.getByRole("button")).toHaveCount(0);
+
+  // Their own submission is theirs to withdraw — no admin involved.
+  await page.getByRole("button", { name: "Take it back" }).click();
+  await expect(framing.getByRole("button", { name: "Delete" })).toBeVisible();
+  await expect(page.getByText("2 entries not submitted")).toBeVisible();
+});
+
+test("approvals can be switched on, and then time waits for an admin", async () => {
+  const { page } = admin;
+  await page.goto("/admin/settings");
+  await page.getByLabel("An admin has to approve submitted time").click();
+  await expect(toast(page, /waits for an admin to approve it/)).toBeVisible();
+
+  await page.goto("/admin/timesheets");
+  const eddie = page.getByRole("group", { name: "Eddie Employee" });
   await eddie.getByRole("button", { name: "Approve Eddie Employee's week" }).click();
   await expect(
     toast(page, "Eddie Employee: Approved 2 entries. A running timer was left out; approve again once it stops."),
   ).toBeVisible();
   await expect(eddie.getByText("approved", { exact: true })).toBeVisible();
-  await expect(eddie.getByRole("button", { name: "Reopen Eddie Employee's week" })).toBeVisible();
-  await expect(eddie.getByRole("link", { name: /, approved$/ })).toHaveCount(0); // a running timer isn't approved
-});
 
-test("the employee sees approved time locked", async () => {
-  const { page } = employee;
-  await page.reload();
-  const framing = page.locator(".mantine-Card-root", { hasText: "Framing" });
+  const { page: theirs } = employee;
+  await theirs.reload();
+  const framing = theirs.locator(".mantine-Card-root", { hasText: "Framing" });
   await expect(framing.getByText("approved", { exact: true })).toBeVisible();
   await expect(framing.getByText("Locked — an admin can reopen it for changes.")).toBeVisible();
-  await expect(framing.getByRole("button")).toHaveCount(0);
+  await expect(theirs.getByRole("button", { name: "Take it back" })).toHaveCount(0);
 });
 
 test("the calendar shows each block of time", async () => {

@@ -436,6 +436,25 @@ const migrations: Migration[] = [
           CHECK (kind IN ('note','start'));
     `,
   },
+  {
+    name: "004_submission",
+    sql: `
+        -- Submitting is the person saying their time is done: it freezes the
+        -- rate and locks the entry, and unless approval is required, it is
+        -- what makes the entry eligible to send.
+        ALTER TABLE time_entries ADD COLUMN submitted_at INTEGER;
+        -- Normally the person themselves; an admin when they submit on
+        -- someone's behalf.
+        ALTER TABLE time_entries ADD COLUMN submitted_by INTEGER REFERENCES users(id);
+
+        -- Time that predates this column was approved by an admin under the
+        -- old rules, where approval was the only gate. Record that it was also
+        -- submitted, so it reads the same way as time submitted from now on.
+        UPDATE time_entries
+           SET submitted_at = approved_at, submitted_by = approved_by
+         WHERE approved_at IS NOT NULL;
+    `,
+  },
 ];
 
 /**

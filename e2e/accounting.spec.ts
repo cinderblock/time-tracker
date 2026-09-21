@@ -5,7 +5,7 @@ import { type BrowserContext, type Locator, type Page, expect, test } from "@pla
 import { bridgeEnv, fakeBridgeUrl } from "../playwright.config.ts";
 
 /**
- * Sending approved time to QuickBooks through the (pretend) QB Bridge, from
+ * Sending submitted time to QuickBooks through the (pretend) QB Bridge, from
  * the admin's side: fetching lists, linking people and jobs, items, sending,
  * the bridge being down, a refusal, creating a job there, and reopening.
  */
@@ -63,10 +63,11 @@ async function addTime(job: string, hours: string, minutes: string) {
   await expect(dialog).toBeHidden();
 }
 
-async function approveWeek() {
+/** Approval is off by default, so submitting is what hands time to accounting. */
+async function signOffWeek() {
   await page.goto("/admin/timesheets");
-  await page.getByRole("group", { name: "Ivy Integrator" }).getByRole("button", { name: "Approve Ivy Integrator's week" }).click();
-  await expect(toast(/^Ivy Integrator: Approved/)).toBeVisible();
+  await page.getByRole("group", { name: "Ivy Integrator" }).getByRole("button", { name: "Submit Ivy Integrator's week" }).click();
+  await expect(toast(/^Ivy Integrator: Submitted/)).toBeVisible();
 }
 
 test.afterAll(async () => {
@@ -97,7 +98,7 @@ test("set up: the first admin, and QuickBooks' lists", async ({ browser }) => {
   await page.getByRole("link", { name: "Accounting" }).click();
   await expect(page.getByText("QuickBooks, through the QB Bridge")).toBeVisible();
   await expect(page.getByText("Connected to QuickBooks (Pretend Company).")).toBeVisible();
-  await expect(page.getByText("Approved time is sent when you press Send now.")).toBeVisible();
+  await expect(page.getByText("Signed-off time is sent when you press Send now.")).toBeVisible();
   await expect(page.getByText("The lists haven't been fetched yet.")).toBeVisible();
   await expect(page.getByText("Fetch the lists from QuickBooks first.")).toBeVisible();
 
@@ -114,7 +115,7 @@ test("set up: the first admin, and QuickBooks' lists", async ({ browser }) => {
   await expect(old.getByText("inactive in QuickBooks")).toBeVisible();
 });
 
-test("link a person, pick default items, and send approved time", async () => {
+test("link a person, pick default items, and send submitted time", async () => {
   await page.goto("/admin/accounting");
   await choose(page.getByRole("combobox", { name: "QuickBooks name for Ivy Integrator" }), "Alice A");
   await expect(toast("Link saved.")).toBeVisible();
@@ -134,12 +135,12 @@ test("link a person, pick default items, and send approved time", async () => {
   await expect(page.getByRole("group", { name: "Acme:Pop-up job" }).getByText("not in QuickBooks yet")).toBeVisible();
   await addTime("Phase 2", "2", "0");
   await addTime("Pop-up job", "0", "45");
-  await approveWeek();
+  await signOffWeek();
 
   await page.goto("/admin/accounting");
   await expect(stat("Ready to send")).toContainText("1");
   await expect(stat("Waiting on a fix")).toContainText("1");
-  const waiting = page.getByRole("alert").filter({ hasText: "Approved time that can't be sent yet" });
+  const waiting = page.getByRole("alert").filter({ hasText: "Signed-off time that can't be sent yet" });
   await expect(waiting).toContainText("The job “Acme:Pop-up job” was made here and isn't in the accounting system yet. (1 entry, 45m)");
   await expect(waiting.getByRole("link", { name: "Link jobs" })).toBeVisible();
 
@@ -196,7 +197,7 @@ test("a job made here can be created in QuickBooks instead", async () => {
 
 test("while QuickBooks is closed nothing is lost, and it goes once it's back", async () => {
   await addTime("Phase 2", "0", "30");
-  await approveWeek();
+  await signOffWeek();
   await bridgeControl("down", { down: true });
   await page.goto("/admin/accounting");
   await expect(page.getByText("not connected now")).toBeVisible();
@@ -211,7 +212,7 @@ test("while QuickBooks is closed nothing is lost, and it goes once it's back", a
 
 test("a refusal is shown, and can be retried", async () => {
   await addTime("Phase 2", "0", "15");
-  await approveWeek();
+  await signOffWeek();
   await page.goto("/admin/accounting");
   // After the page's own health check, so it's the time that's refused.
   await bridgeControl("fail", { code: 3140, message: "There is an invalid reference to QuickBooks Customer." });
@@ -229,20 +230,20 @@ test("a refusal is shown, and can be retried", async () => {
   await expect(page.getByText(/Sent time · just now — 3140: There is an invalid reference/)).toBeVisible();
 });
 
-test("reopened time is flagged until it's approved again, then amended in place", async () => {
+test("time taken back after it was sent is flagged, then amended in place", async () => {
   await page.goto("/admin/timesheets");
   await page.getByRole("group", { name: "Ivy Integrator" }).getByRole("button", { name: "Reopen Ivy Integrator's week" }).click();
   await expect(toast("Ivy Integrator: Reopened 4 entries.")).toBeVisible();
   await page.goto("/admin/accounting");
-  await expect(page.getByRole("alert").filter({ hasText: "Reopened after being sent" })).toContainText(
-    "QuickBooks still has the old version of these entries until they're approved again",
+  await expect(page.getByRole("alert").filter({ hasText: "Taken back after being sent" })).toContainText(
+    "QuickBooks still has the old version of these entries until they're signed off again",
   );
 
-  await approveWeek();
+  await signOffWeek();
   await page.goto("/admin/accounting");
   await sendNow("Sent 4 requests.");
   expect((await bridge()).records).toHaveLength(4); // amended, not added
-  await expect(page.getByRole("alert").filter({ hasText: "Reopened after being sent" })).toHaveCount(0);
+  await expect(page.getByRole("alert").filter({ hasText: "Taken back after being sent" })).toHaveCount(0);
 });
 
 test("screenshots of the Accounting page", async ({ browser }) => {

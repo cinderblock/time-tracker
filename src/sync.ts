@@ -1,10 +1,16 @@
 import type { Performed, SyncFailure, SyncRequest, TimeRecord } from "./accounting/types.ts";
 import { audit } from "./audit.ts";
 import { db } from "./db.server.ts";
-import type { EntryStatus } from "./entry-status.ts";
+import { type EntryStatus, sendableStatuses } from "./entry-status.ts";
 import { QB_NAME_MAX_LENGTH } from "./accounting/qbxml.ts";
 import { applyPull, categoryPayrollItems } from "./remote-lists.ts";
-import { defaultPayrollItemId, defaultServiceItemId, syncState, updateSyncState } from "./settings.ts";
+import {
+  defaultPayrollItemId,
+  defaultServiceItemId,
+  requireApproval,
+  syncState,
+  updateSyncState,
+} from "./settings.ts";
 
 /**
  * Sending time to the accounting system.
@@ -19,11 +25,14 @@ import { defaultPayrollItemId, defaultServiceItemId, syncState, updateSyncState 
  *   job.add      create a provisional job there, when an admin asked
  *   entry.delete remove the record of time deleted here after it was sent
  *   entry.find   look for a record whose send had an unknown outcome
- *   entry.add    send approved time
- *   entry.mod    send approved time that was sent before and reopened
+ *   entry.add    send signed-off time
+ *   entry.mod    send signed-off time that was sent before and taken back
+ *
+ * Time is signed off by its owner submitting it, and — where the organisation
+ * requires it — by an admin approving that (`sendableSql`).
  *
  * Failures back off (a minute, doubling, up to six hours) and are shown to
- * admins; approved time that can't be sent yet (person not linked, job
+ * admins; signed-off time that can't be sent yet (person not linked, job
  * provisional) isn't work at all — `syncOverview` lists it with the reason.
  */
 
@@ -78,6 +87,18 @@ interface EntryRow {
 
 const ENTRY_COLUMNS =
   "id, user_id, job_id, work_date, duration_seconds, note, billable, status, service_item_id, remote_txn_id, remote_edit_sequence, remote_deleted_at, sync_uncertain, sync_next_at, deleted_at";
+
+/**
+ * `status IN (…)` for time the sync may send as the organisation is set up
+ * right now: submitted time, unless an admin's approval is required as well.
+ * Interpolated rather than bound because the values come from a closed union
+ * in entry-status.ts, never from anything a person typed.
+ */
+function sendableSql(): string {
+  return `status IN (${sendableStatuses(requireApproval())
+    .map((s) => `'${s}'`)
+    .join(",")})`;
+}
 
 interface Lookups {
   people: Map<number, { name: string; remotePersonId: string | null; payrollItemId: string | null; categoryId: number | null }>;
@@ -135,7 +156,7 @@ function lookups(): Lookups {
   };
 }
 
-/** Why approved time can't be sent yet, and which kind of fix it needs. */
+/** Why signed-off time can't be sent yet, and which kind of fix it needs. */
 export interface NotReady {
   reason: string;
   fix: "person" | "job" | "item" | "entry";
@@ -271,7 +292,7 @@ export function listWork(now: number = Date.now()): Work[] {
       `SELECT ${ENTRY_COLUMNS} FROM time_entries
         WHERE (deleted_at IS NOT NULL
                 AND ((remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL) OR sync_uncertain IS NOT NULL))
-           OR (deleted_at IS NULL AND status IN ('approved','sync_failed'))
+           OR (deleted_at IS NULL AND ${sendableSql()})
         ORDER BY work_date, id`,
     )
     .all();
@@ -502,13 +523,13 @@ export function recordContact(ok: boolean, detail: string, now: number = Date.no
 // ---- overview -----------------------------------------------------------------------
 
 export interface SyncOverview {
-  /** Approved and ready: sent at the next contact. */
+  /** Signed off and ready: sent at the next contact. */
   ready: number;
-  /** Approved, but something must be fixed first. */
+  /** Signed off, but something must be fixed first. */
   blocked: { entryId: string; userId: number; person: string; workDate: string; minutes: number; reason: string; fix: NotReady["fix"] }[];
   /** Tried and refused; retried automatically. */
   failed: { entryId: string; person: string; workDate: string; minutes: number; error: string; retryAt: number | null }[];
-  /** Sent, then reopened: the accounting system has the old values until approved again. */
+  /** Sent, then taken back: the accounting system has the old values until it's signed off again. */
   reopened: { entryId: string; person: string; workDate: string }[];
   sent: number;
   jobsToCreate: { jobId: string; name: string; error: string | null }[];
@@ -520,7 +541,7 @@ export function syncOverview(now: number = Date.now()): SyncOverview {
   const rows = db()
     .query<EntryRow & { sync_error: string | null }, []>(
       `SELECT ${ENTRY_COLUMNS}, sync_error FROM time_entries
-        WHERE deleted_at IS NULL AND (status IN ('approved','sync_failed') OR (status IN ('draft','open') AND remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL))
+        WHERE deleted_at IS NULL AND (${sendableSql()} OR (status IN ('draft','open') AND remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL))
         ORDER BY work_date, id`,
     )
     .all();

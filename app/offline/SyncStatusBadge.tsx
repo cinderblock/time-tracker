@@ -69,6 +69,10 @@ function describe(op: Op): string {
       return "Deleting a note";
     case "rollup.commit":
       return "Turning notes into time";
+    case "day.submit":
+      return "Submitting a day";
+    case "day.unsubmit":
+      return "Taking a day back";
     case "job.create":
       return "Creating a job";
   }

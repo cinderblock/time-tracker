@@ -15,8 +15,8 @@ import { workDateOf } from "./time.ts";
  *          segment, paused when it doesn't. At most one per person (a
  *          partial unique index enforces it).
  *   draft  stopped, or entered by hand; editable.
- *   approved and later states are locked; approvals.ts moves entries
- *   between draft and approved.
+ *   submitted and later states are locked; approvals.ts moves entries out of
+ *   draft and back again.
  *
  * Every function here runs inside the op transaction and throws OpError for
  * anything that doesn't make sense against the current state. Times named
@@ -38,7 +38,7 @@ export interface Entry {
   note: string | null;
   source: "timer" | "manual" | "note_rollup";
   status: EntryStatus;
-  /** Frozen at approval; null before. */
+  /** Frozen when the time is submitted; null before. */
   rateSnapshot: number | null;
   approvedAt: number | null;
   approvedBy: number | null;
@@ -144,6 +144,23 @@ export function totalsByDate(userId: number, from: string, to: string): Map<stri
     )
     .all(userId, from, to);
   return new Map(rows.map((r) => [r.work_date, r.seconds]));
+}
+
+/**
+ * Earlier dates where this person has stopped time they haven't submitted,
+ * most recent first. The day screen uses it to say what's still waiting on
+ * them — nothing submits itself, so the only thing that makes a submit step
+ * work is being reminded it's there.
+ */
+export function unsubmittedDatesBefore(userId: number, before: string, limit = 14): string[] {
+  return db()
+    .query<{ work_date: string }, [number, string, number]>(
+      `SELECT DISTINCT work_date FROM time_entries
+        WHERE user_id = ? AND work_date < ? AND status = 'draft' AND deleted_at IS NULL
+        ORDER BY work_date DESC LIMIT ?`,
+    )
+    .all(userId, before, limit)
+    .map((r) => r.work_date);
 }
 
 /** When an entry began, for sorting: its first segment, else when it was created. */
@@ -416,7 +433,8 @@ export function updateEntry(args: {
   now: number;
 }): Entry {
   const entry = ownLiveEntry(args.userId, args.entryId);
-  if (!isEditable(entry.status)) throw new OpError("conflict", lockedReason(entry.status));
+  if (!isEditable(entry.status))
+    throw new OpError("conflict", lockedReason(entry.status, entry.approvedBy == null));
   const before = snapshot(entry);
   const hasTimes = entry.segments.length > 0;
 
@@ -499,7 +517,8 @@ export function updateEntry(args: {
  */
 export function deleteEntry(args: { userId: number; actorUserId: number; entryId: string; at: number; now: number }): void {
   const entry = ownLiveEntry(args.userId, args.entryId);
-  if (!isEditable(entry.status)) throw new OpError("conflict", lockedReason(entry.status));
+  if (!isEditable(entry.status))
+    throw new OpError("conflict", lockedReason(entry.status, entry.approvedBy == null));
   db().query("UPDATE time_entries SET deleted_at = ?, updated_at = ? WHERE id = ?").run(args.at, args.now, entry.id);
   audit({
     actorUserId: args.actorUserId,

@@ -1,3 +1,4 @@
+import { reopenEntries, submitEntries } from "./approvals.ts";
 import { db } from "./db.server.ts";
 import {
   createManualEntry,
@@ -73,6 +74,21 @@ const handlers: { [T in OpType]: Handler<T> } = {
   "note.restore": (c, p) => void restoreNote({ userId: c.userId, now: c.now, noteId: p.noteId }),
 
   "rollup.commit": (c, p) => ({ entryIds: commitRollup({ ...c, ...p }) }),
+
+  "day.submit": (c, p) =>
+    submitEntries({ userId: c.userId, actorUserId: c.actorUserId, from: p.workDate, to: p.workDate, now: c.now }),
+  // Taking back one's own day leaves anything an admin approved alone. An
+  // admin acting for someone is doing the admin's reopen, and takes back all
+  // of it.
+  "day.unsubmit": (c, p) =>
+    reopenEntries({
+      userId: c.userId,
+      actorUserId: c.actorUserId,
+      from: p.workDate,
+      to: p.workDate,
+      now: c.now,
+      ownSubmissionsOnly: c.userId === c.actorUserId,
+    }),
 
   "job.create": (c, p) => {
     const job = createJob({ id: p.jobId, name: p.name, parentId: p.parentId, actorUserId: c.actorUserId, now: c.now });

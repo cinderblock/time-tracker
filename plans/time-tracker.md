@@ -364,12 +364,16 @@ Passkey-only. Details below are the Phase 1 design.
 
 ### Admin (Phase 4, as built)
 
-- **Approval is the gate to sync.** Entries are `draft` until an admin approves
-  them (per person per week, or per entry); approval freezes `rate_snapshot` and
-  locks the entry — for admins too, until they explicitly *reopen* it. Running
-  timers can't be approved. Phase 5 pushes only approved entries. There is no
-  employee "submit" step for now: QuickBooks Time's own approval is admin-side,
-  and a submit step can be added later without changing the model.
+- **Submitting is the gate to sync; approval is an option on top of it.**
+  Entries are `draft` until the person who worked them submits the day;
+  submitting freezes `rate_snapshot` and locks the entry. With the
+  `require_approval` setting off — the default — submitted entries are what the
+  sync sends. With it on, they wait for an admin to approve them. Running timers
+  are never signed off. A person may take back their own submission; once an
+  admin has approved it, only an admin can reopen it. See
+  [`plans/submit-and-optional-approvals.md`](submit-and-optional-approvals.md)
+  for why it is built this way. (Until 2026-09-21 approval was the only gate and
+  the `submitted` status was unused.)
 - **Weeks start on a configurable weekday** (`week_starts_on` setting, default
   Sunday) because payroll weeks differ; the day screen's week strip and every
   admin week use it.
@@ -392,12 +396,12 @@ As built:
 
 | Page | Route | What it does |
 | --- | --- | --- |
-| Timesheets | `/admin/timesheets?week=&category=` | People × days (`h:mm` per day, shaded when approved, outlined while a timer runs); approve or reopen a person's week; approve everyone shown. Rows become cards on phones. |
+| Timesheets | `/admin/timesheets?week=&category=` | People × days (`h:mm` per day, shaded when the day is signed off, outlined while a timer runs); submit for a person who hasn't (or approve them, where approval is required), reopen a week, and the same for everyone shown. Rows become cards on phones. |
 | Calendar | `/admin/calendar?week=&person=&category=` | One block per segment (pauses are gaps), coloured per person, overlaps side by side (`app/components/calendar-layout.ts`, tested); typed-in durations listed above the grid; one day at a time on phones. Blocks link to that person's day. |
-| Reports | `/admin/reports?range=&from=&to=&by=&person=&category=&job=` | Presets (this/last week, this/last month, picked dates, capped at 400 days); group by person, customer (top of the job tree), job, category or day; hours, approved hours, cost, unrated time; inline share bars. |
+| Reports | `/admin/reports?range=&from=&to=&by=&person=&category=&job=` | Presets (this/last week, this/last month, picked dates, capped at 400 days); group by person, customer (top of the job tree), job, category or day; hours, signed-off hours, cost, unrated time; inline share bars. |
 | CSV | `/admin/reports.csv?…same…` | One line per entry; formula-looking cells are defused with a leading apostrophe; UTF-8 BOM for Excel. |
 | Rates & categories | `/admin/rates` | Set/remove rates (scope, target, date), categories (add, rename, delete with a confirmation that spells out the consequences). |
-| Settings | `/admin/settings` | The app's name, short name and colour (with a preview; blank goes back to the environment's defaults), and the week-start day. |
+| Settings | `/admin/settings` | The app's name, short name and colour (with a preview; blank goes back to the environment's defaults), the week-start day, and whether an admin has to approve submitted time. |
 | Someone's day | `/admin/people/:id/time/:date?` | The tracking screen in acting-for mode (below). |
 
 - **Acting-for mode** (`TrackerProvider actingFor`): ops go to
@@ -462,10 +466,10 @@ As built:
 - **Not ready yet** is a state with a reason, not an error: person not linked,
   job provisional, job inactive in QuickBooks. The Accounting page lists them
   with the fix.
-- **Reopening sent time** is allowed: the entry goes back to draft keeping its
-  remote id; re-approving sends a Mod, deleting sends a delete. Until then
-  QuickBooks still has the old values, and the Accounting page says so.
-- **Standalone (`none`)**: approved is final; nothing is sent.
+- **Taking back sent time** is allowed: the entry goes back to draft keeping its
+  remote id; signing it off again sends a Mod, deleting sends a delete. Until
+  then QuickBooks still has the old values, and the Accounting page says so.
+- **Standalone (`none`)**: signed off is final; nothing is sent.
 - Every attempt is recorded in `sync_attempts` with the full request and
   response. QuickBooks being unreachable is normal and never blocks tracking.
 

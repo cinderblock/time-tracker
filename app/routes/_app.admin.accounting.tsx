@@ -32,7 +32,7 @@ import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/_app.admin.accounting";
 
 /**
- * Where approved time goes: the accounting connection's state, what's
+ * Where signed-off time goes: the accounting connection's state, what's
  * waiting and why, and the links between this app's people and jobs and the
  * accounting system's.
  */
@@ -208,7 +208,7 @@ export default function Accounting({ loaderData }: Route.ComponentProps) {
             </Group>
             <Text size="sm">{loaderData.health.detail}</Text>
             <Text size="sm" c="dimmed">
-              To send approved time to QuickBooks Desktop, set <code>ACCOUNTING_BACKEND</code> to <code>qb-bridge</code>{" "}
+              To send signed-off time to QuickBooks Desktop, set <code>ACCOUNTING_BACKEND</code> to <code>qb-bridge</code>{" "}
               (with <code>QB_BRIDGE_URL</code> and <code>QB_BRIDGE_API_KEY</code>) or <code>qb-webconnector</code> (with{" "}
               <code>QBWC_PASSWORD</code>) in the server's configuration.
             </Text>
@@ -251,8 +251,8 @@ function ConnectionCard({ data }: { data: Data }) {
         {data.delivery === "push" && (
           <Text size="sm" c="dimmed">
             {data.syncEverySeconds
-              ? `Approved time is sent ${everyLabel(data.syncEverySeconds)} while QuickBooks is open on its computer. Nothing is lost while it isn't.`
-              : "Approved time is sent when you press Send now. Nothing is lost in between."}
+              ? `Signed-off time is sent ${everyLabel(data.syncEverySeconds)} while QuickBooks is open on its computer. Nothing is lost while it isn't.`
+              : "Signed-off time is sent when you press Send now. Nothing is lost in between."}
           </Text>
         )}
         {data.delivery === "poll" && <WebConnectorSetup />}
@@ -338,7 +338,7 @@ function Queue({ data }: { data: Data }) {
       </SimpleGrid>
 
       {blockedByReason.size > 0 && (
-        <Alert color="yellow" title="Approved time that can't be sent yet">
+        <Alert color="yellow" title="Signed-off time that can't be sent yet">
           <Stack gap="xs">
             {[...blockedByReason].map(([reason, g]) => (
               <Group key={reason} justify="space-between" wrap="nowrap" align="start">
@@ -380,10 +380,10 @@ function Queue({ data }: { data: Data }) {
       )}
 
       {overview.reopened.length > 0 && (
-        <Alert color="blue" title="Reopened after being sent">
+        <Alert color="blue" title="Taken back after being sent">
           <Text size="sm">
             QuickBooks still has the old version of {overview.reopened.length === 1 ? "this entry" : "these entries"} until{" "}
-            {overview.reopened.length === 1 ? "it's" : "they're"} approved again:{" "}
+            {overview.reopened.length === 1 ? "it's" : "they're"} signed off again:{" "}
             {overview.reopened.map((r) => `${r.person} (${formatWorkDate(r.workDate)})`).join(", ")}.
           </Text>
         </Alert>

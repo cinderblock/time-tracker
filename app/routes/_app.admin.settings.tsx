@@ -1,10 +1,10 @@
-import { Badge, Button, Card, ColorInput, Group, Select, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Badge, Button, Card, ColorInput, Group, Select, SimpleGrid, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { useFetcher } from "react-router";
 
 import { branding, brandingDefaults, setBranding } from "../../src/branding.ts";
 import { BRANDING_LIMITS } from "../../src/limits.ts";
-import { setWeekStartsOn, weekStartsOn } from "../../src/settings.ts";
+import { requireApproval, setRequireApproval, setWeekStartsOn, weekStartsOn } from "../../src/settings.ts";
 import { UserInputError } from "../../src/users.ts";
 import { handleForm, stringField } from "../actions.server.ts";
 import { requireAdmin } from "../auth.server.ts";
@@ -13,8 +13,8 @@ import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/_app.admin.settings";
 
 /**
- * Organisation settings: what the app is called and its colour, and the day
- * weeks start on.
+ * Organisation settings: what the app is called and its colour, the day weeks
+ * start on, and whether submitted time waits for an admin.
  */
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -24,7 +24,12 @@ const SWATCHES = ["#1c7ed6", "#0ca678", "#37b24d", "#f59f00", "#e8590c", "#e0313
 
 export function loader({ request, context }: Route.LoaderArgs) {
   requireAdmin(context, request);
-  return { branding: branding(), defaults: brandingDefaults(), weekStartsOn: weekStartsOn() };
+  return {
+    branding: branding(),
+    defaults: brandingDefaults(),
+    weekStartsOn: weekStartsOn(),
+    requireApproval: requireApproval(),
+  };
 }
 
 export function meta({ matches }: Route.MetaArgs) {
@@ -40,6 +45,16 @@ export async function action({ request, context }: Route.ActionArgs) {
         user.id,
       );
       return { ok: true, message: "Saved. Phones pick up the new name and colour the next time the app opens." };
+    },
+    approvals: (form) => {
+      const on = stringField(form, "value") === "true";
+      setRequireApproval(on, user.id);
+      return {
+        ok: true,
+        message: on
+          ? "Submitted time now waits for an admin to approve it before it goes to accounting."
+          : "Submitted time now goes straight to accounting.",
+      };
     },
     "week-start": (form) => {
       const day = Number(stringField(form, "day"));
@@ -58,6 +73,7 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
       <Title order={2}>Settings</Title>
       <BrandingCard data={loaderData} />
       <WeekStartCard weekStartsOn={loaderData.weekStartsOn} />
+      <ApprovalsCard requireApproval={loaderData.requireApproval} />
     </Stack>
   );
 }
@@ -149,6 +165,37 @@ function BrandingCard({ data }: { data: Data }) {
             </Group>
           </Stack>
         </form>
+      </Card>
+    </Stack>
+  );
+}
+
+/**
+ * The approval gate. Off by default: people submit their own time and it goes
+ * straight on. Turning it on doesn't change who submits — it adds a step after.
+ */
+function ApprovalsCard({ requireApproval }: { requireApproval: boolean }) {
+  const fetcher = useFetcher<typeof action>();
+  useActionFeedback(fetcher.data);
+  return (
+    <Stack gap="sm">
+      <Title order={3}>Approvals</Title>
+      <Card withBorder>
+        <Stack gap={4}>
+          <Switch
+            label="An admin has to approve submitted time"
+            checked={requireApproval}
+            disabled={fetcher.state !== "idle"}
+            onChange={(e) =>
+              fetcher.submit({ intent: "approvals", value: String(e.currentTarget.checked) }, { method: "post" })
+            }
+          />
+          <Text size="xs" c="dimmed">
+            {requireApproval
+              ? "Time waits on the Timesheets page after it's submitted, and reaches accounting once an admin approves it."
+              : "Time goes to accounting as soon as the person who worked it submits it. Admins can still reopen a week to correct it."}
+          </Text>
+        </Stack>
       </Card>
     </Stack>
   );

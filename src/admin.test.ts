@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { approveEntries, describeApproval, reopenEntries } from "./approvals.ts";
+import { approveEntries, describeSignOff, reopenEntries, submitEntries } from "./approvals.ts";
 import { auditFor } from "./audit.ts";
 import { createCategory, deleteCategory, listCategories, renameCategory, setUserCategory } from "./categories.ts";
 import { db } from "./db.server.ts";
-import { getEntry } from "./entries.ts";
+import { getEntry, unsubmittedDatesBefore } from "./entries.ts";
 import { applyOp } from "./ops.ts";
 import type { OpPayload, OpResult, OpType } from "./ops-schema.ts";
 import { costOf, listRates, parseHourlyRate, removeRate, resolveRate, setRate } from "./rates.ts";
@@ -200,6 +200,91 @@ describe("rates", () => {
   });
 });
 
+describe("submitting", () => {
+  test("submitting freezes the rate, locks the entry, and skips running timers", () => {
+    setRate({ scope: "user", userId: alice, hourlyRate: 40, effectiveFrom: "2026-01-01", actorUserId: admin });
+    const monday = worked(alice, acmeInstall, NINE - 2 * 24 * HOUR, 60);
+    const running = uuidv7();
+    ok(send(alice, "timer.start", { entryId: running, jobId: acmeInstall, at: NINE + HOUR }));
+
+    const result = submitEntries({ userId: alice, from: SUN, to: "2026-09-19", actorUserId: alice });
+    expect(result).toEqual({ changed: 1, unchanged: 0, skipped: 1 });
+    expect(describeSignOff("submit", result)).toBe(
+      "Submitted 1 entry. A running timer was left out; submit again once it stops.",
+    );
+    expect(getEntry(monday)).toMatchObject({ status: "submitted", rateSnapshot: 40, approvedBy: null });
+    expect(getEntry(running)!.status).toBe("open");
+
+    // A later rate change doesn't touch submitted time.
+    setRate({ scope: "user", userId: alice, hourlyRate: 99, effectiveFrom: "2026-01-01", actorUserId: admin });
+    expect(getEntry(monday)!.rateSnapshot).toBe(40);
+  });
+
+  test("submitted time is locked, and its owner is told they can take it back", () => {
+    const id = worked(alice, acmeInstall, NINE, 60);
+    submitEntries({ userId: alice, entryIds: [id], actorUserId: alice });
+
+    const edit = send(alice, "entry.update", { entryId: id, note: "late edit" });
+    expect(edit).toMatchObject({ ok: false, code: "conflict" });
+    expect(!edit.ok && edit.error).toContain("Take the day back");
+  });
+
+  test("a person takes their own day back, and submits it again", () => {
+    const id = worked(alice, acmeInstall, NINE, 60);
+    ok(send(alice, "day.submit", { workDate: WED }));
+    expect(getEntry(id)!.status).toBe("submitted");
+
+    ok(send(alice, "day.unsubmit", { workDate: WED }));
+    expect(getEntry(id)).toMatchObject({ status: "draft", rateSnapshot: null });
+    ok(send(alice, "entry.update", { entryId: id, note: "fixed" }));
+
+    ok(send(alice, "day.submit", { workDate: WED }));
+    expect(getEntry(id)!.status).toBe("submitted");
+    expect(auditFor("entry", id).map((e) => e.action)).toEqual(["submit", "unsubmit", "update", "submit"]);
+  });
+
+  test("what an admin approved is not the person's to take back", () => {
+    const id = worked(alice, acmeInstall, NINE, 60);
+    submitEntries({ userId: alice, entryIds: [id], actorUserId: alice });
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+
+    ok(send(alice, "day.unsubmit", { workDate: WED }));
+    expect(getEntry(id)!.status).toBe("approved");
+    const edit = send(alice, "entry.update", { entryId: id, note: "no" });
+    expect(!edit.ok && edit.error).toContain("Ask an admin to reopen it");
+
+    // The admin's own reopen still takes it back.
+    expect(reopenEntries({ userId: alice, entryIds: [id], actorUserId: admin }).changed).toBe(1);
+  });
+
+  test("approving keeps the rate the submission froze, and records the submission", () => {
+    setRate({ scope: "user", userId: alice, hourlyRate: 40, effectiveFrom: "2026-01-01", actorUserId: admin });
+    const id = worked(alice, acmeInstall, NINE, 60);
+    submitEntries({ userId: alice, entryIds: [id], actorUserId: alice });
+    setRate({ scope: "user", userId: alice, hourlyRate: 99, effectiveFrom: "2026-01-01", actorUserId: admin });
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    expect(getEntry(id)!.rateSnapshot).toBe(40);
+
+    // Approving time nobody submitted counts as submitting it for them.
+    const straight = worked(alice, otherJob, NINE + 2 * HOUR, 30);
+    approveEntries({ userId: alice, entryIds: [straight], actorUserId: admin });
+    const row = db()
+      .query<{ submitted_by: number | null }, [string]>("SELECT submitted_by FROM time_entries WHERE id = ?")
+      .get(straight);
+    expect(row!.submitted_by).toBe(admin);
+  });
+
+  test("earlier days with time nobody submitted are listed, newest first", () => {
+    worked(alice, acmeInstall, NINE - 2 * 24 * HOUR, 60);
+    const yesterday = worked(alice, acmeInstall, NINE - 24 * HOUR, 60);
+    worked(alice, acmeInstall, NINE, 60);
+    expect(unsubmittedDatesBefore(alice, WED)).toEqual(["2026-09-15", "2026-09-14"]);
+
+    submitEntries({ userId: alice, entryIds: [yesterday], actorUserId: alice });
+    expect(unsubmittedDatesBefore(alice, WED)).toEqual(["2026-09-14"]);
+  });
+});
+
 describe("approval", () => {
   test("approving a week locks the entries, freezes the rate, and skips running timers", () => {
     setRate({ scope: "user", userId: alice, hourlyRate: 40, effectiveFrom: "2026-01-01", actorUserId: admin });
@@ -211,7 +296,7 @@ describe("approval", () => {
 
     const result = approveEntries({ userId: alice, from: SUN, to: "2026-09-19", actorUserId: admin, now: NINE + 2 * HOUR });
     expect(result).toEqual({ changed: 2, unchanged: 0, skipped: 1 });
-    expect(describeApproval("Approved", result)).toBe(
+    expect(describeSignOff("approve", result)).toBe(
       "Approved 2 entries. A running timer was left out; approve again once it stops.",
     );
     expect(getEntry(monday)).toMatchObject({ status: "approved", rateSnapshot: 40, approvedBy: admin });
@@ -261,7 +346,7 @@ describe("approval", () => {
     expect(!locked.ok && locked.error).toContain("sent to accounting");
     const result = reopenEntries({ userId: alice, from: WED, to: WED, actorUserId: admin });
     expect(result).toEqual({ changed: 1, unchanged: 0, skipped: 0 });
-    expect(describeApproval("Reopened", result)).toBe("Reopened 1 entry.");
+    expect(describeSignOff("reopen", result)).toBe("Reopened 1 entry.");
     expect(
       db().query<{ status: string; remote_txn_id: string }, [string]>("SELECT status, remote_txn_id FROM time_entries WHERE id = ?").get(id),
     ).toEqual({ status: "draft", remote_txn_id: "T1" });
@@ -342,7 +427,7 @@ describe("reports", () => {
       seconds: 5400,
       status: "approved",
       hourlyRate: 40,
-      rateFrom: "approval",
+      rateFrom: "submission",
       cost: 60,
     });
     expect(second).toMatchObject({ jobName: "Other Co:Service", customerName: "Other Co", hourlyRate: 50, rateFrom: "user", cost: 25 });
@@ -363,7 +448,7 @@ describe("reports", () => {
       ["Acme", 5400 + 2700],
       ["Other Co", 1800],
     ]);
-    expect(byCustomer[0]).toMatchObject({ approvedSeconds: 5400, cost: 60, unratedSeconds: 2700, running: true });
+    expect(byCustomer[0]).toMatchObject({ signedOffSeconds: 5400, cost: 60, unratedSeconds: 2700, running: true });
     expect(summarize(lines, "category").map((g) => g.label)).toEqual(["Field", "No category"]);
     expect(summarize(lines, "day").map((g) => g.label)).toEqual([WED]);
     expect(total(lines)).toMatchObject({ seconds: 9900, cost: 85, entries: 3 });
@@ -375,7 +460,7 @@ describe("reports", () => {
     const csv = linesToCsv(reportLines({ from: WED, to: WED }, NINE), "America/Los_Angeles");
     const [header, row] = csv.split("\r\n");
     expect(header).toBe("Date,Person,Category,Customer,Job,Start,End,Hours,Status,Rate,Cost,Note,Entry ID");
-    expect(csv).toContain(`2026-09-16,Alice,,Acme,Acme:Install,9:00 AM,10:30 AM,1.5,Not approved,,,"'=HYPERLINK(""x""), then ""quotes""\nand a line",${id}`);
+    expect(csv).toContain(`2026-09-16,Alice,,Acme,Acme:Install,9:00 AM,10:30 AM,1.5,Not submitted,,,"'=HYPERLINK(""x""), then ""quotes""\nand a line",${id}`);
     expect(row!.startsWith("2026-09-16,Alice")).toBe(true);
     expect(csv.endsWith("\r\n")).toBe(true);
   });
@@ -396,9 +481,9 @@ describe("reports", () => {
     expect(sheet.days).toEqual(datesBetween(SUN, "2026-09-19"));
     expect(sheet.rows.map((r) => r.name)).toEqual(["Ada Admin", "Alice", "Bob", "carol"]);
     const aliceRow = sheet.rows[1]!;
-    expect(aliceRow).toMatchObject({ seconds: 5400, approved: 1, drafts: 1, running: false });
-    expect(aliceRow.days[3]).toMatchObject({ date: WED, seconds: 3600, approved: 1, drafts: 0 });
-    expect(aliceRow.days[2]).toMatchObject({ seconds: 1800, drafts: 1 });
+    expect(aliceRow).toMatchObject({ seconds: 5400, approved: 1, unsubmitted: 1, submitted: 0, running: false });
+    expect(aliceRow.days[3]).toMatchObject({ date: WED, seconds: 3600, approved: 1, unsubmitted: 0 });
+    expect(aliceRow.days[2]).toMatchObject({ seconds: 1800, unsubmitted: 1 });
     expect(sheet.rows[2]).toMatchObject({ running: true, seconds: 1800 });
     expect(sheet.rows[3]).toMatchObject({ active: false, seconds: 3600 });
 

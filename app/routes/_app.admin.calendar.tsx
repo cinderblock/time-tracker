@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { config } from "../../src/config.server.ts";
-import { APPROVED_STATUSES } from "../../src/entry-status.ts";
+import { APPROVED_STATUSES, SIGNED_OFF_STATUSES } from "../../src/entry-status.ts";
 import { calendarWeek } from "../../src/reports.ts";
 import { formatClock, formatDurationHuman, formatWorkDate, weekdayOf } from "../../src/time.ts";
 import { categoryOptions, idParam, peopleOptions, weekFromUrl } from "../admin.server.ts";
@@ -235,16 +235,17 @@ function BlockView({
   const tall = Math.max(((to - from) / 60) * HOUR_PX, 14);
   const name = names.get(b.userId) ?? "Someone";
   const running = b.end == null;
-  const approved = APPROVED_STATUSES.has(b.status);
+  const signedOff = SIGNED_OFF_STATUSES.has(b.status);
+  const said = APPROVED_STATUSES.has(b.status) ? ", approved" : signedOff ? ", submitted" : "";
   const times = `${formatClock(b.start, data.timezone)} – ${running ? "now" : formatClock(b.end!, data.timezone)}`;
-  const label = `${name}, ${b.jobName}, ${times}${approved ? ", approved" : ""}`;
+  const label = `${name}, ${b.jobName}, ${times}${said}`;
 
   return (
     <Link
       to={`/admin/people/${b.userId}/time${date === data.today ? "" : `/${date}`}`}
       className={classes.block}
       data-running={running}
-      data-approved={approved}
+      data-signed-off={signedOff}
       aria-label={label}
       style={{
         top,

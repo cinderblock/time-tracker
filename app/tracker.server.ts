@@ -1,8 +1,15 @@
 import { config } from "../src/config.server.ts";
-import { type Entry, getOpenEntry, listEntriesForDate, noteRequiredFor, totalsByDate } from "../src/entries.ts";
+import {
+  type Entry,
+  getOpenEntry,
+  listEntriesForDate,
+  noteRequiredFor,
+  totalsByDate,
+  unsubmittedDatesBefore,
+} from "../src/entries.ts";
 import { listJobs, recentJobIds } from "../src/jobs.ts";
 import { listNotesForDate, pendingNotesBefore } from "../src/notes.ts";
-import { requireNoteOnStop, weekStartsOn } from "../src/settings.ts";
+import { requireApproval, requireNoteOnStop, weekStartsOn } from "../src/settings.ts";
 import { addDays, today, weekStartOf } from "../src/time.ts";
 import { DEFAULT_TRACKING_MODE } from "../src/tracking-mode.ts";
 import { getUser } from "../src/users.ts";
@@ -38,6 +45,7 @@ function entryView(e: Entry, jobNames: Map<string, string>): EntryView {
     lastEndedAt: lastEnd(e),
     segmentCount: e.segments.length,
     noteRequired: e.status === "open" ? noteRequiredFor(e.jobId) : false,
+    adminApproved: e.approvedBy != null,
   };
 }
 
@@ -75,6 +83,8 @@ export function loadDay(userId: number, workDate: string): DayModel {
     mode,
     notesToRollUp: mode === "notes" ? pendingNotesBefore(userId, workDate) : null,
     requireNoteOnStop: requireNoteOnStop(),
+    requireApproval: requireApproval(),
+    unsubmittedDays: unsubmittedDatesBefore(userId, workDate),
     open: open ? entryView(open, jobNames) : null,
     entries: listEntriesForDate(userId, workDate)
       .map((e) => entryView(e, jobNames))

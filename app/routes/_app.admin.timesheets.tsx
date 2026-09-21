@@ -1,8 +1,9 @@
 import { Anchor, Badge, Button, Group, Select, Stack, Text } from "@mantine/core";
 import { Link, useFetcher, useSearchParams } from "react-router";
 
-import { approveEntries, describeApproval, reopenEntries } from "../../src/approvals.ts";
+import { approveEntries, describeSignOff, reopenEntries, submitEntries } from "../../src/approvals.ts";
 import { timesheet } from "../../src/reports.ts";
+import { requireApproval } from "../../src/settings.ts";
 import { addDays, formatDurationHuman, formatWorkDate, isWorkDate, weekdayOf } from "../../src/time.ts";
 import { UserInputError, getUser } from "../../src/users.ts";
 import { type ActionResult, handleForm, intField, stringField } from "../actions.server.ts";
@@ -15,8 +16,13 @@ import { pageTitle } from "../meta.ts";
 import type { Route } from "./+types/_app.admin.timesheets";
 
 /**
- * Everyone's week at a glance, and where time gets approved: a person's
- * whole week in one tap, or everyone's at once.
+ * Everyone's week at a glance, and where an admin can act on it: submit for
+ * someone who hasn't, approve where the organisation requires approval, or
+ * reopen time that needs fixing — a person's whole week in one tap, or
+ * everyone's at once.
+ *
+ * People submit their own time; this page is the safety net, not the route
+ * time normally takes.
  */
 export function loader({ request, context }: Route.LoaderArgs) {
   requireAdmin(context, request);
@@ -26,6 +32,7 @@ export function loader({ request, context }: Route.LoaderArgs) {
     ...week,
     categoryId,
     categories: categoryOptions(),
+    approvalRequired: requireApproval(),
     ...timesheet(week.weekStart, { categoryId }),
   };
 }
@@ -56,27 +63,38 @@ export async function action({ request, context }: Route.ActionArgs) {
     return user;
   };
   return handleForm(request, {
+    submit: (form): ActionResult => {
+      const user = person(form);
+      const result = submitEntries({ userId: user.id, ...weekField(form), actorUserId: me.id });
+      return { ok: true, message: `${user.name}: ${describeSignOff("submit", result)}` };
+    },
     approve: (form): ActionResult => {
       const user = person(form);
       const result = approveEntries({ userId: user.id, ...weekField(form), actorUserId: me.id });
-      return { ok: true, message: `${user.name}: ${describeApproval("Approved", result)}` };
+      return { ok: true, message: `${user.name}: ${describeSignOff("approve", result)}` };
     },
     reopen: (form): ActionResult => {
       const user = person(form);
       const result = reopenEntries({ userId: user.id, ...weekField(form), actorUserId: me.id });
-      return { ok: true, message: `${user.name}: ${describeApproval("Reopened", result)}` };
+      return { ok: true, message: `${user.name}: ${describeSignOff("reopen", result)}` };
     },
-    "approve-all": (form): ActionResult => {
+    // Whether this approves or submits is the organisation's setting to decide,
+    // not the page's: approving covers time nobody submitted, so where approval
+    // is required one pass is enough.
+    "sign-off-all": (form): ActionResult => {
       const range = weekField(form);
+      const approving = requireApproval();
       const ids = stringField(form, "userIds").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
       const total = { changed: 0, unchanged: 0, skipped: 0 };
       for (const id of ids) {
-        const r = approveEntries({ userId: id, ...range, actorUserId: me.id });
+        const r = approving
+          ? approveEntries({ userId: id, ...range, actorUserId: me.id })
+          : submitEntries({ userId: id, ...range, actorUserId: me.id });
         total.changed += r.changed;
         total.unchanged += r.unchanged;
         total.skipped += r.skipped;
       }
-      return { ok: true, message: describeApproval("Approved", total) };
+      return { ok: true, message: describeSignOff(approving ? "approve" : "submit", total) };
     },
   });
 }
@@ -85,12 +103,15 @@ type Data = Route.ComponentProps["loaderData"];
 type Row = Data["rows"][number];
 
 export default function Timesheets({ loaderData }: Route.ComponentProps) {
-  const { weekStart, thisWeek, today, days, rows, categories, categoryId } = loaderData;
+  const { weekStart, thisWeek, today, days, rows, categories, categoryId, approvalRequired } = loaderData;
   const [params, setParams] = useSearchParams();
   const all = useFetcher<typeof action>();
   useActionFeedback(all.data);
-  const withDrafts = rows.filter((r) => r.drafts > 0);
-  const draftCount = withDrafts.reduce((n, r) => n + r.drafts, 0);
+  // What the bulk action would act on: everything not yet submitted, plus —
+  // where approval is required — everything submitted and still waiting.
+  const waiting = (r: Row) => r.unsubmitted + (approvalRequired ? r.submitted : 0);
+  const withWaiting = rows.filter((r) => waiting(r) > 0);
+  const waitingCount = withWaiting.reduce((n, r) => n + waiting(r), 0);
   const weekTotal = rows.reduce((n, r) => n + r.seconds, 0);
 
   return (
@@ -116,14 +137,16 @@ export default function Timesheets({ loaderData }: Route.ComponentProps) {
         <Group gap="sm" align="center">
           <Text size="sm" c="dimmed">
             {formatDurationHuman(weekTotal)} this week
-            {draftCount > 0 ? ` · ${draftCount} ${draftCount === 1 ? "entry" : "entries"} to approve` : ""}
+            {waitingCount > 0
+              ? ` · ${waitingCount} ${waitingCount === 1 ? "entry" : "entries"} ${approvalRequired ? "to approve" : "not submitted"}`
+              : ""}
           </Text>
           <all.Form method="post">
-            <input type="hidden" name="intent" value="approve-all" />
+            <input type="hidden" name="intent" value="sign-off-all" />
             <input type="hidden" name="weekStart" value={weekStart} />
-            <input type="hidden" name="userIds" value={withDrafts.map((r) => r.userId).join(",")} />
-            <Button type="submit" disabled={draftCount === 0} loading={all.state !== "idle"}>
-              Approve everyone shown
+            <input type="hidden" name="userIds" value={withWaiting.map((r) => r.userId).join(",")} />
+            <Button type="submit" disabled={waitingCount === 0} loading={all.state !== "idle"}>
+              {approvalRequired ? "Approve everyone shown" : "Submit for everyone shown"}
             </Button>
           </all.Form>
         </Group>
@@ -147,44 +170,74 @@ export default function Timesheets({ loaderData }: Route.ComponentProps) {
         {rows.length === 0 ? (
           <Text c="dimmed">Nobody here yet.</Text>
         ) : (
-          rows.map((row) => <PersonRow key={row.userId} row={row} weekStart={weekStart} today={today} />)
+          rows.map((row) => (
+            <PersonRow
+              key={row.userId}
+              row={row}
+              weekStart={weekStart}
+              today={today}
+              approvalRequired={approvalRequired}
+            />
+          ))
         )}
       </Stack>
 
       <Text size="sm" c="dimmed">
-        Tap a day to see or fix that person's time. Approved days are shaded; a green outline means a timer is
-        running. Approving locks the time and records its rate; reopen a week to change it again.
+        Tap a day to see or fix that person's time. Submitted days are shaded; a green outline means a timer is
+        running. People submit their own time — submitting freezes its rate and locks it
+        {approvalRequired ? ", and it waits here for approval" : " and sends it to accounting"}. Submit for someone
+        who hasn't got to it, and reopen a week that needs fixing.
       </Text>
     </Stack>
   );
 }
 
-function PersonRow({ row, weekStart, today }: { row: Row; weekStart: string; today: string }) {
+function PersonRow({
+  row,
+  weekStart,
+  today,
+  approvalRequired,
+}: {
+  row: Row;
+  weekStart: string;
+  today: string;
+  approvalRequired: boolean;
+}) {
   const fetcher = useFetcher<typeof action>();
   useActionFeedback(fetcher.data);
   const busy = fetcher.state !== "idle";
-  const submit = (intent: "approve" | "reopen") =>
+  const act = (intent: "submit" | "approve" | "reopen") =>
     fetcher.submit({ intent, userId: String(row.userId), weekStart }, { method: "post" });
 
-  // Approve what's waiting; reopen what's approved. A part-approved week offers both.
+  // One action, because approving covers time nobody submitted: where approval
+  // is required an admin approves the lot, and where it isn't they submit for
+  // someone who hasn't. Anything signed off can be reopened.
+  const waiting = approvalRequired ? row.unsubmitted + row.submitted : row.unsubmitted;
+  const signedOff = row.submitted + row.approved;
+  const verb = approvalRequired ? "Approve" : "Submit";
   const status = (
     <Group gap={6} wrap="wrap" justify="flex-end">
-      {row.drafts > 0 ? (
-        <Button size="compact-sm" onClick={() => submit("approve")} loading={busy} aria-label={`Approve ${row.name}'s week`}>
-          Approve {row.drafts}
+      {waiting > 0 ? (
+        <Button
+          size="compact-sm"
+          onClick={() => act(approvalRequired ? "approve" : "submit")}
+          loading={busy}
+          aria-label={`${verb} ${row.name}'s week`}
+        >
+          {verb} {waiting}
         </Button>
       ) : (
-        row.approved > 0 && (
+        signedOff > 0 && (
           <Badge color="teal" variant="light">
-            approved
+            {approvalRequired ? "approved" : "submitted"}
           </Badge>
         )
       )}
-      {row.approved > 0 && (
+      {signedOff > 0 && (
         <Button
           size="compact-xs"
           variant="subtle"
-          onClick={() => submit("reopen")}
+          onClick={() => act("reopen")}
           disabled={busy}
           aria-label={`Reopen ${row.name}'s week`}
         >
@@ -220,11 +273,24 @@ function PersonRow({ row, weekStart, today }: { row: Row; weekStart: string; tod
       </div>
       {row.days.map((d) => {
         const future = d.date > today;
-        const state = d.running ? "running" : d.entries > 0 && d.drafts === 0 && d.approved > 0 ? "approved" : "open";
+        // Shaded once the day is as far as this organisation takes it: through
+        // approval where that's required, through submission where it isn't.
+        const done =
+          d.entries > 0 &&
+          d.unsubmitted === 0 &&
+          (approvalRequired ? d.submitted === 0 && d.approved > 0 : d.submitted + d.approved > 0);
+        const state = d.running ? "running" : done ? "approved" : "open";
         const text = d.entries ? clockHours(d.seconds) : "–";
-        const label = `${row.name}, ${formatWorkDate(d.date)}: ${d.seconds ? formatDurationHuman(d.seconds) : "no time"}${
-          state === "approved" ? ", approved" : d.drafts ? `, ${d.drafts} to approve` : ""
-        }`;
+        // A day with a timer still on it isn't reported as done, whatever the
+        // rest of it says.
+        const said = d.unsubmitted
+          ? `, ${d.unsubmitted} ${approvalRequired ? "to approve" : "not submitted"}`
+          : state === "approved"
+            ? d.approved > 0
+              ? ", approved"
+              : ", submitted"
+            : "";
+        const label = `${row.name}, ${formatWorkDate(d.date)}: ${d.seconds ? formatDurationHuman(d.seconds) : "no time"}${said}`;
         const content = (
           <>
             <Text component="span" size="xs" c="dimmed" className={classes.dayLabel}>

@@ -32,6 +32,20 @@ export function setRequireNoteOnStop(value: boolean, actorUserId: number | null)
   write("require_note_on_stop", value ? "1" : "0", actorUserId);
 }
 
+/**
+ * Whether submitted time waits for an admin to approve it before it can reach
+ * the accounting system. Default off: the person who worked the time says when
+ * it is done, and submitting is what sends it. Turning this on adds approval
+ * back as a second gate, and only then can an admin's sign-off be required.
+ */
+export function requireApproval(): boolean {
+  return read("require_approval") === "1";
+}
+
+export function setRequireApproval(value: boolean, actorUserId: number | null): void {
+  write("require_approval", value ? "1" : "0", actorUserId);
+}
+
 // ---- accounting ---------------------------------------------------------------------
 
 /** remote_items.id of the service item used when a job has none. */

@@ -133,6 +133,11 @@ export const opPayloads = {
       .max(100),
   }),
 
+  // A day's worth of time at once: submitting says the day is done, taking it
+  // back reopens it for corrections. Several days are several ops.
+  "day.submit": z.object({ workDate }),
+  "day.unsubmit": z.object({ workDate }),
+
   "job.create": z.object({
     // Chosen by the device, so a timer can be started on the job before the
     // server has ever heard of it.

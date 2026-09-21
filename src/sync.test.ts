@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { QbBridgeBackend } from "./accounting/qb-bridge.ts";
-import { approveEntries, reopenEntries } from "./approvals.ts";
+import { approveEntries, reopenEntries, submitEntries } from "./approvals.ts";
 import { createCategory, setUserCategory } from "./categories.ts";
 import { db } from "./db.server.ts";
 import { getEntry } from "./entries.ts";
@@ -19,7 +19,7 @@ import {
   setJobServiceItem,
   setPersonPayrollItem,
 } from "./remote-lists.ts";
-import { setDefaultPayrollItemId, setDefaultServiceItemId, syncState } from "./settings.ts";
+import { setDefaultPayrollItemId, setDefaultServiceItemId, setRequireApproval, syncState } from "./settings.ts";
 import { PULL_EVERY_MS, entryRef, listWork, retryFailedNow, syncOverview } from "./sync.ts";
 import { runSync } from "./sync-worker.ts";
 import { fakeBridgeFetch } from "./testing/fake-bridge.ts";
@@ -266,6 +266,55 @@ describe("sending time", () => {
     expect(qb.records).toHaveLength(0);
     expect(() => linkPerson({ userId: unlinked, remoteId: "O-GONE", actorUserId: admin })).toThrow("already linked to Bob");
     expect(() => linkPerson({ userId: unlinked, remoteId: "NOPE", actorUserId: admin })).toThrow("isn't in the accounting system");
+  });
+});
+
+describe("the approval gate", () => {
+  test("submitted time goes on its own, and waits for an admin once approval is required", async () => {
+    await connected();
+    const acme2 = jobByRemote("C-ACME-2").id;
+
+    // Off by default: submitting is the whole gate.
+    const first = work(alice, acme2, 60);
+    submitEntries({ userId: alice, entryIds: [first], actorUserId: alice });
+    expect(syncOverview(now).ready).toBe(1);
+    expect(await sync()).toMatchObject({ done: 1 });
+    expect(getEntry(first)!.status).toBe("synced");
+
+    // On: the same submission is no longer enough.
+    setRequireApproval(true, admin);
+    const second = work(alice, acme2, 30, "Trim", NINE + 4 * 60 * MIN);
+    submitEntries({ userId: alice, entryIds: [second], actorUserId: alice });
+    expect(syncOverview(now).ready).toBe(0);
+    expect(await sync()).toMatchObject({ done: 0 });
+    expect(getEntry(second)!.status).toBe("submitted");
+
+    approveEntries({ userId: alice, entryIds: [second], actorUserId: admin });
+    expect(await sync()).toMatchObject({ done: 1 });
+    expect(getEntry(second)!.status).toBe("synced");
+
+    // Time approved while the gate was on still goes after it's switched off.
+    setRequireApproval(false, admin);
+    const third = work(alice, acme2, 15, "Punch list", NINE + 8 * 60 * MIN);
+    approveEntries({ userId: alice, entryIds: [third], actorUserId: admin });
+    expect(await sync()).toMatchObject({ done: 1 });
+    expect(getEntry(third)!.status).toBe("synced");
+  });
+
+  test("taking back time that was sent amends it there when it's submitted again", async () => {
+    await connected();
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
+    submitEntries({ userId: alice, entryIds: [id], actorUserId: alice });
+    await sync();
+    expect(qb.records).toHaveLength(1);
+
+    reopenEntries({ userId: alice, entryIds: [id], actorUserId: alice, ownSubmissionsOnly: true });
+    expect(syncOverview(now).reopened).toHaveLength(1);
+    ok(send(alice, "entry.update", { entryId: id, note: "Framing, corrected" }));
+    submitEntries({ userId: alice, entryIds: [id], actorUserId: alice });
+    await sync();
+    expect(qb.records).toHaveLength(1); // amended, not duplicated
+    expect(qb.records[0]!.notes).toContain("Framing, corrected");
   });
 });
 

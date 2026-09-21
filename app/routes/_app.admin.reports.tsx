@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router";
 import { config } from "../../src/config.server.ts";
 import { formatMoney } from "../../src/money.ts";
 import { type GroupBy, reportLines, summarize, total } from "../../src/reports.ts";
+import { requireApproval } from "../../src/settings.ts";
 import { decimalHours, formatDurationHuman, formatWorkDate } from "../../src/time.ts";
 import { categoryOptions, jobOptions, peopleOptions, reportQuery } from "../admin.server.ts";
 import { requireAdmin } from "../auth.server.ts";
@@ -24,6 +25,9 @@ export function loader({ request, context }: Route.LoaderArgs) {
     query: { ...query, filter: undefined },
     csvHref: `/admin/reports.csv${url.search}`,
     currency: config.currency,
+    // Only the word for it changes: with approval off, time is final once its
+    // owner submits it.
+    signedOffLabel: requireApproval() ? "Approved" : "Submitted",
     groups: summarize(lines, query.by),
     total: total(lines),
     people: peopleOptions(),
@@ -61,7 +65,7 @@ const GROUP_MANY: Record<GroupBy, string> = {
 };
 
 export default function Reports({ loaderData }: Route.ComponentProps) {
-  const { query, groups, currency } = loaderData;
+  const { query, groups, currency, signedOffLabel } = loaderData;
   const sum = loaderData.total;
   const [params, setParams] = useSearchParams();
   const max = Math.max(1, ...groups.map((g) => g.seconds));
@@ -160,9 +164,9 @@ export default function Reports({ loaderData }: Route.ComponentProps) {
       <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
         <Stat label="Hours" value={formatDurationHuman(sum.seconds)} detail={`${decimalHours(sum.seconds)} h`} />
         <Stat
-          label="Approved"
-          value={formatDurationHuman(sum.approvedSeconds)}
-          detail={sum.seconds ? `${Math.round((sum.approvedSeconds / sum.seconds) * 100)}% of hours` : "–"}
+          label={signedOffLabel}
+          value={formatDurationHuman(sum.signedOffSeconds)}
+          detail={sum.seconds ? `${Math.round((sum.signedOffSeconds / sum.seconds) * 100)}% of hours` : "–"}
         />
         <Stat
           label="Cost"
@@ -185,7 +189,7 @@ export default function Reports({ loaderData }: Route.ComponentProps) {
               <Table.Th>{GROUP_LABELS[query.by]}</Table.Th>
               <Table.Th ta="right">Hours</Table.Th>
               <Table.Th ta="right" visibleFrom="sm">
-                Approved
+                {signedOffLabel}
               </Table.Th>
               <Table.Th ta="right">Cost</Table.Th>
             </Table.Tr>
@@ -197,7 +201,7 @@ export default function Reports({ loaderData }: Route.ComponentProps) {
                   <Text size="sm" fw={500}>
                     {query.by === "day" ? formatWorkDate(g.label) : g.label}
                   </Text>
-                  <ShareBar seconds={g.seconds} approved={g.approvedSeconds} max={max} />
+                  <ShareBar seconds={g.seconds} signedOff={g.signedOffSeconds} max={max} />
                 </Table.Td>
                 <Table.Td ta="right" style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                   {formatDurationHuman(g.seconds)}
@@ -205,11 +209,11 @@ export default function Reports({ loaderData }: Route.ComponentProps) {
                     {decimalHours(g.seconds)} h
                   </Text>
                   <Text size="xs" c="dimmed" hiddenFrom="sm">
-                    {formatDurationHuman(g.approvedSeconds)} approved
+                    {formatDurationHuman(g.signedOffSeconds)} {signedOffLabel.toLowerCase()}
                   </Text>
                 </Table.Td>
                 <Table.Td ta="right" visibleFrom="sm" style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                  {formatDurationHuman(g.approvedSeconds)}
+                  {formatDurationHuman(g.signedOffSeconds)}
                 </Table.Td>
                 <Table.Td ta="right" style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                   {money(g.cost)}
@@ -227,7 +231,7 @@ export default function Reports({ loaderData }: Route.ComponentProps) {
               <Table.Th>Total</Table.Th>
               <Table.Th ta="right">{formatDurationHuman(sum.seconds)}</Table.Th>
               <Table.Th ta="right" visibleFrom="sm">
-                {formatDurationHuman(sum.approvedSeconds)}
+                {formatDurationHuman(sum.signedOffSeconds)}
               </Table.Th>
               <Table.Th ta="right">{money(sum.cost)}</Table.Th>
             </Table.Tr>
@@ -236,8 +240,8 @@ export default function Reports({ loaderData }: Route.ComponentProps) {
       )}
 
       <Text size="sm" c="dimmed">
-        Approved time is costed at the rate it was approved at; everything else at today's rates, so its cost can
-        still change. Running timers count up to now. Set rates under Rates &amp; categories.
+        Submitted time is costed at the rate frozen when it was submitted; everything else at today's rates, so its
+        cost can still change. Running timers count up to now. Set rates under Rates &amp; categories.
       </Text>
     </Stack>
   );
@@ -259,10 +263,10 @@ function Stat({ label, value, detail }: { label: string; value: string; detail: 
   );
 }
 
-/** Each group's hours against the biggest group's, approved part solid. The numbers sit beside it. */
-function ShareBar({ seconds, approved, max }: { seconds: number; approved: number; max: number }) {
+/** Each group's hours against the biggest group's, signed-off part solid. The numbers sit beside it. */
+function ShareBar({ seconds, signedOff, max }: { seconds: number; signedOff: number; max: number }) {
   const whole = (seconds / max) * 100;
-  const solid = seconds ? (approved / seconds) * whole : 0;
+  const solid = seconds ? (signedOff / seconds) * whole : 0;
   return (
     <div aria-hidden style={{ display: "flex", height: 6, marginTop: 4, borderRadius: 3, overflow: "hidden" }}>
       <div style={{ width: `${solid}%`, background: "var(--mantine-color-teal-filled)" }} />

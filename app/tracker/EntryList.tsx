@@ -1,7 +1,7 @@
 import { Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from "@mantine/core";
 import { useState } from "react";
 
-import { isEditable } from "../../src/entry-status.ts";
+import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
 import { formatClock, formatDurationHuman } from "../../src/time.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { EntryEditor } from "./EntryEditor.tsx";
@@ -115,7 +115,9 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
       )}
       {locked && (
         <Text size="xs" c="dimmed">
-          Locked — an admin can reopen it for changes.
+          {isOwnerReopenable(entry.status, entry.adminApproved)
+            ? "Locked — take the day back to change it."
+            : "Locked — an admin can reopen it for changes."}
         </Text>
       )}
     </Stack>

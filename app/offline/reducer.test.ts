@@ -126,6 +126,55 @@ describe("the reducer mirrors the server", () => {
     expect(m.entries.map((e) => e.status)).toEqual(["approved", "approved"]);
   });
 
+  test("submitting the day locks it, and taking it back frees it again", () => {
+    const [a, b] = [uuidv7(), uuidv7()];
+    mirror([
+      op("entry.create", { entryId: a, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }),
+      op("entry.create", { entryId: b, jobId: jobB, workDate: DAY, durationSeconds: 1800 }),
+    ]);
+    const submitted = mirror([op("day.submit", { workDate: DAY })]);
+    expect(submitted.entries.map((e) => e.status)).toEqual(["submitted", "submitted"]);
+
+    mirror([op("entry.update", { entryId: b, durationSeconds: 60 })], { expectRejected: 1 });
+
+    const back = mirror([op("day.unsubmit", { workDate: DAY })]);
+    expect(back.entries.map((e) => e.status)).toEqual(["draft", "draft"]);
+    mirror([op("entry.update", { entryId: b, durationSeconds: 60 })]);
+  });
+
+  test("a running timer is left out of a submitted day", () => {
+    const running = uuidv7();
+    mirror([
+      op("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: DAY, durationSeconds: 600 }),
+      op("timer.start", { entryId: running, jobId: jobB, at: NINE }),
+    ]);
+    const m = mirror([op("day.submit", { workDate: DAY })]);
+    expect(m.entries.map((e) => e.status).sort()).toEqual(["open", "submitted"]);
+  });
+
+  test("an admin's approval isn't the person's to take back", () => {
+    const id = uuidv7();
+    mirror([op("entry.create", { entryId: id, jobId: jobA, workDate: DAY, durationSeconds: 600 })]);
+    approveEntries({ userId, from: DAY, to: DAY, actorUserId: userId });
+    const m = mirror([op("day.unsubmit", { workDate: DAY })]);
+    expect(m.entries.map((e) => e.status)).toEqual(["approved"]);
+  });
+
+  test("submitting an earlier day clears it from the reminder", () => {
+    const earlier = "2026-09-15";
+    // Set up on the server: the screen only ever dispatches ops for the day
+    // it's showing, and the reducer doesn't track other days' entries.
+    const made = applyOp(
+      userId,
+      op("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: earlier, durationSeconds: 600 }),
+      NINE,
+    );
+    if (!made.ok) throw new Error(made.error);
+    expect(loadDay(userId, DAY).unsubmittedDays).toEqual([earlier]);
+    const m = mirror([op("day.submit", { workDate: earlier })]);
+    expect(m.unsubmittedDays).toEqual([]);
+  });
+
   test("weeks start on the configured day", () => {
     setWeekStartsOn(3, userId);
     const m = mirror([op("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: DAY, durationSeconds: 600 })]);

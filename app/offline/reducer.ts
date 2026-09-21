@@ -1,4 +1,4 @@
-import { isEditable } from "../../src/entry-status.ts";
+import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
 import type { Op } from "../../src/ops-schema.ts";
 import { workDateOf } from "../../src/time.ts";
 import { type DayModel, type EntryView, type JobView, type NoteView, compareEntries, compareNotes } from "../tracker/model.ts";
@@ -23,6 +23,7 @@ export function applyPending(base: DayModel, ops: readonly Op[]): DayModel {
       notes: [...base.notes],
       jobs: [...base.jobs],
       recentJobIds: [...base.recentJobIds],
+      unsubmittedDays: [...base.unsubmittedDays],
       week: base.week.map((d) => ({ ...d })),
     },
     deletedEntries: new Map(),
@@ -148,6 +149,7 @@ function applyOne(s: State, op: Op): void {
         lastEndedAt: null,
         segmentCount: 1,
         noteRequired: noteRequired(m, p.jobId),
+        adminApproved: false,
       };
       m.open = entry;
       putEntry(m, entry);
@@ -201,6 +203,7 @@ function applyOne(s: State, op: Op): void {
         lastEndedAt: spanned ? p.endedAt! : null,
         segmentCount: spanned ? 1 : 0,
         noteRequired: false,
+        adminApproved: false,
       });
       addToWeek(m, workDate, seconds);
       touchRecent(m, p.jobId);
@@ -361,11 +364,40 @@ function applyOne(s: State, op: Op): void {
           lastEndedAt: spanned ? line.endedAt! : null,
           segmentCount: spanned ? 1 : 0,
           noteRequired: false,
+          adminApproved: false,
         });
         addToWeek(m, p.workDate, seconds);
         touchRecent(m, line.jobId);
         m.notes = m.notes.map((n) => (line.noteIds.includes(n.id) ? { ...n, rolledIntoEntryId: line.entryId } : n));
       }
+      return;
+    }
+
+    case "day.submit": {
+      const { workDate } = op.payload;
+      // Submitting takes every stopped entry on the day, so the day stops
+      // being one that's waiting — whether or not it's the day on screen.
+      m.unsubmittedDays = m.unsubmittedDays.filter((d) => d !== workDate);
+      // A running timer isn't submitted; the server skips it and says so, and
+      // submitting again after it stops picks it up.
+      if (workDate !== m.workDate) return;
+      m.entries = m.entries.map((e) => (e.status === "draft" ? { ...e, status: "submitted" } : e));
+      return;
+    }
+
+    case "day.unsubmit": {
+      const { workDate } = op.payload;
+      if (workDate !== m.workDate) {
+        // Another day's entries aren't in this copy; all that can be said is
+        // that it has time waiting again.
+        if (!m.unsubmittedDays.includes(workDate)) {
+          m.unsubmittedDays = [...m.unsubmittedDays, workDate].sort().reverse();
+        }
+        return;
+      }
+      m.entries = m.entries.map((e) =>
+        isOwnerReopenable(e.status, e.adminApproved) ? { ...e, status: "draft" } : e,
+      );
       return;
     }
   }
