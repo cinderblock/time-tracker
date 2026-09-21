@@ -631,6 +631,22 @@ own phase; they are properties of the entry UI, not separate features.
   nothing — the note saved, the timer kept running. Found by the e2e test; a real
   phone user would hit it every time. Fix: `dispatch(…, { background: true })`
   for side-effect saves, which don't count toward `pending`.
+- **A Mantine button beside wide text shrinks past its own label.** A note row's
+  "Edit" button read "Edi" once the note was long enough. The button root is
+  `overflow: hidden`, which makes its `min-width: auto` resolve to zero, so the
+  flex algorithm is free to shrink it below its content — and it takes the text
+  block's whole overflow with it, because that block had `min-width: 0` but no
+  `flex-grow`, leaving both sides shrinkable. **Rule:** in a row of text and
+  actions, the action gets `flex: 0 0 auto` and the text gets `min-width: 0`
+  (plus `overflow-wrap: anywhere`, or one long word still pushes the row out).
+  The row now carries the action as the whole row's own button, which cannot
+  clip at all.
+- **A control behind hover alone is invisible on a phone**, the same trap as a
+  `title=` tooltip. Reveal-on-hover is fine as a *hint* for a mouse — the note
+  row's pencil — as long as the thing it hints at can be tapped without it:
+  gate the hint on `@media (hover: hover)` and make the row itself the target.
+  Check `(hover: none)` in a Playwright context with `isMobile`/`hasTouch`;
+  resizing the viewport alone does not change those media features.
 - **Dialogs must not rebuild their form on every data refresh.** The entry
   editor and the rollup review reset their state in an effect that depended on
   model arrays; any revalidation (e.g. creating a job from inside the dialog)
@@ -951,6 +967,8 @@ to import history — belong to that deployment's notes.
 - **Don't hard-delete time entries.** Soft delete only; undo and audit depend on it.
 - **Don't add `title=` attributes for tooltips.** They are invisible on touch, and
   this is a phone-first app. Put the information inline or use a tap-to-expand.
+- **Don't leave anything reachable only by hovering**, for the same reason. A
+  hover may reveal a hint; it may not be the only way to the action.
 - **Don't deploy by hand.** Everything ships through CI.
 - **Don't pass the whole `secrets` context to a step** (`toJSON(secrets)`). Name
   each secret; GitHub blocks the workflow otherwise (see gotchas).

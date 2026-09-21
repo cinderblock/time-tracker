@@ -51,7 +51,9 @@ async function pickJob(input: Locator, name: string) {
 }
 
 const timerCard = () => page.locator(".mantine-Card-root", { has: page.getByRole("button", { name: "Stop" }) });
-const entryRows = () => page.locator(".mantine-Card-root", { has: page.getByRole("button", { name: /^Edit / }) });
+// Not a job's notes section, whose rows open for editing the same way.
+const entryRows = () =>
+  page.locator(".mantine-Card-root:not([role='group'])", { has: page.getByRole("button", { name: /^Edit / }) });
 // The header, where the sync status appears. (The person here is called
 // "Olive Offline", so match status text precisely, not on the word "Offline".)
 const syncBadge = () => page.getByRole("banner");

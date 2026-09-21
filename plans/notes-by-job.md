@@ -44,6 +44,12 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
    they have one.
 6. **A start marker can be removed but not reworded**; its time is edited by
    removing it and adding the job again.
+7. **A note row is its own edit control** (2026-09-21). Tapping anywhere on it
+   opens it, as tapping an entry row does; with a mouse a pencil fades in on
+   the row to say so, and on a touch device that pencil isn't drawn at all, so
+   the note gets the row's full width where width is scarce. There is no
+   text "Edit" button to squeeze — see the clipping finding in
+   `plans/time-tracker.md`.
 
 ## Plan / steps
 
@@ -61,14 +67,24 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
 6. [x] Tests: rollup and tracking unit tests, reducer mirror, e2e notes-mode
    tests rewritten.
 7. [x] typecheck, unit (273), e2e (58) green; committed; deployed (the deployer pinned the published digest).
+8. [x] The note row became its own edit control (decision 7), after a long
+   note clipped the "Edit" button's label.
 
 ## Findings / gotchas
 
 - The hours dialog computes over *all* the day's notes (rolled ones included) because they still bound this job's runs; only the pending part of a mixed line counts, from its first pending note.
 - Playwright: section cards are `role="group"` named by the job's full path ("No job yet" for jobless notes); the hours dialog is `Hours for <full path>`; the commit button reads `Add <duration> to <job name>`.
+- A note row's button is named `Edit <the note's text>`, like an entry row's `Edit <job>`. The specs' `entryRows()` locator therefore excludes `[role="group"]` cards, or a job's notes section would answer to it too.
 
 ## Progress log
 
+- 2026-09-21 — **The note row opens itself.** The text "Edit" button shared the
+  row with the note and a long one clipped it to "Edi"; the row is now the
+  control (`app/tracker/notes.module.css`, step 8 above). Verified: typecheck,
+  273 unit, 43 chromium e2e; a throwaway spec checked the pencil's computed
+  opacity (0 idle, 1 hovered), its 16px width, and that a phone context draws
+  no pencil and opens the note on tap — with screenshots at 1100px and 390px
+  reviewed.
 - 2026-09-19 — Designed and built in one pass: start markers, sections by job, per-job hours dialog, duration lines in rollup.commit, migration 003. Typecheck clean; 273 unit; 58 e2e (first run green). Committed, pushed, and deployed by the deployer the same day (migration 003 applied itself on first start).
 
 ## Open questions for the user

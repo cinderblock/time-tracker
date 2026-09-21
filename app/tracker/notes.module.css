@@ -1,0 +1,58 @@
+/*
+ * A note row: its time and text on the left, its action on the right.
+ *
+ * The action used to be a text button sharing the row's width, and a long
+ * note squeezed it — Mantine's button root is `overflow: hidden`, so as a
+ * flex item it shrinks past its own label and clips it ("Edi"). Actions here
+ * never shrink; the text takes what's left.
+ *
+ * With a mouse the action fades in on the row, so a quiet row stays quiet.
+ * On a phone there is no hover, so it stays drawn — except the pencil, which
+ * is only a hint: the whole row is the tap target there, and dropping it
+ * gives the note the full width where width is scarce.
+ */
+
+.row {
+  position: relative;
+}
+
+.action {
+  flex: 0 0 auto;
+}
+
+.pencil {
+  flex: 0 0 auto;
+  /* Sits at the row's end whatever the note's length, level with its first line. */
+  margin-inline-start: auto;
+  margin-block-start: 2px;
+  color: var(--mantine-color-dimmed);
+}
+
+@media (hover: hover) {
+  .action,
+  .pencil {
+    opacity: 0;
+    transition: opacity 100ms ease;
+  }
+
+  .row:hover .action,
+  .row:focus-within .action,
+  .row:hover .pencil,
+  .row:focus-within .pencil {
+    opacity: 1;
+  }
+}
+
+@media (hover: none) {
+  .pencil {
+    display: none;
+  }
+
+  /* No pointer to aim with: the row's whole width, and a little more of the
+   * gap above and below it, opens the note. The negative margin keeps the
+   * rows sitting where they did — this buys reach, not space. */
+  .opener {
+    padding-block: 4px;
+    margin-block: -4px;
+  }
+}

@@ -76,7 +76,8 @@ async function send<T extends OpType>(request: APIRequestContext, type: T, paylo
 
 const timerCard = () => page.locator(".mantine-Card-root", { has: page.getByRole("button", { name: "Stop" }) });
 const entryRows = () =>
-  page.locator(".mantine-Card-root", { has: page.getByRole("button", { name: /^Edit / }) });
+  // Not a job's notes section, whose rows open for editing the same way.
+  page.locator(".mantine-Card-root:not([role='group'])", { has: page.getByRole("button", { name: /^Edit / }) });
 
 test.afterAll(async () => {
   await ctx?.close();
@@ -328,7 +329,7 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
   // Without a job it can't become hours: give it one.
   const orphan = page.getByRole("group", { name: "No job yet" });
   await expect(orphan.getByText("Left over from yesterday")).toBeVisible();
-  await orphan.getByRole("button", { name: "Edit" }).click();
+  await orphan.getByRole("button", { name: /^Edit / }).click();
   await pickJob(orphan.getByRole("combobox"), "Alpha Site");
   await orphan.getByRole("button", { name: "Save" }).click();
   const alpha = page.getByRole("group", { name: "Riverside:Alpha Site" });

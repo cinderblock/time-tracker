@@ -11,6 +11,7 @@ import {
   TextInput,
   Textarea,
   Title,
+  UnstyledButton,
 } from "@mantine/core";
 import { TimeInput } from "@mantine/dates";
 import { useMediaQuery } from "@mantine/hooks";
@@ -32,6 +33,7 @@ import { useTracker, useUndoToast } from "./context.tsx";
 import { splitJobName } from "./job-groups.ts";
 import { JobSelect } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
+import classes from "./notes.module.css";
 
 /**
  * Notes mode, by job. Adding a job to the day marks being on it from that
@@ -279,6 +281,12 @@ function NoteBox({
   );
 }
 
+/**
+ * One line of the day. A note that hasn't become hours yet opens for editing
+ * from anywhere on its row — the whole row is the tap target, as an entry's is
+ * — with a pencil fading in on hover to say so where there's a mouse. The
+ * start marker can only be removed, and a rolled-up note is just a record.
+ */
 function NoteRow({ note }: { note: NoteView }) {
   const { model, dispatch, pending } = useTracker();
   const undoToast = useUndoToast();
@@ -336,32 +344,88 @@ function NoteRow({ note }: { note: NoteView }) {
     );
   }
 
+  const when = (
+    <Text size="sm" c="dimmed" style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+      {formatClock(note.at, model.timezone)}
+    </Text>
+  );
+  // `overflowWrap` so one long unbroken word shrinks with the row rather than
+  // pushing the action off the end of it.
+  const what = (
+    <Text
+      size="sm"
+      c={start ? "dimmed" : undefined}
+      fs={start ? "italic" : undefined}
+      style={{ minWidth: 0, overflowWrap: "anywhere" }}
+    >
+      {start ? "Started" : note.text}
+    </Text>
+  );
+
   return (
-    <Group justify="space-between" wrap="nowrap" align="start" opacity={rolled ? 0.6 : 1}>
-      <Group gap="xs" wrap="nowrap" align="start" style={{ minWidth: 0 }}>
-        <Text size="sm" c="dimmed" style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-          {formatClock(note.at, model.timezone)}
-        </Text>
-        <Text size="sm" c={start ? "dimmed" : undefined} fs={start ? "italic" : undefined}>
-          {start ? "Started" : note.text}
-        </Text>
-        {rolled && (
-          <Badge size="sm" variant="light" color="gray">
-            added to time
-          </Badge>
-        )}
-      </Group>
-      {!rolled &&
-        (start ? (
-          <Button size="compact-xs" variant="subtle" color="gray" onClick={() => void remove()} disabled={pending}>
-            Remove
-          </Button>
-        ) : (
-          <Button size="compact-xs" variant="subtle" onClick={() => setEditing(true)}>
-            Edit
-          </Button>
-        ))}
+    <Group className={classes.row} justify="space-between" wrap="nowrap" align="start" opacity={rolled ? 0.6 : 1}>
+      {start || rolled ? (
+        <Group gap="xs" wrap="nowrap" align="start" style={{ minWidth: 0 }}>
+          {when}
+          {what}
+          {rolled && (
+            <Badge size="sm" variant="light" color="gray">
+              added to time
+            </Badge>
+          )}
+        </Group>
+      ) : (
+        <UnstyledButton
+          className={classes.opener}
+          onClick={() => setEditing(true)}
+          aria-label={`Edit ${note.text}`}
+          style={{ flex: 1, minWidth: 0 }}
+        >
+          <Group gap="xs" wrap="nowrap" align="start">
+            {when}
+            {what}
+            <PencilIcon />
+          </Group>
+        </UnstyledButton>
+      )}
+      {!rolled && start && (
+        <Button
+          className={classes.action}
+          size="compact-xs"
+          variant="subtle"
+          color="gray"
+          onClick={() => void remove()}
+          disabled={pending}
+        >
+          Remove
+        </Button>
+      )}
     </Group>
+  );
+}
+
+/**
+ * The hint that a note opens for editing, drawn here rather than taking on an
+ * icon set for one glyph. Decorative: the row around it carries the label.
+ */
+function PencilIcon() {
+  return (
+    <svg
+      className={classes.pencil}
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M3 21l1-4L16 5l3 3L7 20l-4 1z" />
+      <path d="M14 7l3 3" />
+    </svg>
   );
 }
 
