@@ -31,6 +31,7 @@ import "@mantine/notifications/styles.css";
 import { branding } from "../src/branding.ts";
 import { config } from "../src/config.server.ts";
 import { authMiddleware } from "./auth.server.ts";
+import { startAutoUpdate } from "./pwa/auto-update.ts";
 import { initMiddleware } from "./server-init.ts";
 
 // Order matters: the database must be open before the session is resolved.
@@ -150,12 +151,12 @@ export default function App({ loaderData }: Route.ComponentProps) {
   );
 
   useEffect(() => {
-    // The worker is what makes the app installable and usable offline. Not in
-    // development: a caching worker and Vite's hot reloading fight each other.
+    // The worker is what makes the app installable and usable offline, and
+    // what replaces itself when a release lands — see app/pwa/auto-update.ts.
+    // Not in development: a caching worker and Vite's hot reloading fight each
+    // other, and a reload on every rebuild would be unusable.
     if (import.meta.env.DEV) return;
-    navigator.serviceWorker?.register("/sw.js").catch((err: unknown) => {
-      console.warn("Service worker registration failed", err);
-    });
+    startAutoUpdate();
   }, []);
 
   return (

@@ -15,6 +15,12 @@
  * release a new worker. The one from the previous release is kept until the
  * next, so a page still running old code can finish loading its files.
  *
+ * This worker takes over as soon as it installs (skipWaiting, then claim).
+ * Taking over is not enough on its own — an open page keeps running the code
+ * it already loaded — so the page watches for the handover and reloads:
+ * app/pwa/auto-update.ts, which is also what asks whether a newer worker
+ * exists, since nothing else in a single-page app ever does.
+ *
  * Served unbundled from the site root, so its scope is "/".
  */
 

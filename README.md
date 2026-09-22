@@ -171,6 +171,13 @@ rules, which is tested against the real server code. A service worker keeps the
 app's files (the list is stamped into it at build time by
 [`scripts/finalize-build.ts`](scripts/finalize-build.ts)) and the tracking pages.
 
+An installed app also replaces itself ([`app/pwa/`](app/pwa/)). It asks whether a
+newer release exists when it is resumed, when it reconnects, and on a slow timer
+while open — a single page never navigates, so nothing else would ask — and
+reloads the moment the new worker takes over. Without that last step the app
+looks perfectly alive on old code, because data is never cached and only the
+bundle is stale.
+
 ## Configuration
 
 Everything comes from the environment; see [`.env.example`](.env.example) for the
@@ -257,6 +264,7 @@ time.
 app/             React Router routes, UI, server-side loaders/actions
 app/tracker/     The time-tracking screen (also used by admins for someone else's day)
 app/offline/     Outbox, sync engine, device copies, offline loaders
+app/pwa/         Service worker registration, and keeping an installed app current
 src/             Server-side modules (SQLite, auth flows, time, sign-off, reports, sync)
 src/accounting/  Accounting backends and the qbXML encoder
 src/testing/     Test helpers: the software passkey authenticator, a pretend QuickBooks and bridge

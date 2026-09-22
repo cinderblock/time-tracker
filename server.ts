@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import { createRequestHandler } from "@react-router/express";
 import type { ServerBuild } from "react-router";
 import compression from "compression";
@@ -45,7 +47,19 @@ app.use(compression());
 // Hashed build assets are immutable; everything else in build/client (the
 // service worker, icons) may change between builds.
 app.use("/assets", express.static("build/client/assets", { immutable: true, maxAge: "1y" }));
-app.use(express.static("build/client", { maxAge: "1h" }));
+app.use(
+  express.static("build/client", {
+    maxAge: "1h",
+    setHeaders(res, filePath) {
+      // The worker script decides when every other cached file is replaced, so
+      // it must never be answered from a cache. Browsers already bypass their
+      // HTTP cache for it (updateViaCache defaults to "imports"), but a proxy
+      // in between doesn't know that rule, and an hour-old worker is an
+      // hour-old app.
+      if (basename(filePath) === "sw.js") res.setHeader("Cache-Control", "no-cache");
+    },
+  }),
+);
 
 app.use(morgan("tiny"));
 
