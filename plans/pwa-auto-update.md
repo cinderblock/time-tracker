@@ -116,11 +116,17 @@ loop-guarded path as the event.
 7. [x] `bun run typecheck` clean; `bun test src/ app/` 309 pass / 0 fail (12 of
    them new); `bun run test:e2e` 61 passed, 2 skipped (the pre-existing
    screenshot skips). Committed as `4f743e7`, unpushed at the time of writing.
-8. [ ] Deploy and confirm on a real phone: install, deploy a change, background
-   the app, reopen, see the new feature without touching anything. **This is
-   the only step that proves the thing works** — the unit tests cover the
-   rules, and the e2e suite never changes build mid-run, so neither of them
-   has ever seen a real second release arrive.
+8. [x] Deployed 2026-09-22 as `f105b31` (image `sha256:1a010bb2…`, ops pin
+   `f75b21a`). Container healthy on steamboat; `https://time.twilltech.com/sw.js`
+   serves `Cache-Control: no-cache` and build `0d1b0c2842c471b3`.
+9. [ ] **Confirm on a real phone at the *next* deploy**: install, deploy a
+   change, background the app, reopen, see the new feature without touching
+   anything. This cannot be proven by the deploy that introduced it — every
+   installed copy was running pre-fix code that has no way to update itself,
+   so each device needed one last manual force reload to pick up the updater.
+   It is also the only step that proves the thing works: the unit tests cover
+   the rules, and the e2e suite never changes build mid-run, so neither has
+   ever seen a real second release arrive.
 
 ## Findings / gotchas
 
