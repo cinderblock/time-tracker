@@ -75,7 +75,8 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
 7. [x] typecheck, unit (273), e2e (58) green; committed; deployed (the deployer pinned the published digest).
 8. [x] The note row became its own edit control (decision 7), after a long
    note clipped the "Edit" button's label.
-9. [x] Recent jobs as buttons above the picker (decision 8).
+9. [x] Recent jobs as buttons above the picker (decision 8); typecheck,
+   299 unit, 61 e2e green, deployed (the deployer pinned the published digest).
 
 ## Findings / gotchas
 
@@ -89,7 +90,7 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
   `RecentJobButtons` (the timer screen's row) above its search picker, so the
   two modes start a job the same way. The e2e notes flow adds its second job by
   button and checks that tapping a job already on the day only moves the cursor
-  to its note box.
+  to its note box. Deployed the same evening.
 - 2026-09-21 — **The note row opens itself.** The text "Edit" button shared the
   row with the note and a long one clipped it to "Edi"; the row is now the
   control (`app/tracker/notes.module.css`, step 8 above). Verified: typecheck,
