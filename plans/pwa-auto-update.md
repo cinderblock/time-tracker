@@ -113,9 +113,14 @@ loop-guarded path as the event.
    `register()`.
 5. [x] `server.ts` — `Cache-Control: no-cache` on `sw.js`.
 6. [x] README: the offline paragraph says the app replaces itself.
-7. [x] `bun run typecheck`, `bun test src/ app/`, `bun run test:e2e`.
+7. [x] `bun run typecheck` clean; `bun test src/ app/` 309 pass / 0 fail (12 of
+   them new); `bun run test:e2e` 61 passed, 2 skipped (the pre-existing
+   screenshot skips). Committed as `4f743e7`, unpushed at the time of writing.
 8. [ ] Deploy and confirm on a real phone: install, deploy a change, background
-   the app, reopen, see the new feature without touching anything.
+   the app, reopen, see the new feature without touching anything. **This is
+   the only step that proves the thing works** — the unit tests cover the
+   rules, and the e2e suite never changes build mid-run, so neither of them
+   has ever seen a real second release arrive.
 
 ## Findings / gotchas
 
