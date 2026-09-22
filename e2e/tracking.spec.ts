@@ -357,10 +357,17 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   await bravo.getByRole("button", { name: "Add", exact: true }).click();
   await expect(bravo.getByText("Cutting studs")).toBeVisible();
 
-  // A second job, later in the day.
-  await pickJob(page.getByPlaceholder("Add a job for today — type to search"), "Alpha Site");
+  // A second job, later in the day — one tap on a recent job, no searching.
+  const recentJobs = page.getByRole("group", { name: "Recent jobs" });
+  await recentJobs.getByRole("button", { name: "Alpha Site" }).click();
   const alpha = page.getByRole("group", { name: "Riverside › Alpha Site" });
   await expect(alpha.getByText("Started")).toBeVisible();
+
+  // Tapping a job already on the day is how you say you're back on it: no
+  // second section, just the cursor in its note box.
+  await recentJobs.getByRole("button", { name: "Bravo Site" }).click();
+  await expect(bravo.getByPlaceholder("What did you do?")).toBeFocused();
+  await expect(page.getByRole("group", { name: "Riverside › Bravo Site" })).toHaveCount(1);
   await alpha.getByPlaceholder("What did you do?").fill("Site walk");
   await alpha.getByRole("button", { name: "Add", exact: true }).click();
   await expect(alpha.getByText("Site walk")).toBeVisible();

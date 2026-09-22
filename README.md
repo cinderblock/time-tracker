@@ -30,8 +30,9 @@ repository. All of that is deployment configuration or an admin setting.
   - *Timers* — start, pause, resume, stop. Switching jobs is one tap on a recent
     job and stops the old timer at the same instant. A job, a customer (for all
     its jobs) or the whole organisation can require a note before a timer stops.
-  - *Notes* — add the job you're on, then jot what you do under it as you go
-    (and add a second job when you move to one). Tap a note to correct it or
+  - *Notes* — add the job you're on — one tap on a recent job, as starting a
+    timer is — then jot what you do under it as you go (and add a second job
+    when you move to one). Tap a note to correct it or
     move it to another job. At the end of the day (or the next morning) each
     job's notes become hours: the timeline suggests them, you confirm, and one
     entry per job carries the notes as its description. A day's notes have to

@@ -219,7 +219,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
           <Text size="sm" fw={500}>
             Switch to
           </Text>
-          <RecentJobButtons onPick={requestSwitch} exclude={entry.jobId} disabled={pending} />
+          <RecentJobButtons onPick={requestSwitch} exclude={entry.jobId} disabled={pending} label="Switch to" />
           <JobSelect
             value={otherJob}
             onChange={(id) => {

@@ -337,10 +337,13 @@ export function RecentJobButtons({
   onPick,
   exclude,
   disabled,
+  label = "Recent jobs",
 }: {
   onPick: (job: JobView) => void;
   exclude?: string | null;
   disabled?: boolean;
+  /** Names the row, for a screen reader arriving at a wall of job buttons. */
+  label?: string;
 }) {
   const { model } = useTracker();
   const byId = new Map(model.jobs.map((j) => [j.id, j]));
@@ -349,7 +352,7 @@ export function RecentJobButtons({
     .filter((j): j is JobView => j != null && j.bookable && j.id !== exclude);
   if (recent.length === 0) return null;
   return (
-    <Group gap="xs" grow preventGrowOverflow={false} wrap="wrap">
+    <Group gap="xs" grow preventGrowOverflow={false} wrap="wrap" role="group" aria-label={label}>
       {recent.map((job) => {
         const { name, above } = jobPath(job.fullName);
         return (

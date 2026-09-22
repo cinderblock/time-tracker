@@ -34,7 +34,7 @@ import { uuidv7 } from "../../src/uuid.ts";
 import { DurationInput } from "../components/duration-input.tsx";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
-import { JobSelect } from "./JobPicker.tsx";
+import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
 import classes from "./notes.module.css";
 
@@ -136,7 +136,7 @@ function groupByJob(notes: readonly NoteView[]): Section[] {
 
 /** Pick a job to be on from now. One already on the day just takes the cursor. */
 function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: string) => void }) {
-  const { dispatch, location } = useTracker();
+  const { dispatch, location, pending } = useTracker();
   const [value, setValue] = useState<string | null>(null);
 
   async function pick(jobId: string | null) {
@@ -156,7 +156,15 @@ function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: s
     if (result.ok) onAdded(jobId);
   }
 
-  return <JobSelect value={value} onChange={(id) => void pick(id)} placeholder="Add a job for today — type to search" />;
+  // The buttons are the fast way onto a job you've been on lately — the same
+  // one tap that starts a timer. One already on the day is still worth a
+  // button: tapping it is how you say you're back on it.
+  return (
+    <Stack gap="xs">
+      <RecentJobButtons onPick={(job) => void pick(job.id)} disabled={pending} />
+      <JobSelect value={value} onChange={(id) => void pick(id)} placeholder="Add a job for today — type to search" />
+    </Stack>
+  );
 }
 
 function JobSection({

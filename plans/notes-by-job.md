@@ -51,6 +51,11 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
    clue a note can be edited for ~22px, and the width wasn't worth it.) There
    is no text "Edit" button to squeeze — see the clipping finding in
    `plans/time-tracker.md`.
+8. **Recent jobs are buttons above the "add a job" picker** (2026-09-21, the
+   user's ask): the same `RecentJobButtons` row that starts and switches a
+   timer, so getting onto a job is one tap in either mode instead of a search.
+   Jobs already on the day keep their button — tapping one is how being back
+   on it is said (decision 2), and it lands the cursor in that job's note box.
 
 ## Plan / steps
 
@@ -70,6 +75,7 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
 7. [x] typecheck, unit (273), e2e (58) green; committed; deployed (the deployer pinned the published digest).
 8. [x] The note row became its own edit control (decision 7), after a long
    note clipped the "Edit" button's label.
+9. [x] Recent jobs as buttons above the picker (decision 8).
 
 ## Findings / gotchas
 
@@ -79,6 +85,11 @@ a job, roll the whole day up" layout from `plans/jobs-under-customers.md`.
 
 ## Progress log
 
+- 2026-09-21 — **One tap onto a recent job in notes mode.** `AddJob` now draws
+  `RecentJobButtons` (the timer screen's row) above its search picker, so the
+  two modes start a job the same way. The e2e notes flow adds its second job by
+  button and checks that tapping a job already on the day only moves the cursor
+  to its note box.
 - 2026-09-21 — **The note row opens itself.** The text "Edit" button shared the
   row with the note and a long one clipped it to "Edi"; the row is now the
   control (`app/tracker/notes.module.css`, step 8 above). Verified: typecheck,
