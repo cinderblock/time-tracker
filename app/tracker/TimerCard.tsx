@@ -6,6 +6,8 @@ import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import { formatClock, formatDuration, formatDurationHuman } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
+import appear from "../components/appear.module.css";
+import { useHeldOpen } from "../components/use-held-open.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
@@ -31,7 +33,7 @@ function StartTimer() {
   }
 
   return (
-    <Card withBorder padding="lg" radius="md">
+    <Card withBorder padding="lg" radius="md" className={appear.appear}>
       <Stack gap="md">
         <Title order={3}>Start a timer</Title>
         <RecentJobButtons onPick={(job) => start(job.id)} disabled={pending} />
@@ -140,7 +142,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
   }
 
   return (
-    <Card ref={card} withBorder padding="lg" radius="md" shadow="sm">
+    <Card ref={card} withBorder padding="lg" radius="md" shadow="sm" className={appear.appear}>
       <Stack gap="md">
         <Group justify="space-between" align="start" wrap="nowrap">
           <Stack gap={2}>
@@ -265,9 +267,13 @@ function SwitchNoteModal({
 }) {
   const narrow = useMediaQuery("(max-width: 36em)");
   const [text, setText] = useState(initial);
-  useEffect(() => setText(initial), [initial, job]);
+  const opened = job != null;
+  // Closing clears the job; without this the sentence below loses its end
+  // ("switches to .") for the length of the fade-out.
+  const shown = useHeldOpen(opened, job);
+  useEffect(() => setText(initial), [initial, shown]);
   return (
-    <Modal opened={job != null} onClose={onCancel} title={`Note for ${jobLabel(fromJob)}`} centered fullScreen={narrow}>
+    <Modal opened={opened} onClose={onCancel} title={`Note for ${jobLabel(fromJob)}`} centered fullScreen={narrow}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -276,7 +282,8 @@ function SwitchNoteModal({
       >
         <Stack>
           <Text size="sm">
-            {jobLabel(fromJob)} needs a note before its timer stops. Then the timer switches to {job ? jobLabel(job.fullName) : ""}.
+            {jobLabel(fromJob)} needs a note before its timer stops. Then the timer switches to{" "}
+            {shown ? jobLabel(shown.fullName) : ""}.
           </Text>
           <Textarea
             label="What did you do?"

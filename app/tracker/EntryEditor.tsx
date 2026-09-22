@@ -16,6 +16,7 @@ import {
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { DurationInput, durationProblem } from "../components/duration-input.tsx";
+import { useHeldOpen } from "../components/use-held-open.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { JobSelect } from "./JobPicker.tsx";
 import type { EntryView } from "./model.ts";
@@ -28,7 +29,7 @@ type Mode = "times" | "duration";
  * the start means the work ran past midnight.
  */
 export function EntryEditor({
-  entry,
+  entry: subject,
   opened,
   onClose,
   defaultDate,
@@ -39,6 +40,9 @@ export function EntryEditor({
   onClose: () => void;
   defaultDate: string;
 }) {
+  // The list clears `editing` in the same breath as `opened`, so without this
+  // the dialog spends its whole fade-out as the "Add time" form.
+  const entry = useHeldOpen(opened, subject);
   const { model, dispatch } = useTracker();
   const undoToast = useUndoToast();
   const narrow = useMediaQuery("(max-width: 36em)");

@@ -31,6 +31,7 @@ import "@mantine/notifications/styles.css";
 import { branding } from "../src/branding.ts";
 import { config } from "../src/config.server.ts";
 import { authMiddleware } from "./auth.server.ts";
+import { MOTION, motionCss } from "./motion.ts";
 import { startAutoUpdate } from "./pwa/auto-update.ts";
 import { initMiddleware } from "./server-init.ts";
 
@@ -115,6 +116,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <link rel="icon" type="image/png" href="/icons/icon-192.png" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
         <ColorSchemeScript defaultColorScheme="auto" />
+        {/* The motion scale, as custom properties — see app/motion.ts. In the
+            head so the first paint already has them, rather than a frame of
+            stylesheets falling back to their unset defaults. */}
+        <style dangerouslySetInnerHTML={{ __html: motionCss }} />
         <Meta />
         <Links />
       </head>
@@ -142,9 +147,22 @@ export default function App({ loaderData }: Route.ComponentProps) {
         // Pick black or white text per shade, so a light brand colour still
         // produces readable buttons.
         autoContrast: true,
-        // Phone-first: bigger default hit targets than Mantine's desktop defaults.
+        // Mantine defaults this to false, which means every one of its
+        // transitions ignores the setting. On, they collapse to nothing.
+        respectReducedMotion: true,
         components: {
+          // Phone-first: bigger default hit targets than Mantine's desktop defaults.
           Button: { defaultProps: { size: "md" } },
+          // Every dialog opens and closes the same way — see app/motion.ts.
+          Modal: {
+            defaultProps: {
+              transitionProps: {
+                transition: "pop",
+                duration: MOTION.base,
+                timingFunction: MOTION.entrance,
+              },
+            },
+          },
         },
       }),
     [palette, primaryShade],

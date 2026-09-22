@@ -1,0 +1,31 @@
+/*
+ * Something arriving on screen: a new row of time, a note just written, the
+ * card that takes a timer's place when it stops. It rises a little and fades
+ * in, so the list gaining an item reads as a change rather than a jump cut.
+ *
+ * `@starting-style` is what makes this work at all for an element that wasn't
+ * in the document a moment ago — it supplies the "before" a transition needs.
+ * A browser without it just shows the element, which is exactly what happens
+ * today, so nothing here is load-bearing.
+ *
+ * Enter only. Animating the way out would mean holding rows in component
+ * state after the model says they're gone, and a list that disagrees with the
+ * record about what exists is worse than a row that vanishes.
+ *
+ * Durations come from app/motion.ts, which zeroes them for anyone who asked
+ * for no motion; the fallbacks are for the first paint of a cached page whose
+ * head hasn't been parsed yet.
+ */
+
+.appear {
+  transition:
+    opacity var(--motion-base, 200ms) var(--ease-entrance, ease-out),
+    transform var(--motion-base, 200ms) var(--ease-entrance, ease-out);
+}
+
+@starting-style {
+  .appear {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}

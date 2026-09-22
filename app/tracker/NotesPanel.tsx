@@ -36,6 +36,7 @@ import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
+import appear from "../components/appear.module.css";
 import classes from "./notes.module.css";
 
 /**
@@ -187,7 +188,14 @@ function JobSection({
   const written = section.pending.filter((n) => n.kind === "note").length;
 
   return (
-    <Card ref={card} withBorder padding="sm" role="group" aria-label={name ? jobLabel(name) : "No job yet"}>
+    <Card
+      ref={card}
+      withBorder
+      padding="sm"
+      role="group"
+      aria-label={name ? jobLabel(name) : "No job yet"}
+      className={appear.appear}
+    >
       <Stack gap="xs">
         <Group justify="space-between" align="start" wrap="nowrap">
           <Stack gap={0} style={{ minWidth: 0 }}>
@@ -378,7 +386,13 @@ function NoteRow({ note }: { note: NoteView }) {
   );
 
   return (
-    <Group className={classes.row} justify="space-between" wrap="nowrap" align="start" opacity={rolled ? 0.6 : 1}>
+    <Group
+      className={`${classes.row} ${appear.appear}`}
+      justify="space-between"
+      wrap="nowrap"
+      align="start"
+      opacity={rolled ? 0.6 : 1}
+    >
       {start || rolled ? (
         <Group gap="xs" wrap="nowrap" align="start" style={{ minWidth: 0 }}>
           {when}

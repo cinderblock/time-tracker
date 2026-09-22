@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { MOTION } from "../motion.ts";
 import classes from "./flight.module.css";
 
 /**
@@ -59,10 +60,16 @@ export function useFlight(): Flight {
   return useContext(FlightContext);
 }
 
-/** Mantine's modal fades over ~200ms; the flight waits so it isn't hidden. */
-const MODAL_CLOSE_MS = 220;
+/**
+ * A dialog fades out over `MOTION.base`; the flight waits that out, plus a
+ * frame or two, so it doesn't begin behind a dialog that's still there. Taken
+ * from the shared scale rather than written down again, because the two
+ * drifting apart is invisible until it isn't.
+ */
+const MODAL_CLOSE_MS = MOTION.base + 20;
 const FLIGHT_MS = 620;
-const FLASH_MS = 900;
+/** Matches the `land` keyframe's length in flight.module.css, via MOTION. */
+const FLASH_MS = MOTION.flash;
 
 export function FlightProvider({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<Pending | null>(null);
@@ -149,7 +156,7 @@ function Ghost({ pending, onArrived }: { pending: Pending; onArrived: (entryId: 
           { transform: shift(dx * 0.88, dy * 0.88, 1), opacity: 1, offset: 0.15 },
           { transform: shift(0, 0, 1), opacity: 1 },
         ],
-        { duration: FLIGHT_MS, easing: "cubic-bezier(.22,.7,.2,1)", fill: "forwards" },
+        { duration: FLIGHT_MS, easing: MOTION.entrance, fill: "forwards" },
       );
       try {
         await animation.finished;

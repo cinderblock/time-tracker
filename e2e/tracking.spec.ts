@@ -83,6 +83,31 @@ test.afterAll(async () => {
   await ctx?.close();
 });
 
+/**
+ * What the open dialog's title was on each animation frame while `act` ran,
+ * runs of identical frames collapsed. Mantine keeps a modal mounted through
+ * its exit transition, so a dialog whose subject the close clears renders its
+ * other self for those frames unless something holds it — see
+ * app/components/use-held-open.ts.
+ */
+async function dialogTitlesWhile(act: () => Promise<void>, settleMs = 600) {
+  const probe = () => (window as unknown as { __frames: string[] }).__frames;
+  await page.evaluate(() => {
+    const frames: string[] = [];
+    (window as unknown as { __frames: string[] }).__frames = frames;
+    const tick = () => {
+      const dialog = document.querySelector("[role=dialog]");
+      frames.push(dialog ? (dialog.querySelector(".mantine-Modal-title")?.textContent ?? "?") : "(gone)");
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await act();
+  await page.waitForTimeout(settleMs);
+  const frames = await page.evaluate(probe);
+  return frames.filter((f, i) => f !== frames[i - 1]);
+}
+
 test("set up: a person, a customer and two jobs under it", async ({ browser }) => {
   ({ context: ctx, page } = await signUp(browser, "Tess Tracker"));
   await page.getByRole("link", { name: "Jobs" }).click();
@@ -297,6 +322,19 @@ test("edit an entry's times; an end before the start runs past midnight", async 
   await add.getByLabel("Date").fill(yesterday);
   await add.getByRole("button", { name: "Add time" }).click();
   await expect(add).toBeHidden();
+});
+
+test("the editor keeps its own face all the way through closing", async () => {
+  await entryRows().filter({ hasText: "Paperwork" }).getByRole("button", { name: /^Edit / }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit entry" });
+  await expect(dialog).toBeVisible();
+
+  const titles = await dialogTitlesWhile(() => dialog.getByRole("button", { name: "Cancel" }).click());
+  // An "Add time" in here means the list cleared the entry being edited while
+  // the dialog was still on screen, and it spent the fade-out as the create
+  // form: a different title, a Start & end / Just a duration toggle, and no
+  // Delete button.
+  expect(titles).toEqual(["Edit entry", "(gone)"]);
 });
 
 test("move to the previous day and back", async () => {

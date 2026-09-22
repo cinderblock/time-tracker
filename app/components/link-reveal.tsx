@@ -3,6 +3,8 @@ import { useMediaQuery } from "@mantine/hooks";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState } from "react";
 
+import { useHeldOpen } from "./use-held-open.ts";
+
 export interface RevealedLink {
   url: string;
   /** Who or what the link is for, e.g. "Invite for Grace (employee)". */
@@ -22,21 +24,24 @@ export function LinkReveal({ link, onClose }: { link: RevealedLink | null; onClo
   // On a phone the dialog takes the whole screen, so the QR code, the link and
   // the Done button all fit without a scroll trap behind a notification.
   const narrow = useMediaQuery("(max-width: 36em)");
+  const opened = link != null;
+  // Closing clears the link; the dialog would otherwise fade out empty.
+  const shown = useHeldOpen(opened, link);
   useEffect(() => setCanShare(typeof navigator !== "undefined" && typeof navigator.share === "function"), []);
 
   return (
-    <Modal opened={link != null} onClose={onClose} title="One-time link" centered size="md" fullScreen={narrow}>
-      {link && (
+    <Modal opened={opened} onClose={onClose} title="One-time link" centered size="md" fullScreen={narrow}>
+      {shown && (
         <Stack gap="md">
-          <Text fw={500}>{link.label}</Text>
+          <Text fw={500}>{shown.label}</Text>
           <Center>
-            <QRCodeSVG value={link.url} size={220} marginSize={2} aria-label="QR code of the link" />
+            <QRCodeSVG value={shown.url} size={220} marginSize={2} aria-label="QR code of the link" />
           </Center>
           <Code block style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-            {link.url}
+            {shown.url}
           </Code>
           <Group grow>
-            <CopyButton value={link.url}>
+            <CopyButton value={shown.url}>
               {({ copied, copy }) => (
                 <Button variant={copied ? "filled" : "light"} color={copied ? "green" : undefined} onClick={copy}>
                   {copied ? "Copied" : "Copy link"}
@@ -47,7 +52,7 @@ export function LinkReveal({ link, onClose }: { link: RevealedLink | null; onClo
               <Button
                 variant="light"
                 onClick={() => {
-                  navigator.share({ title: link.label, url: link.url }).catch(() => {});
+                  navigator.share({ title: shown.label, url: shown.url }).catch(() => {});
                 }}
               >
                 Share…
@@ -55,7 +60,7 @@ export function LinkReveal({ link, onClose }: { link: RevealedLink | null; onClo
             )}
           </Group>
           <Alert color="blue">
-            Works once, until {link.expires}. This is the only time it's shown — if it's lost, revoke it and make
+            Works once, until {shown.expires}. This is the only time it's shown — if it's lost, revoke it and make
             a new one.
           </Alert>
           <Button onClick={onClose}>Done</Button>

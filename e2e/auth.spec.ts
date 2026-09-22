@@ -117,6 +117,10 @@ test("the admin invites an employee and sees the link exactly once", async () =>
   inviteUrl = (await dialog.locator("pre, code").first().innerText()).trim();
   expect(inviteUrl).toMatch(/^http:\/\/localhost:\d+\/join\/[\w-]+$/);
   await dialog.getByRole("button", { name: "Done" }).click();
+  // The dialog goes on showing the link it was opened with until it is gone
+  // (app/components/use-held-open.ts), so wait it out rather than matching
+  // the same label in two places at once.
+  await expect(dialog).toBeHidden();
 
   await expect(page.getByText("Invite for Grace Hopper (employee)")).toBeVisible();
   // The open-links list never shows the URL again.

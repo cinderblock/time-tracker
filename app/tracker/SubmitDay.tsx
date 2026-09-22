@@ -3,6 +3,7 @@ import { Link } from "react-router";
 
 import { isOwnerReopenable } from "../../src/entry-status.ts";
 import { formatWorkDate } from "../../src/time.ts";
+import appear from "../components/appear.module.css";
 import { useTracker } from "./context.tsx";
 
 /**
@@ -37,7 +38,7 @@ export function SubmitDay() {
   return (
     <Stack gap="sm">
       {stopped.length > 0 && (
-        <Card withBorder padding="md">
+        <Card withBorder padding="md" className={appear.appear}>
           <Stack gap="xs">
             {unsubmitted.length > 0 ? (
               <>
@@ -82,7 +83,11 @@ export function SubmitDay() {
       )}
 
       {model.unsubmittedDays.length > 0 && (
-        <Alert color="yellow" title={`${model.unsubmittedDays.length} earlier ${model.unsubmittedDays.length === 1 ? "day" : "days"} not submitted`}>
+        <Alert
+          color="yellow"
+          className={appear.appear}
+          title={`${model.unsubmittedDays.length} earlier ${model.unsubmittedDays.length === 1 ? "day" : "days"} not submitted`}
+        >
           <Stack gap="xs">
             <Text size="sm">
               {model.unsubmittedDays.slice(0, 5).map((date, i) => (

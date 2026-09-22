@@ -262,6 +262,8 @@ time.
 
 ```
 app/             React Router routes, UI, server-side loaders/actions
+app/components/  Pieces shared across screens (duration field, link reveal, week nav)
+app/motion.ts    Durations and easings, in one place — see "Motion" below
 app/tracker/     The time-tracking screen (also used by admins for someone else's day)
 app/offline/     Outbox, sync engine, device copies, offline loaders
 app/pwa/         Service worker registration, and keeping an installed app current
@@ -287,6 +289,18 @@ component reaches them — even indirectly. Code the browser shares
 `src/uuid.ts`, `src/entry-status.ts`, `src/rate-scopes.ts`, `src/money.ts`) must
 not import them. Typecheck doesn't catch a violation; `bun run build` does. (Without that guard, a leaked
 import shows up only as a page that renders but never becomes interactive.)
+
+**Motion is defined once.** `app/motion.ts` holds the durations and easings, and
+injects them as custom properties (`--motion-base`, `--ease-entrance`, …) so
+stylesheets and JavaScript read the same numbers. Reach for those rather than
+writing a duration inline, and they stay consistent — and stay honest about
+`prefers-reduced-motion`, which zeroes them and which the Mantine theme also
+respects. Something newly on screen wears `app/components/appear.module.css`.
+
+A dialog whose subject is a nullable prop must hold it through the close with
+`app/components/use-held-open.ts`; a modal stays mounted for its exit
+transition, so clearing the subject makes it render as something else while it
+fades. There's an e2e test for that (`tracking.spec.ts`).
 
 ## License
 

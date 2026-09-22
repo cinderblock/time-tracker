@@ -4,6 +4,7 @@ import { useState } from "react";
 import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
 import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { formatClock, formatDurationHuman } from "../../src/time.ts";
+import appear from "../components/appear.module.css";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { EntryEditor } from "./EntryEditor.tsx";
 import { landingClass, useFlight } from "./flight.tsx";
@@ -133,7 +134,12 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
 
   return (
     // `data-entry-id` is how a flight finds the row it is flying to.
-    <Card withBorder padding="sm" data-entry-id={entry.id} className={landingClass(landed, entry.id)}>
+    <Card
+      withBorder
+      padding="sm"
+      data-entry-id={entry.id}
+      className={[appear.appear, landingClass(landed, entry.id)].filter(Boolean).join(" ")}
+    >
       <Group justify="space-between" wrap="nowrap" align="start" gap="sm">
         {locked ? (
           <div style={{ flex: 1, minWidth: 0 }}>{details}</div>

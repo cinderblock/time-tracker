@@ -23,9 +23,11 @@
   box-shadow: var(--mantine-shadow-md);
 }
 
-/* A ring rather than a fill, so the row's own colours are left alone. */
+/* A ring rather than a fill, so the row's own colours are left alone. The
+   duration is the shared one (app/motion.ts), which flight.tsx also uses to
+   decide when to take the class off again. */
 .landed {
-  animation: land 900ms ease-out;
+  animation: land var(--motion-flash, 900ms) var(--ease-exit, ease-out);
 }
 
 @keyframes land {
