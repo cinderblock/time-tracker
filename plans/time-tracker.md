@@ -955,6 +955,21 @@ own phase; they are properties of the entry UI, not separate features.
       `react-router-serve`; `e2e/proxied.spec.ts` and a fourth e2e instance
       cover it. 58 e2e. Verified against the deployment: a form action from the
       public origin is answered by the app; a foreign origin still gets 400.
+- [x] 2026-09-22 — **An entry can change shape**, dialogs stop flickering as
+      they close, and motion is defined in one place — see
+      `plans/an-entry-can-change-shape.md` and `plans/motion.md`. Deployed at
+      `ba76b12` (image `sha256:4fd1a29d…`, ops `ebc9654`). 323 unit, 63 e2e.
+
+      **Two bugs CI found that this machine never did**, both worth remembering
+      as a class: the note box cleared itself *after* awaiting its dispatch, so
+      on a slow connection the next note being typed was wiped and Add went
+      disabled over a field with words in it — the app's own notes test had
+      been "flaky under load" for weeks and was never flaky, it was catching
+      this. And a nesting assertion compared two separately-measured bounding
+      boxes with exact float equality, which a runner's font rendering broke at
+      467.875 vs 468.46875. Optimistic UI should clear on the action, not on
+      the answer; layout assertions should have a pixel of slack.
+
 ## Open questions for the user
 
 None block the code. Questions about a particular deployment — which people are

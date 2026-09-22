@@ -106,6 +106,10 @@ note, the job and the entry's identity.
   screenshots taken of the toggle, the warning with a pause in it, and the
   empty required time fields on the way back.
 
+- 2026-09-22 — **Deployed** at `ba76b12` (image `sha256:4fd1a29d…`, ops
+  `ebc9654`), live on time.twilltech.com. The image's revision label was
+  verified against the commit from the registry before the pin was moved.
+
 ## Open questions for the user
 
 1. Decision 3 is the judgement call worth a second look: converting to a

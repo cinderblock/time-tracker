@@ -119,6 +119,11 @@ Two things, one subject.
   standing e2e test. One existing test corrected (see findings). typecheck,
   311 unit and 62 e2e green.
 
+- 2026-09-22 — **Deployed** at `ba76b12` (image `sha256:4fd1a29d…`, ops
+  `ebc9654`), live on time.twilltech.com. CI was red twice on the way, neither
+  time for anything in this plan: a real note-box race the app had (see
+  `plans/time-tracker.md`) and an exact-float layout assertion.
+
 ## Open questions for the user
 
 1. The enter animation is 200 ms with a 6px rise. It is meant to be felt
