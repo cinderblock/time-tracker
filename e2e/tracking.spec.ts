@@ -192,8 +192,14 @@ test("a job's sub-jobs nest under it, instead of lines repeating its name", asyn
   const leftEdge = async (option: Locator) => (await option.locator("span").first().boundingBox())!.x;
   const optionNamed = (name: string) => dropdown.getByRole("option", { name, exact: true });
   expect(await leftEdge(optionNamed("Deck"))).toBeGreaterThan(await leftEdge(heading));
-  // Siblings in order, under the job they belong to.
-  expect(await leftEdge(optionNamed("Roof"))).toBe(await leftEdge(optionNamed("Deck")));
+  // Siblings in order, under the job they belong to — at the same indent, to
+  // within a pixel. Exact equality of two separately-measured boxes is a
+  // promise about float arithmetic and a runner's font rendering, not about
+  // indentation: CI once read 467.875 against 468.46875 for two spans that
+  // are laid out identically. An indent step is many pixels wide, so a pixel
+  // of slack costs the assertion nothing.
+  const [roof, deck] = [await leftEdge(optionNamed("Roof")), await leftEdge(optionNamed("Deck"))];
+  expect(Math.abs(roof - deck), `Roof at ${roof}, Deck at ${deck}`).toBeLessThan(1);
   const dir = process.env.E2E_SCREENSHOTS;
   if (dir) await page.screenshot({ path: `${dir}/job-picker-nested.png` });
 
