@@ -237,6 +237,109 @@ describe("manual entries and edits", () => {
   });
 });
 
+describe("an entry changing shape", () => {
+  test("a stopped timer becomes a plain duration, keeping its job and note", () => {
+    const id = uuidv7();
+    ok(send("timer.start", { entryId: id, jobId: jobA, at: NINE }));
+    ok(send("timer.pause", { entryId: id, at: NINE + 30 * MIN }));
+    ok(send("timer.resume", { entryId: id, at: NINE + 45 * MIN }));
+    ok(send("timer.stop", { entryId: id, at: NINE + HOUR, note: "Framing" }));
+    expect(getEntry(id)!.segments).toHaveLength(2);
+
+    ok(send("entry.update", { entryId: id, convertTo: "duration", durationSeconds: 2 * 3600 }));
+    const e = getEntry(id)!;
+    // The pauses go with the times; that is what was asked for.
+    expect(e.segments).toHaveLength(0);
+    expect(e.durationSeconds).toBe(2 * 3600);
+    expect(e.workDate).toBe(TODAY);
+    expect(e.jobId).toBe(jobA);
+    expect(e.note).toBe("Framing");
+    // Where it came from is a fact about it, not something to tidy away.
+    expect(e.source).toBe("timer");
+  });
+
+  test("and back again, the work date following the new start", () => {
+    const id = uuidv7();
+    ok(send("entry.create", { entryId: id, jobId: jobA, workDate: TODAY, durationSeconds: 3600 }));
+    ok(
+      send("entry.update", {
+        entryId: id,
+        convertTo: "times",
+        startedAt: NINE - 24 * HOUR,
+        endedAt: NINE - 21 * HOUR,
+      }),
+    );
+    const e = getEntry(id)!;
+    expect(e.segments).toHaveLength(1);
+    // Taken from the span, not from what the duration used to be.
+    expect(e.durationSeconds).toBe(3 * 3600);
+    expect(e.workDate).toBe("2026-09-15");
+  });
+
+  test("the job, the note and the date can change in the same breath", () => {
+    const id = uuidv7();
+    ok(send("entry.create", { entryId: id, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }));
+    ok(
+      send("entry.update", {
+        entryId: id,
+        convertTo: "duration",
+        durationSeconds: 90 * 60,
+        workDate: "2026-09-14",
+        jobId: jobB,
+        note: "Guessed",
+      }),
+    );
+    const e = getEntry(id)!;
+    expect(e.durationSeconds).toBe(90 * 60);
+    expect(e.workDate).toBe("2026-09-14");
+    expect(e.jobId).toBe(jobB);
+    expect(e.note).toBe("Guessed");
+  });
+
+  test("a running timer has to be stopped first", () => {
+    const id = uuidv7();
+    ok(send("timer.start", { entryId: id, jobId: jobA, at: NINE }));
+    rejected(send("entry.update", { entryId: id, convertTo: "duration", durationSeconds: 3600 }), "conflict");
+    expect(getEntry(id)!.segments).toHaveLength(1);
+  });
+
+  test("each direction needs the fields that shape is made of", () => {
+    const id = uuidv7();
+    ok(send("entry.create", { entryId: id, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }));
+    rejected(send("entry.update", { entryId: id, convertTo: "duration" }), "invalid");
+    rejected(send("entry.update", { entryId: id, convertTo: "times", startedAt: NINE }), "invalid");
+    // A backwards span is no more allowed here than anywhere else.
+    const plain = uuidv7();
+    ok(send("entry.create", { entryId: plain, jobId: jobA, workDate: TODAY, durationSeconds: 3600 }));
+    rejected(send("entry.update", { entryId: plain, convertTo: "times", startedAt: NINE, endedAt: NINE }), "invalid");
+  });
+
+  test("asking for the shape it already has is an ordinary edit", () => {
+    const id = uuidv7();
+    ok(send("entry.create", { entryId: id, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }));
+    // No second segment, and no duplicate span: this is just an edit.
+    ok(send("entry.update", { entryId: id, convertTo: "times", startedAt: NINE, endedAt: NINE + 2 * HOUR }));
+    const e = getEntry(id)!;
+    expect(e.segments).toHaveLength(1);
+    expect(e.durationSeconds).toBe(2 * 3600);
+  });
+
+  test("without asking, the shape still can't be changed by accident", () => {
+    const id = uuidv7();
+    ok(send("entry.create", { entryId: id, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }));
+    rejected(send("entry.update", { entryId: id, durationSeconds: 7200 }), "invalid");
+    expect(getEntry(id)!.segments).toHaveLength(1);
+    expect(getEntry(id)!.durationSeconds).toBe(3600);
+  });
+
+  test("submitted time can't change shape either", () => {
+    const id = uuidv7();
+    ok(send("entry.create", { entryId: id, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }));
+    ok(send("day.submit", { workDate: TODAY }));
+    rejected(send("entry.update", { entryId: id, convertTo: "duration", durationSeconds: 3600 }), "conflict");
+  });
+});
+
 describe("delete and undo", () => {
   test("an accidental timer is deleted without fuss and undone seamlessly", () => {
     const id = uuidv7();

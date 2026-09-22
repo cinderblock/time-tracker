@@ -24,6 +24,17 @@ import type { EntryView } from "./model.ts";
 type Mode = "times" | "duration";
 
 /**
+ * What else goes when a timer's times do. A paused timer recorded real gaps,
+ * and a plain duration has nowhere to keep them — worth saying before it
+ * happens rather than after.
+ */
+function pausesLost(entry: EntryView | null): string {
+  const pauses = (entry?.segmentCount ?? 0) - 1;
+  if (pauses < 1) return "";
+  return `, and the ${pauses === 1 ? "pause" : `${pauses} pauses`} it recorded`;
+}
+
+/**
  * Create or edit an entry. An entry with start and end times is edited by
  * times; a typed-in duration by date and duration. An end time earlier than
  * the start means the work ran past midnight.
@@ -96,6 +107,15 @@ export function EntryEditor({
   const durationFromTimes = startAt != null && endAt != null ? Math.round((endAt - startAt) / 1000) : null;
   const typedSeconds = parseDuration(duration) ?? 0;
 
+  /**
+   * The shape this entry is recorded in today, and whether the toggle is
+   * asking to change it. An entry made of a span and one made of a typed-in
+   * duration are different things, so switching is a conversion — saved with
+   * `convertTo`, and said out loud under the toggle before it happens.
+   */
+  const shape: Mode = entry?.startedAt != null ? "times" : "duration";
+  const converting = entry != null && !isOpenTimer && mode !== shape;
+
   async function save(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
@@ -104,7 +124,37 @@ export function EntryEditor({
 
     let result;
     setBusy(true);
-    if (!entry) {
+    if (entry && converting) {
+      // Everything the new shape is made of goes, unconditionally: these
+      // fields define the entry now rather than amending what's there.
+      const common = {
+        entryId: entry.id,
+        jobId: jobId !== entry.jobId ? jobId : undefined,
+        note: cleanNote !== entry.note ? cleanNote : undefined,
+      };
+      if (mode === "duration") {
+        const problem = durationProblem(duration);
+        if (problem) {
+          setBusy(false);
+          return setError(problem);
+        }
+        result = await dispatch(
+          "entry.update",
+          { ...common, convertTo: "duration", workDate: date, durationSeconds: typedSeconds },
+          { quiet: true },
+        );
+      } else {
+        if (startAt == null || endAt == null) {
+          setBusy(false);
+          return setError("Enter a start and an end time.");
+        }
+        result = await dispatch(
+          "entry.update",
+          { ...common, convertTo: "times", startedAt: startAt, endedAt: endAt },
+          { quiet: true },
+        );
+      }
+    } else if (!entry) {
       if (mode === "times") {
         if (startAt == null || endAt == null) {
           setBusy(false);
@@ -180,15 +230,26 @@ export function EntryEditor({
         <Stack gap="md">
           <JobSelect label="Job" value={jobId} onChange={setJobId} required />
 
-          {!entry && (
-            <SegmentedControl
-              value={mode}
-              onChange={(v) => setMode(v as Mode)}
-              data={[
-                { value: "times", label: "Start & end" },
-                { value: "duration", label: "Just a duration" },
-              ]}
-            />
+          {/* A running timer's shape isn't up for discussion — it's still
+              collecting the times. Stopping it is the way. */}
+          {!isOpenTimer && (
+            <Stack gap={4}>
+              <SegmentedControl
+                value={mode}
+                onChange={(v) => setMode(v as Mode)}
+                data={[
+                  { value: "times", label: "Start & end" },
+                  { value: "duration", label: "Just a duration" },
+                ]}
+              />
+              {converting && (
+                <Text size="sm" c="dimmed">
+                  {mode === "duration"
+                    ? `Saving replaces the start and end with this duration${pausesLost(entry)}.`
+                    : "Saving replaces the duration with these times."}
+                </Text>
+              )}
+            </Stack>
           )}
 
           <TextInput
@@ -235,7 +296,7 @@ export function EntryEditor({
             maxRows={6}
           />
 
-          {entry && entry.segmentCount > 1 && (
+          {entry && entry.segmentCount > 1 && !converting && (
             <Text size="sm" c="dimmed">
               This timer was paused {entry.segmentCount - 1} time{entry.segmentCount > 2 ? "s" : ""}; changing the
               start or end keeps the pauses.

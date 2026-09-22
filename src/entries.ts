@@ -419,6 +419,13 @@ function snapshot(e: Entry) {
  * Edit an entry. Start and end times move the first segment's start and the
  * last segment's end; a date and duration only apply to entries that have no
  * times (typed-in durations). Passing `note: null` clears the note.
+ *
+ * `convertTo` is how an entry changes from one of those to the other — "I ran
+ * the timer but the times are wrong, it was just two hours". It has to be
+ * asked for by name: the guards below exist so that a client sending a
+ * duration for an entry that has times is told it's confused rather than
+ * silently destroying the times, and inferring the conversion from the same
+ * fields would take that back.
  */
 export function updateEntry(args: {
   userId: number;
@@ -430,6 +437,7 @@ export function updateEntry(args: {
   endedAt?: number;
   workDate?: string;
   durationSeconds?: number;
+  convertTo?: "duration" | "times";
   now: number;
 }): Entry {
   const entry = ownLiveEntry(args.userId, args.entryId);
@@ -437,21 +445,53 @@ export function updateEntry(args: {
     throw new OpError("conflict", lockedReason(entry.status, entry.approvedBy == null));
   const before = snapshot(entry);
   const hasTimes = entry.segments.length > 0;
+  // Asking for the shape it already has is an ordinary edit, not a conversion.
+  const convertTo = args.convertTo === (hasTimes ? "times" : "duration") ? undefined : args.convertTo;
 
   const jobId =
     args.jobId === undefined || args.jobId === entry.jobId ? args.jobId : requireBookableJob(args.jobId).id;
 
-  if ((args.workDate !== undefined || args.durationSeconds !== undefined) && hasTimes) {
-    throw new OpError("invalid", "This entry has start and end times; change those instead.");
-  }
-  if ((args.startedAt !== undefined || args.endedAt !== undefined) && !hasTimes) {
-    throw new OpError("invalid", "This entry is a plain duration; change the duration instead.");
+  if (convertTo !== undefined) {
+    if (entry.status === "open") {
+      throw new OpError("conflict", "Stop the timer before changing how this time is recorded.");
+    }
+  } else {
+    if ((args.workDate !== undefined || args.durationSeconds !== undefined) && hasTimes) {
+      throw new OpError("invalid", "This entry has start and end times; change those instead.");
+    }
+    if ((args.startedAt !== undefined || args.endedAt !== undefined) && !hasTimes) {
+      throw new OpError("invalid", "This entry is a plain duration; change the duration instead.");
+    }
   }
   if (args.endedAt !== undefined && entry.status === "open") {
     throw new OpError("conflict", "Stop the timer before changing its end time.");
   }
 
-  if (hasTimes) {
+  if (convertTo === "duration") {
+    if (args.durationSeconds === undefined) {
+      throw new OpError("invalid", "Converting to a duration needs the duration.");
+    }
+    // The segments go, pauses and all — their times being wrong is the whole
+    // reason for the conversion. Location fixes don't: they were taken at real
+    // moments and are still true once the times are gone, so they're detached
+    // from the segments rather than cascading away with them.
+    db().query("UPDATE locations SET segment_id = NULL WHERE entry_id = ?").run(entry.id);
+    db().query("DELETE FROM time_segments WHERE entry_id = ?").run(entry.id);
+    db()
+      .query("UPDATE time_entries SET work_date = ?, duration_seconds = ? WHERE id = ?")
+      .run(args.workDate ?? entry.workDate, args.durationSeconds, entry.id);
+  } else if (convertTo === "times") {
+    if (args.startedAt === undefined || args.endedAt === undefined) {
+      throw new OpError("invalid", "Converting to a start and an end needs both.");
+    }
+    checkSpan(args.startedAt, args.endedAt);
+    db()
+      .query("INSERT INTO time_segments (entry_id, started_at, ended_at) VALUES (?, ?, ?)")
+      .run(entry.id, args.startedAt, args.endedAt);
+    // As everywhere else, a span's work date follows its start, and
+    // recomputeDuration below takes the duration from the segment.
+    db().query("UPDATE time_entries SET work_date = ? WHERE id = ?").run(workDateOf(args.startedAt), entry.id);
+  } else if (hasTimes) {
     const first = entry.segments[0]!;
     const last = entry.segments.at(-1)!;
     const newStart = args.startedAt ?? first.startedAt;

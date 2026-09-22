@@ -213,6 +213,45 @@ describe("the reducer mirrors the server", () => {
     mirror([op("entry.update", { entryId: id, startedAt: NINE - 20 * MIN, jobId: jobB })]);
   });
 
+  test("a stopped timer, pauses and all, becomes a plain duration", () => {
+    const id = uuidv7();
+    mirror([
+      op("timer.start", { entryId: id, jobId: jobA, at: NINE }),
+      op("timer.pause", { entryId: id, at: NINE + 20 * MIN }),
+      op("timer.resume", { entryId: id, at: NINE + 40 * MIN }),
+      op("timer.stop", { entryId: id, at: NINE + HOUR, note: "framing" }),
+    ]);
+    mirror([op("entry.update", { entryId: id, convertTo: "duration", durationSeconds: 2 * 3600 })]);
+  });
+
+  test("a plain duration gets times, and follows them to another day", () => {
+    const id = uuidv7();
+    mirror([op("entry.create", { entryId: id, jobId: jobA, workDate: DAY, durationSeconds: 600 })]);
+    mirror([
+      op("entry.update", {
+        entryId: id,
+        convertTo: "times",
+        startedAt: NINE - 25 * HOUR,
+        endedAt: NINE - 24 * HOUR,
+        jobId: jobB,
+      }),
+    ]);
+  });
+
+  test("a running timer's shape is refused on both sides", () => {
+    const id = uuidv7();
+    mirror([op("timer.start", { entryId: id, jobId: jobA, at: NINE })]);
+    mirror([op("entry.update", { entryId: id, convertTo: "duration", durationSeconds: 3600 })], {
+      expectRejected: 1,
+    });
+  });
+
+  test("converting to the shape it already has is just an edit", () => {
+    const id = uuidv7();
+    mirror([op("entry.create", { entryId: id, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR })]);
+    mirror([op("entry.update", { entryId: id, convertTo: "times", startedAt: NINE, endedAt: NINE + 2 * HOUR })]);
+  });
+
   test("editing a paused-and-resumed timer's start and end", () => {
     const id = uuidv7();
     mirror([

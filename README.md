@@ -41,6 +41,10 @@ repository. All of that is deployment configuration or an admin setting.
     or just a duration, on any past day. A duration is one field, written the way
     it's said: `1:30`, `1.5` or `90m` all mean an hour and a half, and the field
     says back what it understood.
+  - An entry can change between the two afterwards. "I ran the timer but the
+    times are wrong, it was just two hours" is the same toggle in Edit entry;
+    it says what saving will replace before it does, including any pauses the
+    timer recorded. A running timer has to be stopped first.
 - **People submit their own time.** A day is a draft until the person who worked
   it says it's done. Submitting freezes each entry's rate, locks it, and hands it
   to the accounting system. It's theirs to take back — fix the day and submit it

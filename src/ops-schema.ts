@@ -73,15 +73,32 @@ export const opPayloads = {
         (p.startedAt == null && p.endedAt == null && p.durationSeconds != null && p.workDate != null),
       "Give either a start and end time, or a date and a duration",
     ),
-  "entry.update": z.object({
-    entryId: id,
-    jobId: id.optional(),
-    note,
-    startedAt: instant.optional(),
-    endedAt: instant.optional(),
-    workDate: workDate.optional(),
-    durationSeconds: z.number().int().positive().max(MAX_ENTRY_SECONDS).optional(),
-  }),
+  "entry.update": z
+    .object({
+      entryId: id,
+      jobId: id.optional(),
+      note,
+      startedAt: instant.optional(),
+      endedAt: instant.optional(),
+      workDate: workDate.optional(),
+      durationSeconds: z.number().int().positive().max(MAX_ENTRY_SECONDS).optional(),
+      /**
+       * Change how the entry is recorded: a stopped timer becomes a plain
+       * duration, or a plain duration gets a start and an end. Without this,
+       * an entry keeps the shape it was made in and the fields for the other
+       * shape are refused — so a stale or confused client can't quietly
+       * destroy an entry's times by sending a duration alongside them.
+       */
+      convertTo: z.enum(["duration", "times"]).optional(),
+    })
+    .refine(
+      (p) => p.convertTo !== "duration" || p.durationSeconds != null,
+      "Converting to a duration needs the duration",
+    )
+    .refine(
+      (p) => p.convertTo !== "times" || (p.startedAt != null && p.endedAt != null),
+      "Converting to a span needs a start and an end",
+    ),
   "entry.delete": z.object({ entryId: id, at: instant }),
   "entry.restore": z.object({ entryId: id, at: instant }),
 

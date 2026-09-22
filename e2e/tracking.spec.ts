@@ -324,6 +324,37 @@ test("edit an entry's times; an end before the start runs past midnight", async 
   await expect(add).toBeHidden();
 });
 
+test("a timer's entry can become a plain duration, and a duration can get times", async () => {
+  const row = () => entryRows().filter({ hasText: "Paperwork" });
+  await expect(row().getByText("Duration only")).toBeVisible();
+
+  // A duration takes on times. The toggle is the same one "Add time" offers,
+  // and it says what saving will do before it does it.
+  await row().getByRole("button", { name: /^Edit / }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit entry" });
+  await dialog.getByText("Start & end").click();
+  await expect(dialog.getByText("Saving replaces the duration with these times.")).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Start", exact: true }).fill("08:00");
+  await dialog.getByRole("textbox", { name: "End", exact: true }).fill("10:00");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row().getByText("Duration only")).toHaveCount(0);
+  await expect(row().getByText("2h")).toBeVisible();
+
+  // And back: the times go, and the typed duration is what's left.
+  await row().getByRole("button", { name: /^Edit / }).click();
+  await expect(dialog.getByRole("textbox", { name: "Start", exact: true })).toHaveValue("08:00");
+  await dialog.getByText("Just a duration").click();
+  await expect(dialog.getByText("Saving replaces the start and end with this duration.")).toBeVisible();
+  // Seeded with what the entry already holds, so agreeing is one tap.
+  await expect(dialog.getByLabel("Time worked")).toHaveValue("2:00");
+  await dialog.getByLabel("Time worked").fill("45m");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row().getByText("Duration only")).toBeVisible();
+  await expect(row().getByText("45m")).toBeVisible();
+});
+
 test("the editor keeps its own face all the way through closing", async () => {
   await entryRows().filter({ hasText: "Paperwork" }).getByRole("button", { name: /^Edit / }).click();
   const dialog = page.getByRole("dialog", { name: "Edit entry" });

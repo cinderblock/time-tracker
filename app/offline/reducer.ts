@@ -229,7 +229,33 @@ function applyOne(s: State, op: Op): void {
       const note = cleanNote(p.note);
       if (note !== undefined) next.note = note;
 
-      if (e.startedAt != null) {
+      const hasTimes = e.startedAt != null;
+      // Asking for the shape it already has is an ordinary edit (entries.ts).
+      const convertTo = p.convertTo === (hasTimes ? "times" : "duration") ? undefined : p.convertTo;
+      // A running timer can't change shape, and the server says so; leaving
+      // the entry alone keeps this copy agreeing with the answer that comes back.
+      if (convertTo !== undefined && e.status === "open") return;
+
+      if (convertTo === "duration") {
+        if (p.durationSeconds == null) return;
+        // The times go, pauses and all.
+        next.startedAt = null;
+        next.endedAt = null;
+        next.runningSince = null;
+        next.lastEndedAt = null;
+        next.segmentCount = 0;
+        next.workDate = p.workDate ?? e.workDate;
+        next.durationSeconds = p.durationSeconds;
+      } else if (convertTo === "times") {
+        if (p.startedAt == null || p.endedAt == null) return;
+        next.startedAt = p.startedAt;
+        next.endedAt = p.endedAt;
+        next.lastEndedAt = p.endedAt;
+        next.runningSince = null;
+        next.segmentCount = 1;
+        next.workDate = workDateOf(p.startedAt, m.timezone);
+        next.durationSeconds = Math.round((p.endedAt - p.startedAt) / 1000);
+      } else if (hasTimes && e.startedAt != null) {
         if (p.startedAt !== undefined) {
           next.startedAt = p.startedAt;
           next.workDate = workDateOf(p.startedAt, m.timezone);
