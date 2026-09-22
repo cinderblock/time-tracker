@@ -6,6 +6,7 @@ import {
   type BrowserContext,
   type Locator,
   type Page,
+  type Route,
   expect,
   test,
 } from "@playwright/test";
@@ -419,12 +420,33 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   await pickJob(page.getByPlaceholder("Add a job for today — type to search"), "Bravo Site");
   const bravo = page.getByRole("group", { name: "Riverside › Bravo Site" });
   await expect(bravo.getByText("Started")).toBeVisible();
-  await bravo.getByPlaceholder("What did you do?").fill("Measuring the east wall");
-  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  // Every op takes a beat from here, so the second note is typed while the
+  // first is still in flight — someone jotting a day's work doesn't wait for
+  // a spinner. The note box has to empty when Add is pressed rather than when
+  // the answer lands, or this typing is wiped and Add sits disabled over a
+  // field with words still in it. Without the delay that depends on how
+  // loaded the machine is, which is how it reached CI.
+  const slowOps = async (route: Route) => {
+    await new Promise((r) => setTimeout(r, 400));
+    await route.continue();
+  };
+  await page.route("**/api/ops", slowOps);
+
+  const noteBox = bravo.getByPlaceholder("What did you do?");
+  const addNote = bravo.getByRole("button", { name: "Add", exact: true });
+  await noteBox.fill("Measuring the east wall");
+  await addNote.click();
   await expect(bravo.getByText("Measuring the east wall")).toBeVisible();
-  await bravo.getByPlaceholder("What did you do?").fill("Cutting studs");
-  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  await noteBox.fill("Cutting studs");
+  // The first note's answer comes back about here; it must not take this with it.
+  await page.waitForTimeout(600);
+  await expect(noteBox, "the next note was wiped when the last one landed").toHaveValue("Cutting studs");
+  await addNote.click();
   await expect(bravo.getByText("Cutting studs")).toBeVisible();
+  // Let that last op out of the handler before taking the delay off; removing
+  // a route while a request is still sleeping in it is an error on the route.
+  await page.waitForTimeout(600);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 
   // A second job, later in the day — one tap on a recent job, no searching.
   const recentJobs = page.getByRole("group", { name: "Recent jobs" });

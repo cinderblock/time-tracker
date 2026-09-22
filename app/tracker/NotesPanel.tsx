@@ -270,17 +270,26 @@ function NoteBox({
 
   async function add(event: React.FormEvent) {
     event.preventDefault();
-    if (!text.trim()) return;
+    const written = text.trim();
+    if (!written) return;
+    // Empty the field now rather than when the dispatch answers. The note is
+    // already in the list by then — the outbox takes it whether or not there
+    // is a connection — and someone jotting a day's work types the next one
+    // straight away. Clearing late wipes what they typed in between, and
+    // leaves Add disabled over a field with words still in it.
+    setText("");
     setBusy(true);
     const result = await dispatch("note.create", {
       noteId: uuidv7(),
       at: Date.now(),
-      text: text.trim(),
+      text: written,
       jobId,
       location: location(),
     });
     setBusy(false);
-    if (result.ok) setText("");
+    // Hand it back if it was refused — but not over a note begun since, which
+    // would be the same mistake pointing the other way.
+    if (!result.ok) setText((current) => (current === "" ? written : current));
   }
 
   return (
