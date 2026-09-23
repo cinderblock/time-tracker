@@ -149,8 +149,15 @@ looking at*:
   edge; the subtitle line is one height for both faces, so the record sits at
   the same y on every day; days slide sideways and weeks vertically through
   the View Transitions API. `bun run typecheck`, 338 unit tests (15 of them new) and 67 e2e
-  green. Not yet deployed — ops pins the digest, and that needs its own
-  approval.
+  green.
+
+- 2026-09-23 — **Deployed**, as `66deb75`. CI ran the same 67 e2e on Linux and
+  published the image; the digest was checked against the commit from the
+  registry (`org.opencontainers.image.revision` on the amd64 image inside the
+  index) before the deployer pinned it, rather than trusting the number in a
+  build log. The container came up healthy on that digest, and the service
+  worker's build id served over HTTPS matches the one the local build of this
+  commit produced — so what is serving is what was verified here.
 
 ## Open questions for the user
 
