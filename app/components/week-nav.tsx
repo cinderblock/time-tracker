@@ -1,7 +1,8 @@
-import { Button, Group, Stack, Text, Title } from "@mantine/core";
+import { ActionIcon, Button, Group, Stack, Text, Title } from "@mantine/core";
 import { Link, useSearchParams } from "react-router";
 
 import { addDays, formatWorkDate } from "../../src/time.ts";
+import { Chevron } from "./chevron.tsx";
 
 /** "Sep 13 – 19, 2026", or across months "Sep 27 – Oct 3, 2026". */
 export function formatWeek(weekStart: string): string {
@@ -31,9 +32,15 @@ export function WeekNav({ weekStart, thisWeek, title }: { weekStart: string; thi
 
   return (
     <Group justify="space-between" wrap="nowrap" gap="sm">
-      <Button component={Link} to={hrefFor(addDays(weekStart, -7))} variant="default" size="sm" aria-label="Previous week">
-        ‹
-      </Button>
+      <ActionIcon
+        component={Link}
+        to={hrefFor(addDays(weekStart, -7))}
+        variant="default"
+        size="lg"
+        aria-label="Previous week"
+      >
+        <Chevron towards="left" />
+      </ActionIcon>
       <Stack gap={0} align="center">
         <Title order={2} ta="center">
           {title}
@@ -49,16 +56,22 @@ export function WeekNav({ weekStart, thisWeek, title }: { weekStart: string; thi
           )}
         </Group>
       </Stack>
-      <Button
-        component={Link}
-        to={hrefFor(addDays(weekStart, 7))}
-        variant="default"
-        size="sm"
-        aria-label="Next week"
-        disabled={weekStart >= thisWeek}
-      >
-        ›
-      </Button>
+      {weekStart < thisWeek ? (
+        <ActionIcon
+          component={Link}
+          to={hrefFor(addDays(weekStart, 7))}
+          variant="default"
+          size="lg"
+          aria-label="Next week"
+        >
+          <Chevron towards="right" />
+        </ActionIcon>
+      ) : (
+        // A real disabled button: a "disabled" link would still navigate.
+        <ActionIcon variant="default" size="lg" aria-label="Next week" disabled>
+          <Chevron towards="right" />
+        </ActionIcon>
+      )}
     </Group>
   );
 }

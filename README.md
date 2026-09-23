@@ -266,7 +266,7 @@ time.
 
 ```
 app/             React Router routes, UI, server-side loaders/actions
-app/components/  Pieces shared across screens (duration field, link reveal, week nav)
+app/components/  Pieces shared across screens (duration field, link reveal, week nav, chevrons)
 app/motion.ts    Durations and easings, in one place — see "Motion" below
 app/tracker/     The time-tracking screen (also used by admins for someone else's day)
 app/offline/     Outbox, sync engine, device copies, offline loaders
@@ -305,6 +305,23 @@ A dialog whose subject is a nullable prop must hold it through the close with
 `app/components/use-held-open.ts`; a modal stays mounted for its exit
 transition, so clearing the subject makes it render as something else while it
 fades. There's an e2e test for that (`tracking.spec.ts`).
+
+**Moving between days is the one navigation that animates.** A day at a time
+slides sideways and a week at a time up or down, through the View Transitions
+API: `app/tracker/day-move.ts` writes the direction to `<html data-day-move>`
+from the link's click (React Router starts the transition as it commits, so it
+has to be there first) and `day-move.css` does the rest. Only the day's name,
+the day's body and — for a week move — the week strip are named, so the arrows
+and the app's chrome stay where they are. Where the API is missing it is a
+plain navigation.
+
+**A page can be open for days, so it can't trust the day it loaded on.** Every
+label saying which day it is comes from `today` on the loader's copy, so
+`app/tracker/rollover.ts` watches the clock in the organisation's timezone and
+asks for a fresh copy when it moves on — woken by a timer aimed just past
+midnight, and again whenever the tab comes back, since a sleeping laptop fires
+its timers late. The loader stays the only thing that decides what today is;
+offline it answers from the device, which works out the date the same way.
 
 ## License
 

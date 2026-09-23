@@ -5,6 +5,7 @@ import { jobLabel } from "../../src/job-names.ts";
 import { formatDurationHuman } from "../../src/time.ts";
 import { type ActingFor, TrackerProvider, useNow, useTracker } from "./context.tsx";
 import { DayHeader } from "./DayHeader.tsx";
+import { markDayMove, towards } from "./day-move.ts";
 import { EntryList } from "./EntryList.tsx";
 import { FlightProvider } from "./flight.tsx";
 import { type DayModel, liveSeconds } from "./model.ts";
@@ -12,6 +13,10 @@ import { NotesPanel } from "./NotesPanel.tsx";
 import classes from "./screen.module.css";
 import { SubmitDay } from "./SubmitDay.tsx";
 import { TimerPanel } from "./TimerCard.tsx";
+
+// Days slide sideways and weeks vertically as you move between them; the
+// arrows and the app's chrome stay where they are. See day-move.ts.
+import "./day-move.css";
 
 /**
  * The tracking screen for one day, in two columns: the workbench — a timer,
@@ -30,7 +35,9 @@ export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor
           <ActingForNotice />
           <DayHeader />
           <OfflineNotice />
-          <Grid gap="lg">
+          {/* Named so it travels on its own when the day changes, rather than
+              being swept into the root cross-fade with the arrows. */}
+          <Grid gap="lg" data-day-part="body">
             <Grid.Col span={{ base: 12, md: 6 }}>
               <Stack gap="sm">
                 {/* Tinted — and, on a past day with nothing to record, not there
@@ -149,7 +156,12 @@ function OpenTimerElsewhere() {
   return (
     <Alert color="green" title="A timer is running">
       {jobLabel(open.jobName)} — {formatDurationHuman(now === undefined ? open.durationSeconds : liveSeconds(open, now))}.{" "}
-      <Anchor component={Link} to={hrefFor(model.today)}>
+      <Anchor
+        component={Link}
+        to={hrefFor(model.today)}
+        viewTransition
+        onClick={() => markDayMove(towards(model.workDate, model.today))}
+      >
         Go to today
       </Anchor>
     </Alert>

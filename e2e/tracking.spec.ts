@@ -389,6 +389,101 @@ test("move to the previous day and back", async () => {
   await page.goto("/");
 });
 
+test("move a week at a time, forward only as far as today", async () => {
+  const dayIn = (offset: number) =>
+    new Date(Date.now() + offset * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+
+  // From today there is nowhere forward to go, either way.
+  await expect(page.getByRole("button", { name: "Next day" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Next week" })).toBeDisabled();
+
+  await page.getByRole("link", { name: "Previous week" }).click();
+  await expect(page).toHaveURL(new RegExp(`/day/${dayIn(-7)}$`));
+  await page.getByRole("link", { name: "Previous week" }).click();
+  await expect(page).toHaveURL(new RegExp(`/day/${dayIn(-14)}$`));
+
+  // Two weeks out, a week forward is a whole week.
+  await page.getByRole("link", { name: "Next week" }).click();
+  await expect(page).toHaveURL(new RegExp(`/day/${dayIn(-7)}$`));
+
+  // One week out it is not: the same weekday won't come round for another
+  // seven days, so rather than refuse, it goes as far as it can — today.
+  await page.getByRole("link", { name: "Next week" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+});
+
+/** Where the week strip starts, and where the record beside it does. */
+const headerMetrics = () =>
+  page.evaluate(() => {
+    const strip = document.querySelector('[aria-current="date"]')!.parentElement!;
+    const record = [...document.querySelectorAll("h3")].find((h) => h.textContent === "Time")!;
+    return {
+      stripTop: strip.getBoundingClientRect().top + window.scrollY,
+      recordTop: record.getBoundingClientRect().top + window.scrollY,
+      cellHeights: [...new Set([...strip.children].map((c) => c.getBoundingClientRect().height))],
+    };
+  });
+
+test("the header is the same height on today as on any other day", async () => {
+  // Today's second line is the date and every other day's is a button back to
+  // it, and the two are not the same height on their own — which used to move
+  // everything below the header by six pixels as you stepped off today.
+  const today = await headerMetrics();
+  await page.getByRole("link", { name: "Previous day" }).click();
+  await expect(page.getByRole("link", { name: "Back to today" })).toBeVisible();
+  const other = await headerMetrics();
+
+  expect(other.stripTop).toBe(today.stripTop);
+  expect(other.recordTop).toBe(today.recordTop);
+  // And every day in the strip is one height, today's ring included.
+  expect(today.cellHeights).toHaveLength(1);
+  expect(other.cellHeights).toEqual(today.cellHeights);
+
+  await page.getByRole("link", { name: "Back to today" }).click();
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+});
+
+test("a day slides sideways, a week slides vertically, and the arrows stay put", async () => {
+  // Which of the named parts the browser animated, and with what. The slide
+  // is `tt-day-move-*`; anything the transition left alone gets the browser's
+  // own cross-fade, which is what an unchanged week strip should get.
+  const slidWhile = async (act: () => Promise<void>) => {
+    await page.evaluate(() => {
+      const seen = new Set<string>();
+      (window as unknown as { __slid: Set<string> }).__slid = seen;
+      const tick = () => {
+        for (const a of document.getAnimations()) {
+          const pseudo = (a.effect as KeyframeEffect | null)?.pseudoElement;
+          if (pseudo?.startsWith("::view-transition-new")) seen.add(`${pseudo} ${(a as CSSAnimation).animationName}`);
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    await act();
+    await page.waitForTimeout(400);
+    return page.evaluate(() => [...(window as unknown as { __slid: Set<string> }).__slid].sort());
+  };
+
+  const day = await slidWhile(async () => {
+    await page.getByRole("link", { name: "Previous day" }).click();
+    await expect(page.getByRole("link", { name: "Back to today" })).toBeVisible();
+  });
+  expect(day).toContain("::view-transition-new(tt-day-title) tt-day-move-in");
+  expect(day).toContain("::view-transition-new(tt-day-body) tt-day-move-in");
+  // The week didn't change, so the strip sits still under the moving day.
+  expect(day).not.toContain("::view-transition-new(tt-week-strip) tt-day-move-in");
+
+  const week = await slidWhile(async () => {
+    await page.getByRole("link", { name: "Previous week" }).click();
+  });
+  expect(week).toContain("::view-transition-new(tt-week-strip) tt-day-move-in");
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+});
+
 test("create a job on the spot while starting a timer, at a customer that's new too", async () => {
   await page.getByRole("button", { name: "New job…" }).first().click();
   const dialog = page.getByRole("dialog", { name: "New job" });
@@ -530,4 +625,28 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
   await page.getByRole("link", { name: "Next day" }).click();
   await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
   await expect(page.getByPlaceholder("Add a job for today — type to search")).toBeVisible();
+});
+
+/**
+ * Last, because it replaces the browser's clock and never puts it back.
+ *
+ * Only the browser's clock moves: the server's stays where it is, so the copy
+ * it hands back still says the same day. What this proves is the part that
+ * was missing — that the crossing is noticed at all, and a fresh copy asked
+ * for. A page left open overnight used to go on calling the day it loaded on
+ * "today" for as long as it stayed open. The arithmetic of *when* to look,
+ * across midnights and daylight saving, is in app/tracker/day-steps.test.ts.
+ */
+test("a page left open past midnight asks for a fresh copy of the day", async () => {
+  await page.clock.install();
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+
+  const asked: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes(".data")) asked.push(new URL(r.url()).pathname);
+  });
+
+  await page.clock.fastForward("25:00:00");
+  await expect.poll(() => asked.length, { message: "the day was never asked for again" }).toBeGreaterThan(0);
 });

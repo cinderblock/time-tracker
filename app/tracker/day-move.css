@@ -1,0 +1,112 @@
+/*
+ * Moving between days, seen.
+ *
+ * A day at a time is a move sideways and a week at a time is a move up or
+ * down, which is the one thing a week strip and a pair of arrows can't say on
+ * their own. The direction is on `<html data-day-move>` before the transition
+ * starts (see day-move.ts); everything else is here.
+ *
+ * Three parts are named, which is what keeps them out of the root snapshot
+ * and lets them be animated apart from it:
+ *
+ *   - the day's name and the day's body always travel;
+ *   - the week strip travels only when the week itself changes, so stepping
+ *     between days leaves it sitting still under the moving day.
+ *
+ * Everything unnamed — the arrows, the app's chrome — cross-fades as `root`,
+ * and since none of it changes, that looks like nothing happening. Which is
+ * the point: the arrows you just pressed shouldn't fly away.
+ *
+ * Durations and easings come from app/motion.ts through the same custom
+ * properties every other animation in the app reads, so this moves at the
+ * same speed as the rest and collapses to nothing under reduced motion along
+ * with them.
+ */
+
+:root {
+  /* How far the old frame travels as it leaves, and the new one before it
+     arrives. Far enough to read as a direction, not so far it's a journey. */
+  --day-move-shift: 32px;
+}
+
+[data-day-part="title"] {
+  view-transition-name: tt-day-title;
+}
+
+[data-day-part="week"] {
+  view-transition-name: tt-week-strip;
+}
+
+[data-day-part="body"] {
+  view-transition-name: tt-day-body;
+}
+
+@keyframes tt-day-move-out {
+  to {
+    opacity: 0;
+    transform: translate3d(var(--tt-dx, 0px), var(--tt-dy, 0px), 0);
+  }
+}
+
+@keyframes tt-day-move-in {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--tt-dx, 0px), var(--tt-dy, 0px), 0);
+  }
+}
+
+html[data-day-move]::view-transition-old(tt-day-title),
+html[data-day-move]::view-transition-old(tt-day-body),
+html[data-day-move^="week-"]::view-transition-old(tt-week-strip) {
+  animation: tt-day-move-out var(--motion-base) var(--ease-exit) both;
+}
+
+html[data-day-move]::view-transition-new(tt-day-title),
+html[data-day-move]::view-transition-new(tt-day-body),
+html[data-day-move^="week-"]::view-transition-new(tt-week-strip) {
+  animation: tt-day-move-in var(--motion-base) var(--ease-entrance) both;
+}
+
+/* The old frame leaves the way you're going; the new one comes from the other
+   side. Both move the same way, which is what makes it read as one sheet
+   sliding rather than two things passing. */
+html[data-day-move="day-later"]::view-transition-old(*) {
+  --tt-dx: calc(0px - var(--day-move-shift));
+}
+html[data-day-move="day-later"]::view-transition-new(*) {
+  --tt-dx: var(--day-move-shift);
+}
+
+html[data-day-move="day-earlier"]::view-transition-old(*) {
+  --tt-dx: var(--day-move-shift);
+}
+html[data-day-move="day-earlier"]::view-transition-new(*) {
+  --tt-dx: calc(0px - var(--day-move-shift));
+}
+
+html[data-day-move="week-later"]::view-transition-old(*) {
+  --tt-dy: calc(0px - var(--day-move-shift));
+}
+html[data-day-move="week-later"]::view-transition-new(*) {
+  --tt-dy: var(--day-move-shift);
+}
+
+html[data-day-move="week-earlier"]::view-transition-old(*) {
+  --tt-dy: var(--day-move-shift);
+}
+html[data-day-move="week-earlier"]::view-transition-new(*) {
+  --tt-dy: calc(0px - var(--day-move-shift));
+}
+
+/*
+ * `--motion-base` is already zero under reduced motion, which stops the slide
+ * — but not the cross-fade the browser gives `root` for free. Somebody who
+ * asked for no motion gets the new day, immediately.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html[data-day-move]::view-transition-group(*),
+  html[data-day-move]::view-transition-old(*),
+  html[data-day-move]::view-transition-new(*) {
+    animation: none;
+  }
+}

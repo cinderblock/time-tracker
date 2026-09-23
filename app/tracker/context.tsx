@@ -11,6 +11,7 @@ import { dayHref } from "./day-href.ts";
 import { type Fix, recentFix, refreshLocation } from "./location.ts";
 import type { DayModel } from "./model.ts";
 import { makeOp, sendOps } from "./ops-client.ts";
+import { useDayRollover } from "./rollover.ts";
 
 /**
  * The tracking screen's data and its one way of changing it.
@@ -113,6 +114,10 @@ export function TrackerProvider({
       window.clearInterval(id);
     };
   }, [base.offline]);
+
+  // Midnight, reaching a page that was already open — see rollover.ts.
+  const askAgain = useCallback(() => void revalidate.current(), []);
+  useDayRollover(base.today, base.timezone, askAgain);
 
   const model = useMemo(() => (ops.length ? applyPending(base, ops) : base), [base, ops]);
 

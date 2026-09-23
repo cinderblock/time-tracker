@@ -1,0 +1,20 @@
+/*
+ * The line under the day's name, whichever face it is wearing: the date on
+ * today, the way back on any other day.
+ *
+ * Fixed height because the two faces are not the same height on their own — a
+ * line of small text is 20px and a compact button is 26px — and the six
+ * pixels between them moved everything on the page below the header every
+ * time you stepped off today. That shift was visible before; with the day now
+ * sliding as it changes, it would have been a lurch.
+ *
+ * The number is Mantine's own `compact-sm` button height, which is what the
+ * taller of the two faces is. It is written out because Mantine sets that
+ * variable on the button itself, not somewhere this can read it.
+ */
+.subtitle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(1.625rem * var(--mantine-scale));
+}

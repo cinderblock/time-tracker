@@ -1,20 +1,67 @@
-import { Button, Group, SimpleGrid, Stack, Text, Title, UnstyledButton } from "@mantine/core";
+import { ActionIcon, Button, Group, SimpleGrid, Stack, Text, Title, UnstyledButton } from "@mantine/core";
 import { Link } from "react-router";
 
-import { addDays, formatDurationHuman, formatWorkDate, weekdayOf } from "../../src/time.ts";
+import { formatDurationHuman, formatWorkDate, weekdayOf } from "../../src/time.ts";
+import { Chevron } from "../components/chevron.tsx";
 import { useNow, useTracker } from "./context.tsx";
+import classes from "./DayHeader.module.css";
+import { type DayMove, markDayMove, towards } from "./day-move.ts";
+import { daySteps } from "./day-steps.ts";
 import { liveSeconds } from "./model.ts";
 
 const WEEKDAY = ["S", "M", "T", "W", "T", "F", "S"];
 
-/** Which day is shown, how to move between days, and the week at a glance. */
+/**
+ * One arrow. A week jump is the double chevron, a day the single one.
+ *
+ * With nowhere to go it is a real disabled button rather than a link that
+ * refuses — a "disabled" link still navigates — and it stays on screen rather
+ * than disappearing, because a button that vanishes moves the three next to
+ * it, which is the shifting this header is trying to be rid of.
+ */
+function ArrowButton({
+  to,
+  label,
+  move,
+  double = false,
+}: {
+  to: string | null;
+  label: string;
+  move: DayMove;
+  double?: boolean;
+}) {
+  const facing = move.endsWith("-earlier") ? "left" : "right";
+  const icon = <Chevron towards={facing} double={double} />;
+  if (!to) {
+    return (
+      <ActionIcon variant="default" size="lg" aria-label={label} disabled>
+        {icon}
+      </ActionIcon>
+    );
+  }
+  return (
+    <ActionIcon
+      component={Link}
+      to={to}
+      viewTransition
+      onClick={() => markDayMove(move)}
+      variant="default"
+      size="lg"
+      aria-label={label}
+    >
+      {icon}
+    </ActionIcon>
+  );
+}
+
+/** Which day is shown, how to move between days and weeks, and the week at a glance. */
 export function DayHeader() {
   const { model, hrefFor } = useTracker();
   const { workDate, today } = model;
   const isToday = workDate === today;
   // In notes mode a day's notes have to become time before moving on from it.
   const heldHere = model.mode === "notes" && model.notes.some((n) => !n.rolledIntoEntryId);
-  const canGoForward = workDate < today && !heldHere;
+  const steps = daySteps({ workDate, today, weekStart: model.week[0]?.date ?? workDate, heldHere });
   // Totals come from the server; add the running timer's live time to its day
   // so the strip agrees with the list below it.
   const now = useNow(30_000);
@@ -24,40 +71,38 @@ export function DayHeader() {
 
   return (
     <Stack gap="sm">
-      <Group justify="space-between" wrap="nowrap">
-        <Button
-          component={Link}
-          to={hrefFor(addDays(workDate, -1))}
-          variant="default"
-          size="sm"
-          aria-label="Previous day"
-        >
-          ‹
-        </Button>
-        <Stack gap={0} align="center">
+      <Group justify="space-between" wrap="nowrap" gap="xs">
+        <Group gap={6} wrap="nowrap">
+          <ArrowButton to={hrefFor(steps.previousWeek)} label="Previous week" move="week-earlier" double />
+          <ArrowButton to={hrefFor(steps.previousDay)} label="Previous day" move="day-earlier" />
+        </Group>
+        <Stack gap={0} align="center" data-day-part="title">
           <Title order={2} ta="center">
             {isToday ? "Today" : formatWorkDate(workDate, { withYear: workDate.slice(0, 4) !== today.slice(0, 4) })}
           </Title>
-          {isToday ? (
-            <Text size="sm" c="dimmed">
-              {formatWorkDate(workDate)}
-            </Text>
-          ) : (
-            <Button component={Link} to={hrefFor(today)} variant="subtle" size="compact-sm">
-              Back to today
-            </Button>
-          )}
+          <div className={classes.subtitle}>
+            {isToday ? (
+              <Text size="sm" c="dimmed">
+                {formatWorkDate(workDate)}
+              </Text>
+            ) : (
+              <Button
+                component={Link}
+                to={hrefFor(today)}
+                viewTransition
+                onClick={() => markDayMove(towards(workDate, today))}
+                variant="subtle"
+                size="compact-sm"
+              >
+                Back to today
+              </Button>
+            )}
+          </div>
         </Stack>
-        {canGoForward ? (
-          <Button component={Link} to={hrefFor(addDays(workDate, 1))} variant="default" size="sm" aria-label="Next day">
-            ›
-          </Button>
-        ) : (
-          // A real disabled button: a "disabled" link would still navigate.
-          <Button variant="default" size="sm" aria-label="Next day" disabled>
-            ›
-          </Button>
-        )}
+        <Group gap={6} wrap="nowrap">
+          <ArrowButton to={steps.nextDay && hrefFor(steps.nextDay)} label="Next day" move="day-later" />
+          <ArrowButton to={steps.nextWeek && hrefFor(steps.nextWeek)} label="Next week" move="week-later" double />
+        </Group>
       </Group>
       {heldHere && workDate < today && (
         <Text size="xs" c="dimmed" ta="center">
@@ -65,7 +110,7 @@ export function DayHeader() {
         </Text>
       )}
 
-      <SimpleGrid cols={7} spacing={4}>
+      <SimpleGrid cols={7} spacing={4} data-day-part="week">
         {week.map((d) => {
           const selected = d.date === workDate;
           const future = d.date > today;
@@ -101,6 +146,8 @@ export function DayHeader() {
               key={d.date}
               component={Link}
               to={hrefFor(d.date)}
+              viewTransition
+              onClick={() => markDayMove(towards(workDate, d.date))}
               aria-label={`${formatWorkDate(d.date)}: ${formatDurationHuman(d.seconds)}`}
               aria-current={selected ? "date" : undefined}
               style={style}
