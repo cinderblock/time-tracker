@@ -970,6 +970,16 @@ own phase; they are properties of the entry UI, not separate features.
       467.875 vs 468.46875. Optimistic UI should clear on the action, not on
       the answer; layout assertions should have a pixel of slack.
 
+- [x] 2026-10-01 — **Time the accounting system already has is held; a job
+      can be not billable** — see `plans/duplicates-and-billable.md`. Before a
+      first send the sync asks what is there for that person and day; a record
+      on the same job that didn't come from here holds the entry until an admin
+      says replace or send both. Migrations `006_job_billable`,
+      `007_duplicate_check`. Also fixed: a record looked up by id is adopted
+      whatever its note says — before, one whose note had been edited in the
+      accounting system lost its `[ref …]`, read as "gone", and was added a
+      second time after an edit-sequence conflict. 345 unit, 69 e2e.
+
 ## Open questions for the user
 
 None block the code. Questions about a particular deployment — which people are

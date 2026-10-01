@@ -128,8 +128,9 @@ describe("the Web Connector", () => {
       percents.push(percent);
       if (percent >= 100) break;
     }
-    expect(percents).toEqual([33, 67, 100]);
-    expect(call("closeConnection", { ticket: ticket! }).result).toBe("Done: 3 requests.");
+    // One question about what's already there for that person and day, then the three.
+    expect(percents).toEqual([25, 50, 75, 100]);
+    expect(call("closeConnection", { ticket: ticket! }).result).toBe("Done: 4 requests.");
     expect(qb.records.map((r) => r.notes.split(" [ref")[0])).toEqual(["Part 0", "Part 1", "Part 2"]);
     expect(ids.map((id) => getEntry(id)!.status)).toEqual(["synced", "synced", "synced"]);
     expect(syncState()).toMatchObject({ lastContactOk: true, lastContactAt: now });
@@ -149,11 +150,15 @@ describe("the Web Connector", () => {
     approveEntries({ userId: admin, entryIds: [bad, good], actorUserId: admin });
 
     const [ticket] = signIn().string;
+    // First the question about what's already there; then the first of the two fails.
+    const asked = String(call("sendRequestXML", { ticket: ticket!, qbXMLMajorVers: "13" }).result);
+    expect(asked).toContain("TimeTrackingQueryRq");
+    call("receiveResponseXML", { ticket: ticket!, response: qb.handle(asked), hresult: "", message: "" });
     call("sendRequestXML", { ticket: ticket!, qbXMLMajorVers: "13" });
     const percent = Number(
       call("receiveResponseXML", { ticket: ticket!, response: "", hresult: "0x80040400", message: "QuickBooks found an error when parsing the provided XML text stream." }).result,
     );
-    expect(percent).toBe(50);
+    expect(percent).toBe(67);
     const next = String(call("sendRequestXML", { ticket: ticket!, qbXMLMajorVers: "13" }).result);
     expect(Number(call("receiveResponseXML", { ticket: ticket!, response: qb.handle(next), hresult: "", message: "" }).result)).toBe(100);
     expect(getEntry(bad)!.status).toBe("sync_failed");

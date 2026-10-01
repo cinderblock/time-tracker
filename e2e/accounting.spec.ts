@@ -23,7 +23,7 @@ async function bridge(): Promise<BridgeState> {
   return (await (await fetch(`${fakeBridgeUrl}/__test/state`)).json()) as BridgeState;
 }
 
-async function bridgeControl(path: "down" | "fail", body: unknown) {
+async function bridgeControl(path: "down" | "fail" | "foreign", body: unknown) {
   await fetch(`${fakeBridgeUrl}/__test/${path}`, { method: "POST", body: JSON.stringify(body) });
 }
 
@@ -60,6 +60,16 @@ async function addTime(job: string, duration: string) {
   await dialog.getByLabel("Time worked").fill(duration);
   await dialog.getByRole("button", { name: "Add time" }).click();
   await expect(dialog).toBeHidden();
+}
+
+/** A picture of the page as it stands, when screenshots were asked for (E2E_SCREENSHOTS names the folder). */
+async function shot(name: string) {
+  const dir = process.env.E2E_SCREENSHOTS;
+  if (!dir) return;
+  await page.screenshot({ path: `${dir}/${name}.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${dir}/phone-${name}.png`, fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 720 });
 }
 
 /** Approval is off by default, so submitting is what hands time to accounting. */
@@ -143,7 +153,8 @@ test("link a person, pick default items, and send submitted time", async () => {
   await expect(waiting).toContainText("The job “Acme › Pop-up job” was made here and isn't in the accounting system yet. (1 entry, 45m)");
   await expect(waiting.getByRole("link", { name: "Link jobs" })).toBeVisible();
 
-  await sendNow("Sent 1 request.");
+  // One to ask what QuickBooks already has for that person and day, one to send.
+  await sendNow("Sent 2 requests.");
   expect((await bridge()).records).toEqual([
     {
       date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
@@ -168,7 +179,7 @@ test("a job made here is linked to the real one, and its time follows", async ()
   await page.getByRole("option", { name: "Acme › Phase 2", exact: true }).click();
   await expect(toast("Linked. Its time now belongs to that job.")).toBeVisible();
   await expect(page.getByText("None. Every job is in QuickBooks.")).toBeVisible();
-  await sendNow("Sent 1 request.");
+  await sendNow("Sent 2 requests.");
   expect((await bridge()).records.map((r) => [r.customer, r.duration])).toEqual([
     ["C-ACME-2", "PT2H0M0S"],
     ["C-ACME-2", "PT0H45M0S"],
@@ -214,8 +225,8 @@ test("a refusal is shown, and can be retried", async () => {
   await signOffWeek();
   await page.goto("/admin/accounting");
   // After the page's own health check, so it's the time that's refused.
-  await bridgeControl("fail", { code: 3140, message: "There is an invalid reference to QuickBooks Customer." });
-  await sendNow("Sent 1 request.");
+  await bridgeControl("fail", { code: 3140, message: "There is an invalid reference to QuickBooks Customer.", of: "TimeTrackingAddRq" });
+  await sendNow("Sent 2 requests.");
   const refused = page.getByRole("alert").filter({ hasText: "Refused by QuickBooks" });
   await expect(refused).toContainText(
     /\(15m\): There is an invalid reference to QuickBooks Customer\. — tries again (in under a minute|in 1 minute)\./,
@@ -243,6 +254,73 @@ test("time taken back after it was sent is flagged, then amended in place", asyn
   await sendNow("Sent 4 requests.");
   expect((await bridge()).records).toHaveLength(4); // amended, not added
   await expect(page.getByRole("alert").filter({ hasText: "Taken back after being sent" })).toHaveCount(0);
+});
+
+test("time QuickBooks already has is held until someone says which it is", async () => {
+  const state = await bridge();
+  const site = state.customers.find((c) => c.fullName === "Acme:Brand New Site")!;
+  // Another tracker has been feeding the same books: ninety minutes on a job, today.
+  await bridgeControl("foreign", {
+    txnDate: state.records[0]!.date,
+    entity: "E-ALICE",
+    customer: site.id,
+    duration: "PT1H30M0S",
+    notes: "From the other tracker",
+  });
+  await addTime("Brand New Site", "1");
+  await signOffWeek();
+
+  await page.goto("/admin/accounting");
+  await sendNow("Sent 1 request."); // asked, and stopped there
+  expect((await bridge()).records).toHaveLength(5);
+  await expect(stat("Waiting on a fix")).toContainText("1");
+  const held = page.getByRole("alert").filter({ hasText: "QuickBooks already has time for these" });
+  const entry = held.getByRole("group", { name: /^Ivy Integrator, .*Acme › Brand New Site$/ });
+  await expect(entry).toContainText("Here: 1h");
+  await expect(entry).toContainText("In QuickBooks: 1h 30m — From the other tracker");
+  await shot("accounting-held");
+
+  // It's the same work: this entry takes that record over, rather than adding a second.
+  await entry.getByRole("button", { name: "Same time: replace it" }).click();
+  await expect(toast("It will replace the record in QuickBooks. Sent 1 request.")).toBeVisible();
+  await expect(held).toHaveCount(0);
+  const records = (await bridge()).records;
+  expect(records).toHaveLength(5);
+  expect(records.at(-1)).toMatchObject({
+    customer: site.id,
+    duration: "PT1H0M0S",
+    item: "I-LABOR",
+    notes: expect.stringMatching(/^\[ref [0-9a-f]{12}\]$/),
+  });
+});
+
+test("a customer marked not billable sends its jobs' time as not billable", async () => {
+  await page.goto("/admin/jobs");
+  const acme = page.getByRole("group", { name: "Acme", exact: true });
+  await acme.getByRole("switch", { name: "Its jobs are billable" }).click({ force: true });
+  await expect(toast("Time on “Acme” is sent as not billable.")).toBeVisible();
+
+  await addTime("Brand New Site", "20m");
+  await signOffWeek();
+  await page.goto("/admin/accounting");
+  await sendNow("Sent 2 requests.");
+  expect((await bridge()).records.at(-1)).toMatchObject({ duration: "PT0H20M0S", item: "I-LABOR", billable: "NotBillable" });
+
+  // One job can differ from its customer, and says so.
+  await page.goto("/admin/jobs");
+  const site = page.getByRole("group", { name: "Acme › Brand New Site" });
+  await expect(site.getByRole("switch", { name: "Billable", exact: true })).not.toBeChecked();
+  await site.getByRole("switch", { name: "Billable", exact: true }).click({ force: true });
+  await expect(toast("Time on “Acme › Brand New Site” is sent as billable.")).toBeVisible();
+  await expect(site.getByRole("switch", { name: "Billable (unlike Acme)" })).toBeChecked();
+  await shot("jobs-billable");
+  await page
+    .getByRole("group", { name: "Acme", exact: true })
+    .getByRole("switch", { name: "Its jobs are billable" })
+    .click({ force: true });
+  await expect(toast("Time on “Acme” is sent as billable.")).toBeVisible();
+  // It agrees with its customer again, so it no longer reads as the odd one out.
+  await expect(site.getByRole("switch", { name: "Billable", exact: true })).toBeChecked();
 });
 
 test("screenshots of the Accounting page", async ({ browser }) => {

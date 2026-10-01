@@ -10,7 +10,8 @@ import { xmlText } from "../accounting/qbxml.ts";
  *
  * Failure injection: `failNext(code)` answers the next request with an error;
  * `loseNextAnswer()` applies the next request but makes the caller think the
- * connection dropped (the case that can cause duplicates).
+ * connection dropped (the case that can cause duplicates). `addForeign()` puts
+ * a time record there that this app didn't send, as another tracker would.
  */
 
 export interface FakeRecord {
@@ -103,20 +104,37 @@ export class FakeQuickBooks {
   payrollEnabled = true;
   requests: string[] = [];
   private seq = 1000;
-  private failures: { code: number; message: string }[] = [];
-  private loseAnswer = false;
+  private failures: { code: number; message: string; of?: string }[] = [];
+  private loseAnswer: string | boolean = false;
 
-  failNext(code: number, message = `Simulated error ${code}`): void {
-    this.failures.push({ code, message });
+  /** Refuse the next request, or the next one of a kind ("TimeTrackingAddRq"). */
+  failNext(code: number, message = `Simulated error ${code}`, of?: string): void {
+    this.failures.push({ code, message, of });
   }
 
-  loseNextAnswer(): void {
-    this.loseAnswer = true;
+  /** Lose the answer to the next request, or to the next one of a kind ("TimeTrackingAddRq"). */
+  loseNextAnswer(of?: string): void {
+    this.loseAnswer = of ?? true;
   }
 
   private nextId(prefix: string): string {
     this.seq++;
     return `${prefix}${this.seq.toString(16).toUpperCase()}-1726500000`;
+  }
+
+  /** A time record from somewhere else: another tracker, or typed in at the desk. */
+  addForeign(r: { txnDate: string; entity: string; customer: string | null; duration: string; notes?: string }): FakeRecord {
+    const record: FakeRecord = {
+      txnId: this.nextId("T"),
+      editSequence: "1",
+      item: null,
+      payrollItem: null,
+      billable: "NotBillable",
+      notes: "",
+      ...r,
+    };
+    this.records.push(record);
+    return record;
   }
 
   /** Change a record "in QuickBooks", as someone at the desk would. */
@@ -149,7 +167,7 @@ export class FakeQuickBooks {
       }
     }
     const answer = `<?xml version="1.0" ?><QBXML><QBXMLMsgsRs>${out.join("")}</QBXMLMsgsRs></QBXML>`;
-    if (this.loseAnswer) {
+    if (this.loseAnswer === true || (typeof this.loseAnswer === "string" && requestXml.includes(this.loseAnswer))) {
       this.loseAnswer = false;
       throw new LostAnswer();
     }
@@ -163,7 +181,8 @@ export class FakeQuickBooks {
       `<${rsName} requestID="${id}" statusCode="${code}" statusSeverity="${code === 0 || code === 1 ? "Info" : "Error"}" statusMessage="${xmlText(message)}">${body}</${rsName}>`;
     const ok = (body: string) => status(0, "Status OK", body);
 
-    const injected = this.failures.shift();
+    const at = this.failures.findIndex((f) => !f.of || f.of === name);
+    const injected = at < 0 ? undefined : this.failures.splice(at, 1)[0];
     if (injected) return status(injected.code, injected.message);
 
     const el = (tag: string, v: string | null) => (v == null ? "" : `<${tag}>${xmlText(v)}</${tag}>`);

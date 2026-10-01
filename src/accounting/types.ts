@@ -80,6 +80,8 @@ export interface FoundTime {
   editSequence: string;
   notes: string;
   minutes: number;
+  /** The job it is booked to there, if any. */
+  jobRemoteId: string | null;
 }
 
 export interface PulledLists {

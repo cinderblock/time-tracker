@@ -1,4 +1,4 @@
-import type { Performed, SyncFailure, SyncRequest, TimeRecord } from "./accounting/types.ts";
+import type { FoundTime, Performed, SyncFailure, SyncRequest, TimeRecord } from "./accounting/types.ts";
 import { audit } from "./audit.ts";
 import { db } from "./db.server.ts";
 import { type EntryStatus, sendableStatuses } from "./entry-status.ts";
@@ -12,6 +12,7 @@ import {
   syncState,
   updateSyncState,
 } from "./settings.ts";
+import { UserInputError } from "./users.ts";
 
 /**
  * Sending time to the accounting system.
@@ -26,6 +27,8 @@ import {
  *   job.add      create a provisional job there, when an admin asked
  *   entry.delete remove the record of time deleted here after it was sent
  *   entry.find   look for a record whose send had an unknown outcome
+ *   entry.check  before a first send, ask what is already there for that
+ *                person, date and job (see "time that is already there")
  *   entry.add    send signed-off time
  *   entry.mod    send signed-off time that was sent before and taken back
  *
@@ -41,7 +44,7 @@ export const PULL_EVERY_MS = 60 * 60_000;
 const PULL_RETRY_MS = 5 * 60_000;
 const MAX_BACKOFF_MS = 6 * 60 * 60_000;
 
-export type WorkKind = "pull" | "job.add" | "entry.delete" | "entry.find" | "entry.add" | "entry.mod";
+export type WorkKind = "pull" | "job.add" | "entry.delete" | "entry.find" | "entry.check" | "entry.add" | "entry.mod";
 
 export interface Work {
   kind: WorkKind;
@@ -50,6 +53,8 @@ export interface Work {
   request: SyncRequest;
   /** For logs and admin pages: what this is about. */
   label: string;
+  /** An `entry.check`: whose day is being asked about. The answer covers all their unsent time that day. */
+  check?: { userId: number; txnDate: string; personRemoteId: string };
 }
 
 /**
@@ -84,10 +89,11 @@ interface EntryRow {
   sync_uncertain: string | null;
   sync_next_at: number | null;
   deleted_at: number | null;
+  duplicate_check: string | null;
 }
 
 const ENTRY_COLUMNS =
-  "id, user_id, job_id, work_date, duration_seconds, note, billable, status, service_item_id, remote_txn_id, remote_edit_sequence, remote_deleted_at, sync_uncertain, sync_next_at, deleted_at";
+  "id, user_id, job_id, work_date, duration_seconds, note, billable, status, service_item_id, remote_txn_id, remote_edit_sequence, remote_deleted_at, sync_uncertain, sync_next_at, deleted_at, duplicate_check";
 
 /**
  * `status IN (…)` for time the sync may send as the organisation is set up
@@ -105,7 +111,7 @@ interface Lookups {
   people: Map<number, { name: string; remotePersonId: string | null; payrollItemId: string | null; categoryId: number | null }>;
   remotePeople: Map<string, { name: string; kind: string; active: boolean }>;
   items: Map<string, { kind: string; active: boolean; fullName: string }>;
-  jobs: Map<string, { name: string; parentId: string | null; remoteId: string | null; remoteActive: boolean; serviceItemId: string | null; mergedInto: string | null }>;
+  jobs: Map<string, { name: string; parentId: string | null; remoteId: string | null; remoteActive: boolean; serviceItemId: string | null; mergedInto: string | null; billable: boolean | null }>;
   categoryItems: Map<number, string | null>;
   defaultService: string | null;
   defaultPayroll: string | null;
@@ -135,8 +141,8 @@ function lookups(): Lookups {
     ),
     jobs: new Map(
       db()
-        .query<{ id: string; name: string; parent_id: string | null; remote_id: string | null; remote_active: number; default_service_item_id: string | null; merged_into: string | null }, []>(
-          "SELECT id, name, parent_id, remote_id, remote_active, default_service_item_id, merged_into FROM jobs",
+        .query<{ id: string; name: string; parent_id: string | null; remote_id: string | null; remote_active: number; default_service_item_id: string | null; merged_into: string | null; billable: number | null }, []>(
+          "SELECT id, name, parent_id, remote_id, remote_active, default_service_item_id, merged_into, billable FROM jobs",
         )
         .all()
         .map((r) => [
@@ -148,6 +154,7 @@ function lookups(): Lookups {
             remoteActive: r.remote_active === 1,
             serviceItemId: r.default_service_item_id,
             mergedInto: r.merged_into,
+            billable: r.billable == null ? null : r.billable === 1,
           },
         ]),
     ),
@@ -226,6 +233,9 @@ function recordFor(e: EntryRow, l: Lookups): { record: TimeRecord } | NotReady {
   const minutes = Math.round(e.duration_seconds / 60);
   if (minutes === 0) return { reason: "Less than a minute of time: nothing to send. Delete it or fix its times.", fix: "entry" };
 
+  // The nearest answer up the tree; with none given, time is billable.
+  const jobBillable = chain.find((j) => j.billable != null)?.billable ?? true;
+
   const ref = entryRef(e.id);
   const note = e.note?.trim() ?? "";
   return {
@@ -237,9 +247,168 @@ function recordFor(e: EntryRow, l: Lookups): { record: TimeRecord } | NotReady {
       payrollItemRemoteId: payrollItemId,
       minutes,
       notes: note ? `${note} ${ref}` : ref,
-      billable: e.billable === 1 && Boolean(job) && Boolean(serviceItemId),
+      billable: e.billable === 1 && jobBillable && Boolean(job) && Boolean(serviceItemId),
     },
   };
+}
+
+// ---- time that is already there ------------------------------------------------------
+//
+// An organisation moving over from another tracker runs both for a while, and
+// the other one keeps feeding the same accounting system. So before an entry
+// is sent for the first time, the sync asks what is already there for that
+// person and date — one question per person and day, answering for all their
+// unsent time that day. A record on the same job that this app didn't put
+// there holds the entry until an admin says which it is: the same time (the
+// entry takes the record over and amends it to match) or different time (both
+// go). Hours and notes are not compared: two systems rarely agree on either.
+
+export interface DuplicateFound {
+  txnId: string;
+  editSequence: string;
+  minutes: number;
+  notes: string;
+}
+
+/** What `time_entries.duplicate_check` holds. `key` is what was checked. */
+type DuplicateCheck =
+  | { state: "clear"; key: string; at: number }
+  | { state: "held"; key: string; at: number; found: DuplicateFound[] }
+  | { state: "separate"; key: string; at: number; by: number }
+  | { state: "replaced"; key: string; at: number; by: number; txnId: string };
+
+function duplicateCheckOf(row: { duplicate_check: string | null }): DuplicateCheck | null {
+  return row.duplicate_check ? (JSON.parse(row.duplicate_check) as DuplicateCheck) : null;
+}
+
+/** An answer only stands for the date, person and job it was given about. */
+const checkKey = (r: TimeRecord) => `${r.txnDate}|${r.personRemoteId}|${r.jobRemoteId ?? ""}`;
+
+/** The check that applies to this record as it would be sent now, if it has had one. */
+function currentCheck(row: { duplicate_check: string | null }, record: TimeRecord): DuplicateCheck | null {
+  const check = duplicateCheckOf(row);
+  return check && check.key === checkKey(record) ? check : null;
+}
+
+/** Whether a note carries one of this app's references (`entryRef`): such a record was sent from here. */
+const sentFromHere = (notes: string) => notes.includes("[ref ");
+
+function setDuplicateCheck(entryId: string, check: DuplicateCheck | null): void {
+  db()
+    .query("UPDATE time_entries SET duplicate_check = ? WHERE id = ?")
+    .run(check ? JSON.stringify(check) : null, entryId);
+}
+
+/**
+ * Judge what the accounting system has for one person's day against their
+ * time that has yet to be sent for the first time: the entry asked about, and
+ * any other that hasn't had an answer for what it is now.
+ */
+function applyCheck(askedFor: string, asked: NonNullable<Work["check"]>, records: FoundTime[], now: number): void {
+  const l = lookups();
+  const rows = db()
+    .query<EntryRow, [number, string]>(
+      `SELECT ${ENTRY_COLUMNS} FROM time_entries
+        WHERE user_id = ? AND work_date = ? AND deleted_at IS NULL AND ${sendableSql()}
+          AND (remote_txn_id IS NULL OR remote_deleted_at IS NOT NULL) AND sync_uncertain IS NULL`,
+    )
+    .all(asked.userId, asked.txnDate);
+  const standsFor = db().query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM time_entries WHERE remote_txn_id = ?");
+  for (const row of rows) {
+    const built = recordFor(row, l);
+    if (!("record" in built) || built.record.personRemoteId !== asked.personRemoteId || built.record.txnDate !== asked.txnDate) continue;
+    if (row.id !== askedFor && currentCheck(row, built.record)) continue; // already answered
+    const key = checkKey(built.record);
+    const mine = records.find((r) => r.notes.includes(entryRef(row.id)));
+    if (mine) {
+      // It's there already, from a send whose outcome was never recorded. Adopt it.
+      db()
+        .query("UPDATE time_entries SET remote_txn_id = ?, remote_edit_sequence = ?, remote_deleted_at = NULL WHERE id = ?")
+        .run(mine.txnId, mine.editSequence, row.id);
+      setDuplicateCheck(row.id, { state: "clear", key, at: now });
+      continue;
+    }
+    const found = records.filter(
+      (r) => r.jobRemoteId === built.record.jobRemoteId && !sentFromHere(r.notes) && standsFor.get(r.txnId)!.n === 0,
+    );
+    setDuplicateCheck(
+      row.id,
+      found.length
+        ? {
+            state: "held",
+            key,
+            at: now,
+            found: found.map((r) => ({ txnId: r.txnId, editSequence: r.editSequence, minutes: r.minutes, notes: r.notes })),
+          }
+        : { state: "clear", key, at: now },
+    );
+  }
+}
+
+/** An admin's answer about a held entry. Throws UserInputError. */
+export function resolveDuplicate(args: {
+  entryId: string;
+  /** `replace`: it is the same time, and this entry takes the record over. `separate`: send it as well. */
+  action: "replace" | "separate";
+  /** For `replace`: which of the records found. */
+  txnId?: string;
+  actorUserId: number;
+  now?: number;
+}): void {
+  const now = args.now ?? Date.now();
+  db().transaction(() => {
+    const row = db()
+      .query<{ duplicate_check: string | null; deleted_at: number | null }, [string]>(
+        "SELECT duplicate_check, deleted_at FROM time_entries WHERE id = ?",
+      )
+      .get(args.entryId);
+    const check = row ? duplicateCheckOf(row) : null;
+    if (!row || row.deleted_at != null || check?.state !== "held") {
+      throw new UserInputError("That entry isn't waiting on this any more.");
+    }
+    if (args.action === "separate") {
+      setDuplicateCheck(args.entryId, { state: "separate", key: check.key, at: now, by: args.actorUserId });
+      audit({
+        actorUserId: args.actorUserId,
+        entity: "entry",
+        entityId: args.entryId,
+        action: "duplicate_separate",
+        before: { found: check.found },
+        at: now,
+      });
+      return;
+    }
+    const found = check.found.find((f) => f.txnId === args.txnId);
+    if (!found) throw new UserInputError("That record isn't one of those found. Check again.");
+    const taken = db()
+      .query<{ id: string }, [string, string]>("SELECT id FROM time_entries WHERE remote_txn_id = ? AND id != ?")
+      .get(found.txnId, args.entryId);
+    if (taken) {
+      throw new UserInputError("Another entry here already stands for that record. Check again, or send this one as well.");
+    }
+    // Adopt it; the next pass amends it to match exactly.
+    db()
+      .query("UPDATE time_entries SET remote_txn_id = ?, remote_edit_sequence = ?, remote_deleted_at = NULL WHERE id = ?")
+      .run(found.txnId, found.editSequence, args.entryId);
+    setDuplicateCheck(args.entryId, { state: "replaced", key: check.key, at: now, by: args.actorUserId, txnId: found.txnId });
+    audit({
+      actorUserId: args.actorUserId,
+      entity: "entry",
+      entityId: args.entryId,
+      action: "duplicate_replace",
+      after: { found },
+      at: now,
+    });
+  })();
+}
+
+/** Ask again about every held entry, after fixing things in the accounting system by hand. */
+export function recheckDuplicates(): number {
+  return db()
+    .query(
+      "UPDATE time_entries SET duplicate_check = NULL WHERE json_extract(duplicate_check, '$.state') = 'held' AND deleted_at IS NULL",
+    )
+    .run().changes;
 }
 
 // ---- the work list ------------------------------------------------------------------
@@ -317,6 +486,22 @@ export function listWork(now: number = Date.now()): Work[] {
     const built = recordFor(row, l);
     if (!("record" in built)) continue;
     const hasRemote = row.remote_txn_id != null && row.remote_deleted_at == null;
+    if (!hasRemote) {
+      // A first send: learn what's already there before adding to it.
+      const check = currentCheck(row, built.record);
+      if (!check) {
+        const { txnDate, personRemoteId } = built.record;
+        sends.push({
+          kind: "entry.check",
+          id: row.id,
+          request: { type: "time.find", by: { txnDate, personRemoteId } },
+          label,
+          check: { userId: row.user_id, txnDate, personRemoteId },
+        });
+        continue;
+      }
+      if (check.state === "held") continue; // waits for an admin
+    }
     sends.push(
       hasRemote
         ? {
@@ -444,8 +629,12 @@ export function finishWork(backend: string, work: Work, performed: Performed, no
         }
         if (result.type !== "time.found") return;
         const ref = entryRef(work.id);
-        const match = result.records.find((r) => r.notes.includes(ref));
-        const byId = work.request.type === "time.find" && "txnId" in work.request.by;
+        const askedId = work.request.type === "time.find" && "txnId" in work.request.by ? work.request.by.txnId : null;
+        const byId = askedId != null;
+        // Asked for by id, the record is the one whatever its note says: it
+        // may have been edited there, or taken over from another tracker and
+        // not amended yet. Asked for by day, only our reference identifies it.
+        const match = result.records.find((r) => (byId ? r.txnId === askedId : r.notes.includes(ref)));
         if (match) {
           // Adopt it; the next pass amends it to match exactly.
           db()
@@ -463,6 +652,17 @@ export function finishWork(backend: string, work: Work, performed: Performed, no
           // Never arrived: send it.
           db().query("UPDATE time_entries SET sync_uncertain = NULL WHERE id = ?").run(work.id);
         }
+        return;
+      }
+
+      case "entry.check": {
+        if (!result.ok) {
+          failEntry(work.id, result, now);
+          return;
+        }
+        if (result.type !== "time.found" || !work.check) return;
+        db().query("UPDATE time_entries SET sync_error = NULL, sync_failures = 0, sync_next_at = NULL WHERE id = ?").run(work.id);
+        applyCheck(work.id, work.check, result.records, now);
         return;
       }
 
@@ -532,6 +732,18 @@ export interface SyncOverview {
   failed: { entryId: string; person: string; workDate: string; minutes: number; error: string; retryAt: number | null }[];
   /** Sent, then taken back: the accounting system has the old values until it's signed off again. */
   reopened: { entryId: string; person: string; workDate: string }[];
+  /** Held: the accounting system already has time for this person, date and job that didn't come from here. */
+  duplicates: {
+    entryId: string;
+    userId: number;
+    person: string;
+    workDate: string;
+    minutes: number;
+    /** "Customer:Job", as stored. */
+    job: string;
+    note: string;
+    found: { txnId: string; minutes: number; notes: string }[];
+  }[];
   sent: number;
   jobsToCreate: { jobId: string; name: string; error: string | null }[];
   recent: { at: number; work: string; ok: boolean; error: string | null }[];
@@ -551,6 +763,7 @@ export function syncOverview(now: number = Date.now()): SyncOverview {
     blocked: [],
     failed: [],
     reopened: [],
+    duplicates: [],
     sent: db().query<{ n: number }, []>("SELECT COUNT(*) AS n FROM time_entries WHERE status = 'synced' AND deleted_at IS NULL").get()!.n,
     jobsToCreate: db()
       .query<{ id: string; name: string; sync_error: string | null }, []>(
@@ -574,6 +787,25 @@ export function syncOverview(now: number = Date.now()): SyncOverview {
       overview.reopened.push({ entryId: row.id, person, workDate: row.work_date });
       continue;
     }
+    const built = recordFor(row, l);
+    const hasRemote = row.remote_txn_id != null && row.remote_deleted_at == null;
+    const check = "record" in built && !hasRemote ? currentCheck(row, built.record) : null;
+    if (check?.state === "held") {
+      overview.duplicates.push({
+        entryId: row.id,
+        userId: row.user_id,
+        person,
+        workDate: row.work_date,
+        minutes,
+        job: jobChain(l, row.job_id)
+          .map((j) => j.name)
+          .reverse()
+          .join(":"),
+        note: row.note?.trim() ?? "",
+        found: check.found.map((f) => ({ txnId: f.txnId, minutes: f.minutes, notes: f.notes })),
+      });
+      continue;
+    }
     if (row.status === "sync_failed") {
       overview.failed.push({
         entryId: row.id,
@@ -585,7 +817,6 @@ export function syncOverview(now: number = Date.now()): SyncOverview {
       });
       continue;
     }
-    const built = recordFor(row, l);
     if ("record" in built) overview.ready++;
     else overview.blocked.push({ entryId: row.id, userId: row.user_id, person, workDate: row.work_date, minutes, ...built });
   }

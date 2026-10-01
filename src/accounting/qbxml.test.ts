@@ -136,14 +136,14 @@ describe("parsing responses", () => {
     ).toEqual({ ok: true, type: "time.found", records: [] });
     const two = wrap(`<TimeTrackingQueryRs requestID="f" statusCode="0" statusSeverity="Info">
       <TimeTrackingRet><TxnID>A</TxnID><EditSequence>1</EditSequence><Duration>PT2H0M0S</Duration><Notes>Framing [ref 111111111111]</Notes></TimeTrackingRet>
-      <TimeTrackingRet><TxnID>B</TxnID><EditSequence>2</EditSequence><Duration>PT0H30M0S</Duration></TimeTrackingRet>
+      <TimeTrackingRet><TxnID>B</TxnID><EditSequence>2</EditSequence><CustomerRef><ListID>C-1</ListID><FullName>Acme:Phase 2</FullName></CustomerRef><Duration>PT0H30M0S</Duration></TimeTrackingRet>
     </TimeTrackingQueryRs>`);
     expect(parseResponse(find, two)).toEqual({
       ok: true,
       type: "time.found",
       records: [
-        { txnId: "A", editSequence: "1", minutes: 120, notes: "Framing [ref 111111111111]" },
-        { txnId: "B", editSequence: "2", minutes: 30, notes: "" },
+        { txnId: "A", editSequence: "1", minutes: 120, notes: "Framing [ref 111111111111]", jobRemoteId: null },
+        { txnId: "B", editSequence: "2", minutes: 30, notes: "", jobRemoteId: "C-1" },
       ],
     });
   });

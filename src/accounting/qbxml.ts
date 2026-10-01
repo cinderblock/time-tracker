@@ -295,6 +295,7 @@ export function parseResponse(req: SyncRequest, xml: string): SyncResult {
             editSequence: str(r.EditSequence),
             notes: str(r.Notes),
             minutes: parseQbDuration(str(r.Duration)),
+            jobRemoteId: listId(r.CustomerRef),
           }),
         ),
       };

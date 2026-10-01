@@ -22,6 +22,11 @@ import { UserInputError } from "./users.ts";
  * way, and NULL means "follow the default", so the answer keeps up as
  * sub-jobs come and go.
  *
+ * Whether a job's time is billable follows the tree too (`billable`): the
+ * nearest answer on the way up applies, a customer's covers its jobs, and
+ * with none given time is billable. It only matters where time is sent to an
+ * accounting system, which is where it is applied (sync.ts).
+ *
  * With an accounting backend, customers and jobs normally arrive from it
  * (remote-lists.ts pulls them). Anyone may still create one here when the
  * work can't wait for the real one to exist; such rows are `provisional`
@@ -63,6 +68,10 @@ export interface Job {
   takesTime: boolean | null;
   /** Time can be booked here: open, a job rather than a customer, and it takes hours. */
   bookable: boolean;
+  /** An admin's answer to "is time here billable". Null follows the row above. */
+  billable: boolean | null;
+  /** What applies: the nearest answer on the way up, and yes when nobody gave one. */
+  billed: boolean;
   createdBy: number | null;
   createdAt: number;
 }
@@ -80,13 +89,14 @@ interface JobRow {
   default_service_item_id: string | null;
   requires_note: number;
   takes_time: number | null;
+  billable: number | null;
   active: number;
   created_by: number | null;
   created_at: number;
 }
 
 const COLUMNS =
-  "id, name, parent_id, remote_id, remote_active, provisional, merged_into, create_requested_at, sync_error, default_service_item_id, requires_note, takes_time, active, created_by, created_at";
+  "id, name, parent_id, remote_id, remote_active, provisional, merged_into, create_requested_at, sync_error, default_service_item_id, requires_note, takes_time, billable, active, created_by, created_at";
 
 function allRows(): JobRow[] {
   return db().query<JobRow, []>(`SELECT ${COLUMNS} FROM jobs`).all();
@@ -107,6 +117,8 @@ function hydrate(rows: JobRow[]): Job[] {
     let open = selfOpen(r);
     let noteRequired = r.requires_note === 1;
     let top = r;
+    // The nearest answer wins, so a job can differ from its customer.
+    let billed: number | null = r.billable;
     // `seen` guards against a cycle ever sneaking into the data.
     const seen = new Set([r.id]);
     for (let p = r.parent_id ? byId.get(r.parent_id) : undefined; p && !seen.has(p.id); ) {
@@ -114,6 +126,7 @@ function hydrate(rows: JobRow[]): Job[] {
       seen.add(p.id);
       open &&= selfOpen(p);
       noteRequired ||= p.requires_note === 1;
+      billed ??= p.billable;
       top = p;
       p = p.parent_id ? byId.get(p.parent_id) : undefined;
     }
@@ -141,6 +154,8 @@ function hydrate(rows: JobRow[]): Job[] {
       // A job holding sub-jobs is a heading for them, not a place for hours,
       // unless an admin has said otherwise for this one.
       bookable: open && r.parent_id != null && (takesTime ?? !hasSubJobs),
+      billable: r.billable == null ? null : r.billable === 1,
+      billed: billed !== 0,
       createdBy: r.created_by,
       createdAt: r.created_at,
     };
@@ -268,6 +283,8 @@ export function updateJob(args: {
   requiresNote?: boolean;
   /** Whether it takes hours itself; null goes back to following the default. */
   takesTime?: boolean | null;
+  /** Whether its time goes to the accounting system as billable; null follows the row above. */
+  billable?: boolean | null;
   actorUserId: number;
 }): Job {
   const job = getJob(args.id);
@@ -290,20 +307,37 @@ export function updateJob(args: {
   if (job.parentId == null && takesTime != null) {
     throw new UserInputError("A customer never takes hours itself. Set this on one of its jobs.");
   }
-  if (name === job.name && active === job.active && requiresNote === job.requiresNote && takesTime === job.takesTime) {
+  const billable = args.billable === undefined ? job.billable : args.billable;
+  if (
+    name === job.name &&
+    active === job.active &&
+    requiresNote === job.requiresNote &&
+    takesTime === job.takesTime &&
+    billable === job.billable
+  ) {
     return job;
   }
 
   db()
-    .query("UPDATE jobs SET name = ?, active = ?, requires_note = ?, takes_time = ?, updated_at = ? WHERE id = ?")
-    .run(name, active ? 1 : 0, requiresNote ? 1 : 0, takesTime == null ? null : takesTime ? 1 : 0, Date.now(), job.id);
+    .query(
+      "UPDATE jobs SET name = ?, active = ?, requires_note = ?, takes_time = ?, billable = ?, updated_at = ? WHERE id = ?",
+    )
+    .run(
+      name,
+      active ? 1 : 0,
+      requiresNote ? 1 : 0,
+      takesTime == null ? null : takesTime ? 1 : 0,
+      billable == null ? null : billable ? 1 : 0,
+      Date.now(),
+      job.id,
+    );
   audit({
     actorUserId: args.actorUserId,
     entity: "job",
     entityId: job.id,
     action: "update",
-    before: { name: job.name, active: job.active, requiresNote: job.requiresNote, takesTime: job.takesTime },
-    after: { name, active, requiresNote, takesTime },
+    before: { name: job.name, active: job.active, requiresNote: job.requiresNote, takesTime: job.takesTime, billable: job.billable },
+    after: { name, active, requiresNote, takesTime, billable },
   });
   return getJob(job.id)!;
 }

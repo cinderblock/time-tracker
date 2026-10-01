@@ -466,6 +466,30 @@ const migrations: Migration[] = [
           CHECK (takes_time IN (0, 1));
     `,
   },
+  {
+    name: "006_job_billable",
+    sql: `
+        -- Whether time on this job goes to the accounting system as billable.
+        -- NULL follows the row above it (a job its job, a job its customer),
+        -- and with nothing set anywhere the answer is yes. Applied when the
+        -- record is built; see src/sync.ts.
+        ALTER TABLE jobs ADD COLUMN billable INTEGER
+          CHECK (billable IN (0, 1));
+    `,
+  },
+  {
+    name: "007_duplicate_check",
+    sql: `
+        -- Before an entry is first sent, the sync asks the accounting system
+        -- what it already has for that person, date and job, and holds the
+        -- entry if something is there that this app didn't put there. JSON:
+        -- what was checked, what was found, and what an admin decided. NULL
+        -- means not checked yet. See src/sync.ts.
+        -- Only asked before a first send: time already sent is this app's
+        -- own record there, and is amended rather than added.
+        ALTER TABLE time_entries ADD COLUMN duplicate_check TEXT;
+    `,
+  },
 ];
 
 /**

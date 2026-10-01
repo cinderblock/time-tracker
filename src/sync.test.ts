@@ -20,7 +20,7 @@ import {
   setPersonPayrollItem,
 } from "./remote-lists.ts";
 import { setDefaultPayrollItemId, setDefaultServiceItemId, setRequireApproval, syncState } from "./settings.ts";
-import { PULL_EVERY_MS, entryRef, listWork, retryFailedNow, syncOverview } from "./sync.ts";
+import { PULL_EVERY_MS, entryRef, listWork, recheckDuplicates, resolveDuplicate, retryFailedNow, syncOverview } from "./sync.ts";
 import { runSync } from "./sync-worker.ts";
 import { fakeBridgeFetch } from "./testing/fake-bridge.ts";
 import { type FakeQuickBooks, sampleCompany } from "./testing/fake-quickbooks.ts";
@@ -181,7 +181,9 @@ describe("sending time", () => {
 
     linkPerson({ userId: alice, remoteId: "E-ALICE", actorUserId: admin });
     expect(syncOverview(now).ready).toBe(1);
-    expect(await sync()).toMatchObject({ reached: true, done: 1 });
+    // Two requests: what's there for Alice that day already, then the time.
+    expect(listWork(now).map((w) => w.kind)).toEqual(["entry.check"]);
+    expect(await sync()).toMatchObject({ reached: true, done: 2 });
     expect(qb.summary()).toEqual([
       {
         date: DAY,
@@ -245,6 +247,35 @@ describe("sending time", () => {
     expect(qb.summary()[0]).toMatchObject({ item: null, payrollItem: null, billable: "NotBillable" });
   });
 
+  test("a job that isn't billable sends its time as not billable; the nearest answer up the tree applies", async () => {
+    await connected();
+    qb.customers.push({ id: "C-ACME-3", name: "Phase 3", parent: "C-ACME", active: true });
+    now += MIN;
+    requestPull(now);
+    await sync();
+    const acme = jobByRemote("C-ACME");
+    expect(acme).toMatchObject({ billable: null, billed: true });
+
+    // The customer's answer covers its jobs; one job answers for itself.
+    updateJob({ id: acme.id, billable: false, actorUserId: admin });
+    updateJob({ id: jobByRemote("C-ACME-3").id, billable: true, actorUserId: admin });
+    expect(jobByRemote("C-ACME-2")).toMatchObject({ billable: null, billed: false });
+    expect(jobByRemote("C-ACME-3")).toMatchObject({ billable: true, billed: true });
+
+    const internal = work(alice, jobByRemote("C-ACME-2").id, 60, "Tidying");
+    const forPay = work(alice, jobByRemote("C-ACME-3").id, 30, "Drawings", NINE + 2 * 60 * MIN);
+    approveEntries({ userId: alice, from: DAY, to: DAY, actorUserId: admin });
+    await sync();
+    const byNote = (ref: string) => qb.summary().find((r) => r.notes.endsWith(ref))!;
+    // Still carries its service item: what the work was doesn't change, only whether it's billed.
+    expect(byNote(entryRef(internal))).toMatchObject({ item: "I-LABOR", billable: "NotBillable" });
+    expect(byNote(entryRef(forPay))).toMatchObject({ item: "I-LABOR", billable: "Billable" });
+
+    // Back to following the customer.
+    updateJob({ id: jobByRemote("C-ACME-3").id, billable: null, actorUserId: admin });
+    expect(jobByRemote("C-ACME-3")).toMatchObject({ billable: null, billed: false });
+  });
+
   test("what can't be sent says why", async () => {
     await connected();
     const zero = work(alice, jobByRemote("C-ACME-2").id, 0.2);
@@ -278,7 +309,7 @@ describe("the approval gate", () => {
     const first = work(alice, acme2, 60);
     submitEntries({ userId: alice, entryIds: [first], actorUserId: alice });
     expect(syncOverview(now).ready).toBe(1);
-    expect(await sync()).toMatchObject({ done: 1 });
+    expect(await sync()).toMatchObject({ done: 2 });
     expect(getEntry(first)!.status).toBe("synced");
 
     // On: the same submission is no longer enough.
@@ -290,14 +321,14 @@ describe("the approval gate", () => {
     expect(getEntry(second)!.status).toBe("submitted");
 
     approveEntries({ userId: alice, entryIds: [second], actorUserId: admin });
-    expect(await sync()).toMatchObject({ done: 1 });
+    expect(await sync()).toMatchObject({ done: 2 });
     expect(getEntry(second)!.status).toBe("synced");
 
     // Time approved while the gate was on still goes after it's switched off.
     setRequireApproval(false, admin);
     const third = work(alice, acme2, 15, "Punch list", NINE + 8 * 60 * MIN);
     approveEntries({ userId: alice, entryIds: [third], actorUserId: admin });
-    expect(await sync()).toMatchObject({ done: 1 });
+    expect(await sync()).toMatchObject({ done: 2 });
     expect(getEntry(third)!.status).toBe("synced");
   });
 
@@ -315,6 +346,160 @@ describe("the approval gate", () => {
     await sync();
     expect(qb.records).toHaveLength(1); // amended, not duplicated
     expect(qb.records[0]!.notes).toContain("Framing, corrected");
+  });
+});
+
+describe("time the accounting system already has", () => {
+  // Another tracker has been feeding the same books: an hour for Alice on Phase 2, that day.
+  const theirs = () => qb.addForeign({ txnDate: DAY, entity: "E-ALICE", customer: "C-ACME-2", duration: "PT1H0M0S", notes: "Framing" });
+
+  test("a record for the same person, day and job that didn't come from here holds the entry", async () => {
+    await connected();
+    const record = theirs();
+    // Not matches: someone else's time, another day, and another job.
+    qb.addForeign({ txnDate: DAY, entity: "V-SUB", customer: "C-ACME-2", duration: "PT1H0M0S" });
+    qb.addForeign({ txnDate: "2026-09-15", entity: "E-ALICE", customer: "C-ACME-2", duration: "PT1H0M0S" });
+    qb.addForeign({ txnDate: DAY, entity: "E-ALICE", customer: "C-ACME", duration: "PT1H0M0S" });
+    const id = work(alice, jobByRemote("C-ACME-2").id, 240, "Framing all morning");
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+
+    expect(await sync()).toMatchObject({ reached: true, done: 1 }); // asked, and stopped there
+    expect(qb.records).toHaveLength(4);
+    expect(getEntry(id)!.status).toBe("approved");
+    expect(listWork(now)).toEqual([]);
+    expect(syncOverview(now)).toMatchObject({
+      ready: 0,
+      failed: [],
+      blocked: [],
+      duplicates: [
+        {
+          entryId: id,
+          person: "Alice",
+          workDate: DAY,
+          minutes: 240,
+          job: "Acme:Phase 2",
+          note: "Framing all morning",
+          found: [{ txnId: record.txnId, minutes: 60, notes: "Framing" }],
+        },
+      ],
+    });
+    // It stays held however often the sync runs.
+    now += 10 * MIN;
+    expect(await sync()).toMatchObject({ done: 0 });
+    expect(qb.records).toHaveLength(4);
+  });
+
+  test("the same time: the entry takes the record over and amends it, rather than adding a second", async () => {
+    await connected();
+    const record = theirs();
+    const id = work(alice, jobByRemote("C-ACME-2").id, 240, "Framing all morning");
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    await sync();
+
+    expect(() => resolveDuplicate({ entryId: id, action: "replace", txnId: "nope", actorUserId: admin })).toThrow(/isn't one of those found/);
+    resolveDuplicate({ entryId: id, action: "replace", txnId: record.txnId, actorUserId: admin });
+    expect(listWork(now).map((w) => w.kind)).toEqual(["entry.mod"]);
+    expect(syncOverview(now)).toMatchObject({ ready: 1, duplicates: [] });
+    await sync();
+    expect(qb.records).toHaveLength(1);
+    expect(qb.records[0]).toMatchObject({
+      txnId: record.txnId,
+      duration: "PT4H0M0S",
+      notes: `Framing all morning ${entryRef(id)}`,
+      item: "I-LABOR",
+      billable: "Billable",
+      editSequence: "2",
+    });
+    expect(getEntry(id)!.status).toBe("synced");
+    expect(() => resolveDuplicate({ entryId: id, action: "separate", actorUserId: admin })).toThrow(/isn't waiting/);
+  });
+
+  test("different time: both go, and a record can only be taken over once", async () => {
+    await connected();
+    const record = theirs();
+    const acme2 = jobByRemote("C-ACME-2").id;
+    const morning = work(alice, acme2, 60, "Framing");
+    const afternoon = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    approveEntries({ userId: alice, from: DAY, to: DAY, actorUserId: admin });
+
+    // One question answers for both.
+    expect(await sync()).toMatchObject({ done: 1 });
+    expect(syncOverview(now).duplicates.map((d) => d.entryId).sort()).toEqual([morning, afternoon].sort());
+
+    resolveDuplicate({ entryId: morning, action: "replace", txnId: record.txnId, actorUserId: admin });
+    expect(() => resolveDuplicate({ entryId: afternoon, action: "replace", txnId: record.txnId, actorUserId: admin })).toThrow(
+      /already stands for that record/,
+    );
+    resolveDuplicate({ entryId: afternoon, action: "separate", actorUserId: admin });
+    await sync();
+    expect(qb.records.map((r) => r.notes).sort()).toEqual([`Framing ${entryRef(morning)}`, `Trim ${entryRef(afternoon)}`].sort());
+    expect([morning, afternoon].map((e) => getEntry(e)!.status)).toEqual(["synced", "synced"]);
+  });
+
+  test("this app's own records don't hold anything, and fixing it at the desk clears it on a second look", async () => {
+    await connected();
+    const acme2 = jobByRemote("C-ACME-2").id;
+    const first = work(alice, acme2, 60, "Framing");
+    approveEntries({ userId: alice, entryIds: [first], actorUserId: admin });
+    await sync();
+    expect(getEntry(first)!.status).toBe("synced");
+
+    // More time on the same job and day: what's there is ours.
+    const second = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    approveEntries({ userId: alice, entryIds: [second], actorUserId: admin });
+    await sync();
+    expect(getEntry(second)!.status).toBe("synced");
+    expect(syncOverview(now).duplicates).toEqual([]);
+
+    // Then a record from elsewhere holds the next one — until it's removed there.
+    const record = theirs();
+    const third = work(alice, acme2, 15, "Punch list", NINE + 7 * 60 * MIN);
+    approveEntries({ userId: alice, entryIds: [third], actorUserId: admin });
+    await sync();
+    expect(syncOverview(now).duplicates.map((d) => d.entryId)).toEqual([third]);
+    qb.records.splice(qb.records.indexOf(record), 1);
+    await sync();
+    expect(getEntry(third)!.status).toBe("approved"); // nobody has looked again yet
+    expect(recheckDuplicates()).toBe(1);
+    await sync();
+    expect(getEntry(third)!.status).toBe("synced");
+    expect(qb.records).toHaveLength(3);
+  });
+
+  test("an answer stands only for what was asked: moved to another job, the entry is checked afresh", async () => {
+    await connected();
+    qb.customers.push({ id: "C-ACME-3", name: "Phase 3", parent: "C-ACME", active: true });
+    now += MIN;
+    requestPull(now);
+    await sync();
+    theirs();
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60);
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    await sync();
+    expect(syncOverview(now).duplicates).toHaveLength(1);
+
+    reopenEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    ok(send(alice, "entry.update", { entryId: id, jobId: jobByRemote("C-ACME-3").id }));
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    expect(syncOverview(now)).toMatchObject({ ready: 1, duplicates: [] });
+    expect(listWork(now).map((w) => w.kind)).toEqual(["entry.check"]);
+    await sync();
+    expect(getEntry(id)!.status).toBe("synced");
+    expect(qb.records.at(-1)).toMatchObject({ customer: "C-ACME-3" });
+  });
+
+  test("the record changed there since it was found: its current version is fetched, then amended", async () => {
+    await connected();
+    const record = theirs();
+    const id = work(alice, jobByRemote("C-ACME-2").id, 90, "Framing");
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    await sync();
+    qb.touch(record.txnId);
+    resolveDuplicate({ entryId: id, action: "replace", txnId: record.txnId, actorUserId: admin });
+    await sync();
+    expect(qb.records).toHaveLength(1);
+    expect(qb.records[0]).toMatchObject({ txnId: record.txnId, duration: "PT1H30M0S", notes: `Framing ${entryRef(id)}` });
+    expect(getEntry(id)!.status).toBe("synced");
   });
 });
 
@@ -454,7 +639,7 @@ describe("corrections and failures", () => {
     await connected();
     const id = work(alice, jobByRemote("C-ACME-2").id, 60);
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
-    qb.loseNextAnswer();
+    qb.loseNextAnswer("TimeTrackingAddRq");
     expect(await sync()).toMatchObject({ reached: false });
     expect(qb.records).toHaveLength(1); // it did arrive
     expect(getEntry(id)!.status).toBe("approved");
@@ -603,13 +788,13 @@ describe("corrections and failures", () => {
     await sync();
     expect(getEntry(id)!.status).toBe("synced");
 
-    // Every try is logged. The first add may have gone out, so later tries
-    // look for it first.
+    // Every try is logged, and none of them counts against the time: the
+    // question that comes before a first send never got an answer until the end.
     const attempts = db()
       .query<{ work: string; ok: number }, []>("SELECT work, ok FROM sync_attempts WHERE work != 'pull' ORDER BY id")
       .all()
       .map((a) => `${a.work} ${a.ok ? "ok" : "failed"}`);
-    expect(attempts).toEqual(["entry.add failed", "entry.find failed", "entry.find ok", "entry.add ok"]);
+    expect(attempts).toEqual(["entry.check failed", "entry.check failed", "entry.check ok", "entry.add ok"]);
   });
 
   test("a failed pull waits a few minutes before trying again", async () => {

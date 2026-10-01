@@ -106,6 +106,15 @@ repository. All of that is deployment configuration or an admin setting.
   time waits and goes when it can, a lost answer never makes a duplicate, and
   reopened time amends the record it already made. The Accounting page says what
   is waiting and why, and what was refused.
+  - **Time QuickBooks already has is held, not added twice.** Before an entry is
+    first sent, the app asks QuickBooks what it has for that person and day. A
+    record on the same job that didn't come from here — another tracker still
+    feeding the same books, or time typed in at the desk — holds the entry on the
+    Accounting page until an admin says which it is: the same time (the entry
+    takes that record over and amends it) or different time (both are sent).
+  - **A job, or a whole customer, can be not billable** (Jobs page). Its time is
+    still sent, with its service item, marked not billable — for internal work
+    that is tracked but never invoiced.
 
 ## Stack
 

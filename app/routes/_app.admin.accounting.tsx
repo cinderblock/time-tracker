@@ -22,7 +22,7 @@ import {
   setPersonPayrollItem,
 } from "../../src/remote-lists.ts";
 import { defaultPayrollItemId, defaultServiceItemId, syncState } from "../../src/settings.ts";
-import { retryFailedNow, syncOverview } from "../../src/sync.ts";
+import { recheckDuplicates, resolveDuplicate, retryFailedNow, syncOverview } from "../../src/sync.ts";
 import { runSync } from "../../src/sync-worker.ts";
 import { formatDurationHuman, formatWorkDate } from "../../src/time.ts";
 import { listUsers } from "../../src/users.ts";
@@ -157,6 +157,19 @@ export async function action({ request, context }: Route.ActionArgs) {
     retry: () => {
       const n = retryFailedNow();
       return summary(`Retrying ${n} ${n === 1 ? "entry" : "entries"}.`);
+    },
+    // Time the accounting system already has (see sync.ts): which is it?
+    "duplicate-replace": (form) => {
+      resolveDuplicate({ entryId: stringField(form, "entryId"), action: "replace", txnId: stringField(form, "txnId"), actorUserId });
+      return summary("It will replace the record in QuickBooks.");
+    },
+    "duplicate-separate": (form) => {
+      resolveDuplicate({ entryId: stringField(form, "entryId"), action: "separate", actorUserId });
+      return summary("It will be sent as well.");
+    },
+    "duplicate-recheck": () => {
+      const n = recheckDuplicates();
+      return summary(`Looking again at ${n} ${n === 1 ? "entry" : "entries"}.`);
     },
     "link-person": (form) => {
       linkPerson({ userId: intField(form, "userId"), remoteId: stringField(form, "remoteId") || null, actorUserId });
@@ -303,6 +316,10 @@ function Queue({ data }: { data: Data }) {
   const { overview } = data;
   const retry = useFetcher<typeof action>();
   useActionFeedback(retry.data);
+  // Shared by the held entries, which disappear once answered.
+  const held = useFetcher<typeof action>();
+  useActionFeedback(held.data);
+  const heldBusy = held.state !== "idle";
   const blockedByReason = new Map<string, { fix: string; count: number; minutes: number; example: (typeof overview.blocked)[number] }>();
   for (const b of overview.blocked) {
     const g = blockedByReason.get(b.reason) ?? { fix: b.fix, count: 0, minutes: 0, example: b };
@@ -333,7 +350,11 @@ function Queue({ data }: { data: Data }) {
     <Stack gap="sm">
       <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
         <Stat label="Ready to send" value={overview.ready} />
-        <Stat label="Waiting on a fix" value={overview.blocked.length} warn={overview.blocked.length > 0} />
+        <Stat
+          label="Waiting on a fix"
+          value={overview.blocked.length + overview.duplicates.length}
+          warn={overview.blocked.length + overview.duplicates.length > 0}
+        />
         <Stat label="Refused" value={overview.failed.length} warn={overview.failed.length > 0} />
         <Stat label="Sent" value={overview.sent} />
       </SimpleGrid>
@@ -352,6 +373,79 @@ function Queue({ data }: { data: Data }) {
                 {fixLink(g.fix, g.example)}
               </Group>
             ))}
+          </Stack>
+        </Alert>
+      )}
+
+      {overview.duplicates.length > 0 && (
+        <Alert color="yellow" title="QuickBooks already has time for these">
+          <Stack gap="sm">
+            <Text size="sm">
+              For each of these, QuickBooks already has time for the same person, day and job that didn't come from here
+              — from another tracker, or typed in. Nothing is sent until you say which it is.
+            </Text>
+            {overview.duplicates.map((d) => (
+              <Card key={d.entryId} withBorder padding="sm" role="group" aria-label={`${d.person}, ${formatWorkDate(d.workDate)}, ${jobLabel(d.job)}`}>
+                <Stack gap="xs">
+                  <Text size="sm">
+                    <Text span fw={500}>
+                      {d.person}, {formatWorkDate(d.workDate)}
+                    </Text>{" "}
+                    · {jobLabel(d.job)}
+                  </Text>
+                  <Text size="sm">
+                    Here: {formatDurationHuman(d.minutes * 60)}
+                    {d.note ? ` — ${d.note}` : ""}
+                  </Text>
+                  {d.found.map((f) => (
+                    <Group key={f.txnId} justify="space-between" wrap="nowrap" align="start" gap="sm">
+                      <Text size="sm" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                        In QuickBooks: {formatDurationHuman(f.minutes * 60)}
+                        {f.notes ? ` — ${f.notes}` : ""}
+                      </Text>
+                      <Button
+                        size="compact-sm"
+                        variant="light"
+                        disabled={heldBusy}
+                        style={{ flexShrink: 0 }}
+                        onClick={() =>
+                          held.submit({ intent: "duplicate-replace", entryId: d.entryId, txnId: f.txnId }, { method: "post" })
+                        }
+                      >
+                        Same time: replace it
+                      </Button>
+                    </Group>
+                  ))}
+                  <Group gap="sm">
+                    <Button
+                      size="compact-sm"
+                      variant="subtle"
+                      disabled={heldBusy}
+                      onClick={() => held.submit({ intent: "duplicate-separate", entryId: d.entryId }, { method: "post" })}
+                    >
+                      Different time: send both
+                    </Button>
+                    <Anchor component={Link} to={`/admin/people/${d.userId}/time/${d.workDate}`} size="sm">
+                      Open the day
+                    </Anchor>
+                  </Group>
+                </Stack>
+              </Card>
+            ))}
+            <Group gap="sm">
+              <Button
+                size="compact-sm"
+                variant="light"
+                color="yellow"
+                loading={heldBusy}
+                onClick={() => held.submit({ intent: "duplicate-recheck" }, { method: "post" })}
+              >
+                Check again
+              </Button>
+              <Text size="xs" c="dimmed">
+                After removing a record in QuickBooks, or the entry here.
+              </Text>
+            </Group>
           </Stack>
         </Alert>
       )}
@@ -617,7 +711,11 @@ function ItemsSection({ data }: { data: Data }) {
       <Title order={3}>Items</Title>
       <Text size="sm" c="dimmed">
         A service item says what the work was, and makes the time billable to the job. A job's own service item is used
-        for it and its sub-jobs; otherwise the default. Payroll items apply to employees only.
+        for it and its sub-jobs; otherwise the default. Time on a job marked not billable on the{" "}
+        <Anchor component={Link} to="/admin/jobs">
+          Jobs page
+        </Anchor>{" "}
+        keeps its service item and is sent as not billable. Payroll items apply to employees only.
       </Text>
       <Card withBorder>
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
@@ -683,6 +781,7 @@ function Activity({ data }: { data: Data }) {
     "entry.add": "Sent time",
     "entry.mod": "Updated time",
     "entry.find": "Looked for time",
+    "entry.check": "Asked what's already there",
     "entry.delete": "Removed time",
   };
   return (

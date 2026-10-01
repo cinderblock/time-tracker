@@ -41,6 +41,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       requiresNote: j.requiresNote,
       noteRequired: j.noteRequired,
       takesTime: j.takesTime,
+      billable: j.billable,
+      billed: j.billed,
       provisional: j.provisional,
       remote: j.remoteId != null,
       remoteActive: j.remoteActive,
@@ -100,6 +102,21 @@ export async function action({ request, context }: Route.ActionArgs) {
         message: job.bookable ? `Time can be booked to “${jobLabel(job.fullName)}”.` : `“${jobLabel(job.fullName)}” holds its sub-jobs; hours go on those.`,
       };
     },
+    // "default" clears the answer, so the job follows the row above it again.
+    billable: (form) => {
+      const value = stringField(form, "value");
+      const job = updateJob({
+        id: stringField(form, "jobId"),
+        billable: value === "default" ? null : value === "true",
+        actorUserId: user.id,
+      });
+      return {
+        ok: true,
+        message: job.billed
+          ? `Time on “${jobLabel(job.fullName)}” is sent as billable.`
+          : `Time on “${jobLabel(job.fullName)}” is sent as not billable.`,
+      };
+    },
     "global-note": (form) => {
       setRequireNoteOnStop(flag(form, "value"), user.id);
       return { ok: true, message: "" };
@@ -123,6 +140,8 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
   const isOpen = (c: JobItem) => c.active && c.remoteActive;
   const open = customers.filter((c) => isOpen(c.customer));
   const closed = customers.filter((c) => !isOpen(c.customer));
+  // Billable only means something where time is sent somewhere.
+  const sends = backend.kind !== "none";
 
   return (
     <Stack gap="xl" maw={760}>
@@ -182,7 +201,7 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
             No customers yet. Add one above and its jobs under it — or people can make them as they track time.
           </Text>
         ) : (
-          open.map((c) => <CustomerCard key={c.customer.id} customer={c.customer} jobs={c.jobs} fetcher={rows} />)
+          open.map((c) => <CustomerCard key={c.customer.id} customer={c.customer} jobs={c.jobs} fetcher={rows} sends={sends} />)
         )}
       </Stack>
 
@@ -193,7 +212,7 @@ export default function Jobs({ loaderData }: Route.ComponentProps) {
             A closed customer's jobs keep their history but can't take new time.
           </Text>
           {closed.map((c) => (
-            <CustomerCard key={c.customer.id} customer={c.customer} jobs={c.jobs} fetcher={rows} />
+            <CustomerCard key={c.customer.id} customer={c.customer} jobs={c.jobs} fetcher={rows} sends={sends} />
           ))}
         </Stack>
       )}
@@ -227,7 +246,18 @@ function NewCustomerForm() {
   );
 }
 
-function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: JobNode<JobItem>[]; fetcher: RowsFetcher }) {
+function CustomerCard({
+  customer,
+  jobs,
+  fetcher,
+  sends,
+}: {
+  customer: JobItem;
+  jobs: JobNode<JobItem>[];
+  fetcher: RowsFetcher;
+  /** Time goes to an accounting system, so whether it's billable is worth asking. */
+  sends: boolean;
+}) {
   const busy = fetcher.state !== "idle";
   const submit = (intent: string, value: string) =>
     fetcher.submit({ intent, jobId: customer.id, value }, { method: "post" });
@@ -252,6 +282,16 @@ function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: Jo
             disabled={busy}
             onChange={(e) => submit("requires-note", String(e.currentTarget.checked))}
           />
+          {sends && (
+            <Switch
+              size="sm"
+              label="Its jobs are billable"
+              checked={customer.billed}
+              disabled={busy}
+              // Billable is what a customer is unless someone says otherwise.
+              onChange={(e) => submit("billable", e.currentTarget.checked ? "default" : "false")}
+            />
+          )}
         </Group>
         <Nested>
           {jobs.length === 0 && (
@@ -266,6 +306,7 @@ function CustomerCard({ customer, jobs, fetcher }: { customer: JobItem; jobs: Jo
               parent={customer}
               ruleFrom={customer.requiresNote ? customer : null}
               fetcher={fetcher}
+              sends={sends}
             />
           ))}
           <AddJobForm customer={customer} />
@@ -281,12 +322,14 @@ function JobRow({
   parent,
   ruleFrom,
   fetcher,
+  sends,
 }: {
   node: JobNode<JobItem>;
   parent: JobItem;
   /** The nearest row above that asks for a note, if one does. */
   ruleFrom: JobItem | null;
   fetcher: RowsFetcher;
+  sends: boolean;
 }) {
   const job = node.job;
   const busy = fetcher.state !== "idle";
@@ -324,6 +367,18 @@ function JobRow({
             disabled={busy}
             onChange={(e) => submit("takes-time", String(e.currentTarget.checked))}
           />
+          {sends && (
+            <Switch
+              size="sm"
+              label={job.billable != null && job.billed !== parent.billed ? `Billable (unlike ${parent.name})` : "Billable"}
+              checked={job.billed}
+              disabled={busy}
+              // Agreeing with the row above is following it, so it keeps following if that changes.
+              onChange={(e) =>
+                submit("billable", e.currentTarget.checked === parent.billed ? "default" : String(e.currentTarget.checked))
+              }
+            />
+          )}
         </Group>
         {/* Only worth a word when it isn't the ordinary case of a job taking its own hours. */}
         {(job.takesTime != null || hasSubJobs) && (
@@ -351,6 +406,7 @@ function JobRow({
                 parent={job}
                 ruleFrom={job.requiresNote ? job : ruleFrom}
                 fetcher={fetcher}
+                sends={sends}
               />
             ))}
           </Nested>

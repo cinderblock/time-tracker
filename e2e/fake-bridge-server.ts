@@ -7,7 +7,8 @@ import { LostAnswer, sampleCompany } from "../src/testing/fake-quickbooks.ts";
  *
  *   GET  /__test/state   the pretend company file's time records and customers
  *   POST /__test/down    { down: boolean } — answer as the bridge does when it can't open QuickBooks
- *   POST /__test/fail    { code, message } — refuse the next request
+ *   POST /__test/fail    { code, message, of? } — refuse the next request (of that kind, e.g. "TimeTrackingAddRq")
+ *   POST /__test/foreign { txnDate, entity, customer, duration, notes } — a time record this app didn't send
  */
 
 const port = Number(process.env.PORT ?? 3141);
@@ -28,9 +29,13 @@ Bun.serve({
       return Response.json({ down });
     }
     if (url.pathname === "/__test/fail") {
-      const { code, message } = (await request.json()) as { code: number; message?: string };
-      qb.failNext(code, message);
+      const { code, message, of } = (await request.json()) as { code: number; message?: string; of?: string };
+      qb.failNext(code, message, of);
       return Response.json({ ok: true });
+    }
+    if (url.pathname === "/__test/foreign") {
+      const record = qb.addForeign((await request.json()) as Parameters<typeof qb.addForeign>[0]);
+      return Response.json({ txnId: record.txnId });
     }
     if (down) {
       return Response.json(

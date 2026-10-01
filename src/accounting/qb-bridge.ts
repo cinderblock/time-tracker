@@ -97,6 +97,7 @@ function foundOf(ret: Json): FoundTime {
     editSequence: str(ret.EditSequence),
     notes: str(ret.Notes),
     minutes: parseQbDuration(str(ret.Duration)),
+    jobRemoteId: listId(ret.CustomerRef),
   };
 }
 
