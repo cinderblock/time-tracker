@@ -72,6 +72,14 @@ async function shot(name: string) {
   await page.setViewportSize({ width: 1280, height: 720 });
 }
 
+/** The day before the records' date, as the pretend company file sees it. */
+async function yesterday(): Promise<string> {
+  const date = (await bridge()).records[0]!.date;
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 /** Approval is off by default, so submitting is what hands time to accounting. */
 async function signOffWeek() {
   await page.goto("/admin/timesheets");
@@ -280,10 +288,31 @@ test("time QuickBooks already has is held until someone says which it is", async
   await expect(entry).toContainText("In QuickBooks: 1h 30m — From the other tracker");
   await shot("accounting-held");
 
+  // The person sees it on their own day: the entry is marked, and the two are side by side.
+  await page.goto("/");
+  // The entry's own row (recent-job buttons on the left name the job too).
+  const row = page.locator("[data-entry-id]", { hasText: "Brand New Site" });
+  await expect(row.getByText("already in QuickBooks")).toBeVisible();
+  const compare = page.getByRole("group", { name: "Acme › Brand New Site: QuickBooks already has time" });
+  await expect(compare.getByText("Here", { exact: true })).toBeVisible();
+  await expect(compare.getByText("In QuickBooks", { exact: true })).toBeVisible();
+  await expect(compare.getByText("1h 30m")).toBeVisible();
+  await expect(compare.getByText("From the other tracker")).toBeVisible();
+  await shot("day-held");
+  // And from any other day, a pointer back to this one.
+  await page.goto(`/day/${await yesterday()}`);
+  const notice = page.getByRole("alert").filter({ hasText: "QuickBooks already has time on a day you submitted" });
+  await notice.getByRole("link").first().click();
+  await expect(compare).toBeVisible();
+
   // It's the same work: this entry takes that record over, rather than adding a second.
-  await entry.getByRole("button", { name: "Same time: replace it" }).click();
-  await expect(toast("It will replace the record in QuickBooks. Sent 1 request.")).toBeVisible();
+  await compare.getByRole("button", { name: "Same work — keep mine, replace QuickBooks' record" }).click();
+  await expect(toast("QuickBooks' record will be changed to match this entry.")).toBeVisible();
+  await expect(compare).toHaveCount(0);
+  await expect(row.getByText("submitted")).toBeVisible();
+  await page.goto("/admin/accounting");
   await expect(held).toHaveCount(0);
+  await sendNow("Sent 1 request.");
   const records = (await bridge()).records;
   expect(records).toHaveLength(5);
   expect(records.at(-1)).toMatchObject({
@@ -294,13 +323,35 @@ test("time QuickBooks already has is held until someone says which it is", async
   });
 });
 
+test("or QuickBooks' record is the right one, and the entry here is let go", async () => {
+  const state = await bridge();
+  const site = state.customers.find((c) => c.fullName === "Acme:Brand New Site")!;
+  await bridgeControl("foreign", { txnDate: state.records[0]!.date, entity: "E-ALICE", customer: site.id, duration: "PT0H45M0S" });
+  await addTime("Brand New Site", "40m");
+  await signOffWeek();
+  await page.goto("/admin/accounting");
+  await sendNow("Sent 1 request.");
+
+  await page.goto("/");
+  const compare = page.getByRole("group", { name: "Acme › Brand New Site: QuickBooks already has time" });
+  await expect(compare.getByText("No note")).toHaveCount(2); // neither side has one
+  await compare.getByRole("button", { name: "Same work — keep QuickBooks', delete mine" }).click();
+  await expect(toast("Deleted here. QuickBooks keeps its record.")).toBeVisible();
+  await expect(compare).toHaveCount(0);
+  await expect(page.locator("[data-entry-id]", { hasText: "40m" })).toHaveCount(0);
+  await page.goto("/admin/accounting");
+  await sendNow("Nothing to send.");
+  expect((await bridge()).records).toHaveLength(6); // theirs stays; nothing of ours was added
+});
+
 test("a customer marked not billable sends its jobs' time as not billable", async () => {
   await page.goto("/admin/jobs");
   const acme = page.getByRole("group", { name: "Acme", exact: true });
   await acme.getByRole("switch", { name: "Its jobs are billable" }).click({ force: true });
   await expect(toast("Time on “Acme” is sent as not billable.")).toBeVisible();
 
-  await addTime("Brand New Site", "20m");
+  // Phase 2: the other job's day still has a record from elsewhere, which would hold this.
+  await addTime("Phase 2", "20m");
   await signOffWeek();
   await page.goto("/admin/accounting");
   await sendNow("Sent 2 requests.");

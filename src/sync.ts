@@ -12,7 +12,8 @@ import {
   syncState,
   updateSyncState,
 } from "./settings.ts";
-import { UserInputError } from "./users.ts";
+import { reopenEntries } from "./approvals.ts";
+import { OpError } from "./op-error.ts";
 
 /**
  * Sending time to the accounting system.
@@ -345,60 +346,110 @@ function applyCheck(askedFor: string, asked: NonNullable<Work["check"]>, records
   }
 }
 
-/** An admin's answer about a held entry. Throws UserInputError. */
+/**
+ * This person's entries waiting on an answer about time the accounting
+ * system already has: by entry id, with what was found. Whatever the entry's
+ * status — the screen decides when it matters — so a day taken back and
+ * submitted again shows the same thing without asking again.
+ */
+export function heldEntries(userId: number): Map<string, { workDate: string; status: EntryStatus; found: DuplicateFound[] }> {
+  const l = lookups();
+  const rows = db()
+    .query<EntryRow, [number]>(
+      `SELECT ${ENTRY_COLUMNS} FROM time_entries
+        WHERE user_id = ? AND deleted_at IS NULL AND json_extract(duplicate_check, '$.state') = 'held'`,
+    )
+    .all(userId);
+  const held = new Map<string, { workDate: string; status: EntryStatus; found: DuplicateFound[] }>();
+  for (const row of rows) {
+    if (row.remote_txn_id != null && row.remote_deleted_at == null) continue;
+    const built = recordFor(row, l);
+    if (!("record" in built)) continue;
+    const check = currentCheck(row, built.record);
+    if (check?.state === "held") held.set(row.id, { workDate: row.work_date, status: row.status, found: check.found });
+  }
+  return held;
+}
+
+/**
+ * An answer about a held entry. Rejections are OpErrors: this is reached as
+ * an op from the person's own day (`duplicate.resolve`) and from the admin
+ * page, which turns them into its own kind of refusal.
+ *
+ *   replace   it is the same time: this entry takes the record over, and the
+ *             next pass amends it to match
+ *   discard   it is the same time, and the record there is right: this entry
+ *             is deleted here (the person's own submission is taken back
+ *             first; an admin's approval stops it, as it stops any reopening)
+ *   separate  it is different time: both go
+ *   recheck   look again, after fixing it in the accounting system by hand
+ */
 export function resolveDuplicate(args: {
   entryId: string;
-  /** `replace`: it is the same time, and this entry takes the record over. `separate`: send it as well. */
-  action: "replace" | "separate";
+  action: "replace" | "discard" | "separate" | "recheck";
   /** For `replace`: which of the records found. */
   txnId?: string;
+  /** Whose time it is, when the answer comes from them: the entry must be theirs. */
+  userId?: number;
   actorUserId: number;
   now?: number;
 }): void {
   const now = args.now ?? Date.now();
   db().transaction(() => {
     const row = db()
-      .query<{ duplicate_check: string | null; deleted_at: number | null }, [string]>(
-        "SELECT duplicate_check, deleted_at FROM time_entries WHERE id = ?",
-      )
+      .query<
+        { user_id: number; duplicate_check: string | null; deleted_at: number | null; status: EntryStatus; approved_by: number | null },
+        [string]
+      >("SELECT user_id, duplicate_check, deleted_at, status, approved_by FROM time_entries WHERE id = ?")
       .get(args.entryId);
-    const check = row ? duplicateCheckOf(row) : null;
-    if (!row || row.deleted_at != null || check?.state !== "held") {
-      throw new UserInputError("That entry isn't waiting on this any more.");
+    if (!row || row.deleted_at != null || (args.userId != null && row.user_id !== args.userId)) {
+      throw new OpError("not_found", "That entry no longer exists.");
     }
-    if (args.action === "separate") {
-      setDuplicateCheck(args.entryId, { state: "separate", key: check.key, at: now, by: args.actorUserId });
-      audit({
-        actorUserId: args.actorUserId,
-        entity: "entry",
-        entityId: args.entryId,
-        action: "duplicate_separate",
-        before: { found: check.found },
-        at: now,
-      });
-      return;
+    const check = duplicateCheckOf(row);
+    if (check?.state !== "held") throw new OpError("conflict", "That entry isn't waiting on this any more.");
+    const event = (action: string, detail: { before?: unknown; after?: unknown }) =>
+      audit({ actorUserId: args.actorUserId, entity: "entry", entityId: args.entryId, action, at: now, ...detail });
+
+    switch (args.action) {
+      case "separate":
+        setDuplicateCheck(args.entryId, { state: "separate", key: check.key, at: now, by: args.actorUserId });
+        event("duplicate_separate", { before: { found: check.found } });
+        return;
+
+      case "recheck":
+        setDuplicateCheck(args.entryId, null);
+        event("duplicate_recheck", { before: { found: check.found } });
+        return;
+
+      case "discard": {
+        const own = args.userId != null && args.userId === args.actorUserId;
+        if (own && row.approved_by != null) {
+          throw new OpError("conflict", "An admin has approved this time, so only an admin can delete it. Ask them.");
+        }
+        reopenEntries({ userId: row.user_id, entryIds: [args.entryId], actorUserId: args.actorUserId, now, ownSubmissionsOnly: own });
+        db().query("UPDATE time_entries SET deleted_at = ?, updated_at = ? WHERE id = ?").run(now, now, args.entryId);
+        event("duplicate_discard", { before: { status: row.status, found: check.found } });
+        return;
+      }
+
+      case "replace": {
+        const found = check.found.find((f) => f.txnId === args.txnId);
+        if (!found) throw new OpError("not_found", "That record isn't one of those found. Check again.");
+        const taken = db()
+          .query<{ id: string }, [string, string]>("SELECT id FROM time_entries WHERE remote_txn_id = ? AND id != ?")
+          .get(found.txnId, args.entryId);
+        if (taken) {
+          throw new OpError("conflict", "Another entry here already stands for that record. Check again, or send this one as well.");
+        }
+        // Adopt it; the next pass amends it to match exactly.
+        db()
+          .query("UPDATE time_entries SET remote_txn_id = ?, remote_edit_sequence = ?, remote_deleted_at = NULL WHERE id = ?")
+          .run(found.txnId, found.editSequence, args.entryId);
+        setDuplicateCheck(args.entryId, { state: "replaced", key: check.key, at: now, by: args.actorUserId, txnId: found.txnId });
+        event("duplicate_replace", { after: { found } });
+        return;
+      }
     }
-    const found = check.found.find((f) => f.txnId === args.txnId);
-    if (!found) throw new UserInputError("That record isn't one of those found. Check again.");
-    const taken = db()
-      .query<{ id: string }, [string, string]>("SELECT id FROM time_entries WHERE remote_txn_id = ? AND id != ?")
-      .get(found.txnId, args.entryId);
-    if (taken) {
-      throw new UserInputError("Another entry here already stands for that record. Check again, or send this one as well.");
-    }
-    // Adopt it; the next pass amends it to match exactly.
-    db()
-      .query("UPDATE time_entries SET remote_txn_id = ?, remote_edit_sequence = ?, remote_deleted_at = NULL WHERE id = ?")
-      .run(found.txnId, found.editSequence, args.entryId);
-    setDuplicateCheck(args.entryId, { state: "replaced", key: check.key, at: now, by: args.actorUserId, txnId: found.txnId });
-    audit({
-      actorUserId: args.actorUserId,
-      entity: "entry",
-      entityId: args.entryId,
-      action: "duplicate_replace",
-      after: { found },
-      at: now,
-    });
   })();
 }
 

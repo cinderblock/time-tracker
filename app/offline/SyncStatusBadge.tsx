@@ -75,6 +75,8 @@ function describe(op: Op): string {
       return "Taking a day back";
     case "job.create":
       return "Creating a job";
+    case "duplicate.resolve":
+      return "Answering about time QuickBooks already has";
   }
 }
 

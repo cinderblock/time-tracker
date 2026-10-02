@@ -8,6 +8,7 @@ import { DayHeader } from "./DayHeader.tsx";
 import { markDayMove, towards } from "./day-move.ts";
 import { EntryList } from "./EntryList.tsx";
 import { FlightProvider } from "./flight.tsx";
+import { HeldDaysNotice, HeldEntries } from "./HeldEntries.tsx";
 import { type DayModel, liveSeconds } from "./model.ts";
 import { NotesPanel } from "./NotesPanel.tsx";
 import classes from "./screen.module.css";
@@ -35,6 +36,7 @@ export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor
           <ActingForNotice />
           <DayHeader />
           <OfflineNotice />
+          <HeldDaysNotice />
           {/* Named so it travels on its own when the day changes, rather than
               being swept into the root cross-fade with the arrows. */}
           <Grid gap="lg" data-day-part="body">
@@ -60,6 +62,8 @@ export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor
             <Grid.Col span={{ base: 12, md: 6 }}>
               <Stack gap="lg">
                 <EntryList />
+                {/* Time QuickBooks already has, to settle before it can be sent. */}
+                <HeldEntries />
                 {/* Under the record, because submitting is what you do once
                     the record is right. */}
                 <SubmitDay />

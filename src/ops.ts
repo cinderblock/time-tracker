@@ -13,6 +13,7 @@ import {
 import { createJob } from "./jobs.ts";
 import { commitRollup, createNote, deleteNote, restoreNote, updateNote } from "./notes.ts";
 import { OpError } from "./op-error.ts";
+import { resolveDuplicate } from "./sync.ts";
 import {
   type OpEnvelope,
   type OpPayload,
@@ -89,6 +90,8 @@ const handlers: { [T in OpType]: Handler<T> } = {
       now: c.now,
       ownSubmissionsOnly: c.userId === c.actorUserId,
     }),
+
+  "duplicate.resolve": (c, p) => void resolveDuplicate({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, ...p }),
 
   "job.create": (c, p) => {
     const job = createJob({ id: p.jobId, name: p.name, parentId: p.parentId, actorUserId: c.actorUserId, now: c.now });

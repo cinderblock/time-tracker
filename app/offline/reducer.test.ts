@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { approveEntries } from "../../src/approvals.ts";
+import { QbBridgeBackend } from "../../src/accounting/qb-bridge.ts";
+import { approveEntries, submitEntries } from "../../src/approvals.ts";
+import { linkPerson } from "../../src/remote-lists.ts";
+import { runSync } from "../../src/sync-worker.ts";
+import { fakeBridgeFetch } from "../../src/testing/fake-bridge.ts";
+import { sampleCompany } from "../../src/testing/fake-quickbooks.ts";
 import { applyOp } from "../../src/ops.ts";
 import type { Op, OpPayload, OpType } from "../../src/ops-schema.ts";
 import { freshDb } from "../../src/testing/db.ts";
-import { setRequireNoteOnStop, setWeekStartsOn } from "../../src/settings.ts";
+import { setDefaultServiceItemId, setRequireNoteOnStop, setWeekStartsOn } from "../../src/settings.ts";
 import { createUser } from "../../src/users.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { loadDay } from "../tracker.server.ts";
@@ -345,6 +350,43 @@ describe("the reducer mirrors the server", () => {
       ],
       { expectRejected: 3 },
     );
+  });
+
+  test("time QuickBooks already has: each answer shows at once, and the copy agrees", async () => {
+    // A real hold needs a real (pretend) QuickBooks behind the person.
+    const qb = sampleCompany();
+    const backend = new QbBridgeBackend({ baseUrl: "http://bridge.test", apiKey: "k", fetch: fakeBridgeFetch(qb, { apiKey: "k" }) });
+    const sync = () => runSync(backend, () => NINE);
+    await sync();
+    linkPerson({ userId, remoteId: "E-ALICE", actorUserId: userId });
+    setDefaultServiceItemId("I-LABOR", userId);
+    const phase2 = loadDay(userId, DAY).jobs.find((j) => j.fullName === "Acme:Phase 2")!.id;
+    qb.addForeign({ txnDate: DAY, entity: "E-ALICE", customer: "C-ACME-2", duration: "PT1H0M0S", notes: "Theirs" });
+    const [keep, drop, both] = [uuidv7(), uuidv7(), uuidv7()];
+    mirror([
+      op("entry.create", { entryId: keep, jobId: phase2, startedAt: NINE, endedAt: NINE + HOUR }),
+      op("entry.create", { entryId: drop, jobId: phase2, workDate: DAY, durationSeconds: 1800 }),
+      op("entry.create", { entryId: both, jobId: phase2, workDate: DAY, durationSeconds: 900 }),
+    ]);
+    submitEntries({ userId, from: DAY, to: DAY, actorUserId: userId });
+    await sync();
+    const held = loadDay(userId, DAY);
+    expect(held.entries.map((e) => e.heldBy?.length)).toEqual([1, 1, 1]);
+    const txnId = held.entries[0]!.heldBy![0]!.txnId;
+
+    const answered = mirror([
+      op("duplicate.resolve", { entryId: keep, action: "replace", txnId }),
+      op("duplicate.resolve", { entryId: drop, action: "discard" }),
+      op("duplicate.resolve", { entryId: both, action: "separate" }),
+    ]);
+    expect(answered.entries.map((e) => [e.id, e.heldBy])).toEqual([
+      [keep, null],
+      [both, null],
+    ]);
+    expect(answered.week.find((d) => d.date === DAY)!.seconds).toBe(HOUR / 1000 + 900);
+
+    // Already answered, or never held: nothing happens on either side.
+    mirror([op("duplicate.resolve", { entryId: keep, action: "separate" })], { expectRejected: 1 });
   });
 
   test("a timer started on another day is shown as open but not listed", () => {

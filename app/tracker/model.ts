@@ -48,6 +48,14 @@ export interface EntryView {
    * doesn't require approval.
    */
   adminApproved: boolean;
+  /**
+   * Records the accounting system already has for this person, day and job
+   * that weren't sent from here (sync.ts). While the entry is signed off it
+   * waits on an answer — the `duplicate.resolve` op — rather than being sent.
+   * Kept whatever the status, so taking the day back and submitting it again
+   * shows the same thing without a fresh copy.
+   */
+  heldBy: { txnId: string; minutes: number; notes: string }[] | null;
 }
 
 export interface NoteView {
@@ -97,6 +105,8 @@ export interface DayModel {
    * Nothing submits itself, so this is what stops a day being forgotten.
    */
   unsubmittedDays: string[];
+  /** Other days with signed-off time waiting on a duplicate answer (`heldBy`), most recent first. */
+  heldDays: string[];
   /** The person's open timer, whichever day it belongs to. */
   open: EntryView | null;
   entries: EntryView[];

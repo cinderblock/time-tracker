@@ -20,7 +20,7 @@ import {
   setPersonPayrollItem,
 } from "./remote-lists.ts";
 import { setDefaultPayrollItemId, setDefaultServiceItemId, setRequireApproval, syncState } from "./settings.ts";
-import { PULL_EVERY_MS, entryRef, listWork, recheckDuplicates, resolveDuplicate, retryFailedNow, syncOverview } from "./sync.ts";
+import { PULL_EVERY_MS, entryRef, heldEntries, listWork, recheckDuplicates, resolveDuplicate, retryFailedNow, syncOverview } from "./sync.ts";
 import { runSync } from "./sync-worker.ts";
 import { fakeBridgeFetch } from "./testing/fake-bridge.ts";
 import { type FakeQuickBooks, sampleCompany } from "./testing/fake-quickbooks.ts";
@@ -486,6 +486,75 @@ describe("time the accounting system already has", () => {
     await sync();
     expect(getEntry(id)!.status).toBe("synced");
     expect(qb.records.at(-1)).toMatchObject({ customer: "C-ACME-3" });
+  });
+
+  test("the person answers from their own day: it's marked for them, and each way out does what it says", async () => {
+    await connected();
+    const acme2 = jobByRemote("C-ACME-2").id;
+    const record = theirs();
+    const mine = work(alice, acme2, 60, "Framing");
+    const theirsToo = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    const different = work(alice, acme2, 15, "Punch list", NINE + 7 * 60 * MIN);
+    submitEntries({ userId: alice, from: DAY, to: DAY, actorUserId: alice });
+    await sync();
+    expect([...heldEntries(alice).keys()].sort()).toEqual([mine, theirsToo, different].sort());
+    expect(heldEntries(alice).get(mine)).toMatchObject({ workDate: DAY, status: "submitted", found: [{ txnId: record.txnId, minutes: 60 }] });
+    // Someone else's day shows nothing of it, and Bob can't answer for Alice.
+    expect(heldEntries(bob).size).toBe(0);
+    expect(send(bob, "duplicate.resolve", { entryId: mine, action: "separate" })).toMatchObject({ ok: false, code: "not_found" });
+
+    // Keep QuickBooks' record, delete mine: the submission is taken back and the entry is gone.
+    ok(send(alice, "duplicate.resolve", { entryId: theirsToo, action: "discard" }));
+    expect(getEntry(theirsToo)).toMatchObject({ deletedAt: expect.any(Number), status: "draft" });
+    expect(heldEntries(alice).has(theirsToo)).toBe(false);
+    // Keep mine: the record there becomes this entry.
+    ok(send(alice, "duplicate.resolve", { entryId: mine, action: "replace", txnId: record.txnId }));
+    // Different work: both go.
+    ok(send(alice, "duplicate.resolve", { entryId: different, action: "separate" }));
+    expect(heldEntries(alice).size).toBe(0);
+    await sync();
+    expect(qb.records.map((r) => [r.duration, r.notes.split(" [ref")[0]]).sort()).toEqual([
+      ["PT0H15M0S", "Punch list"],
+      ["PT1H0M0S", "Framing"],
+    ]);
+    expect(getEntry(mine)!.status).toBe("synced");
+
+    // Answering twice, or about an entry that isn't waiting, is refused.
+    expect(send(alice, "duplicate.resolve", { entryId: mine, action: "separate" })).toMatchObject({ ok: false, code: "conflict" });
+    expect(send(alice, "duplicate.resolve", { entryId: uuidv7(), action: "separate" })).toMatchObject({ ok: false, code: "not_found" });
+  });
+
+  test("once an admin has approved it, deleting it is the admin's call; and 'check again' asks once more", async () => {
+    await connected();
+    setRequireApproval(true, admin);
+    const acme2 = jobByRemote("C-ACME-2").id;
+    const record = theirs();
+    const id = work(alice, acme2, 60, "Framing");
+    submitEntries({ userId: alice, entryIds: [id], actorUserId: alice });
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    await sync();
+    expect(heldEntries(alice).get(id)?.status).toBe("approved");
+    expect(send(alice, "duplicate.resolve", { entryId: id, action: "discard" })).toMatchObject({ ok: false, code: "conflict" });
+
+    // Taken back by the person: still marked for them, though nothing is held while it's a draft.
+    ok(send(alice, "duplicate.resolve", { entryId: id, action: "recheck" }));
+    expect(heldEntries(alice).size).toBe(0);
+    await sync(); // asks again; the record is still there
+    expect(heldEntries(alice).has(id)).toBe(true);
+    qb.records.splice(qb.records.indexOf(record), 1);
+    ok(send(alice, "duplicate.resolve", { entryId: id, action: "recheck" }));
+    await sync();
+    expect(getEntry(id)!.status).toBe("synced");
+
+    // An admin acting for the person may delete it even though they approved it.
+    const again = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    theirs();
+    submitEntries({ userId: alice, entryIds: [again], actorUserId: alice });
+    approveEntries({ userId: alice, entryIds: [again], actorUserId: admin });
+    await sync();
+    expect(heldEntries(alice).has(again)).toBe(true);
+    ok(applyOp({ userId: alice, actorUserId: admin }, { opId: uuidv7(), type: "duplicate.resolve", deviceId: "t", clientTime: now, payload: { entryId: again, action: "discard" } }, now));
+    expect(getEntry(again)!.deletedAt).not.toBeNull();
   });
 
   test("the record changed there since it was found: its current version is fetched, then amended", async () => {

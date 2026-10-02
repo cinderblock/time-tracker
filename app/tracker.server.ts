@@ -9,7 +9,9 @@ import {
 } from "../src/entries.ts";
 import { listJobs, recentJobIds } from "../src/jobs.ts";
 import { listNotesForDate, pendingNotesBefore } from "../src/notes.ts";
+import { isEditable } from "../src/entry-status.ts";
 import { requireApproval, requireNoteOnStop, weekStartsOn } from "../src/settings.ts";
+import { heldEntries } from "../src/sync.ts";
 import { addDays, today, weekStartOf } from "../src/time.ts";
 import { DEFAULT_TRACKING_MODE } from "../src/tracking-mode.ts";
 import { getUser } from "../src/users.ts";
@@ -27,7 +29,9 @@ function lastEnd(e: Entry): number | null {
   return max;
 }
 
-function entryView(e: Entry, jobNames: Map<string, string>): EntryView {
+type Held = ReturnType<typeof heldEntries>;
+
+function entryView(e: Entry, jobNames: Map<string, string>, held: Held): EntryView {
   const first = e.segments[0];
   const last = e.segments.at(-1);
   return {
@@ -46,6 +50,7 @@ function entryView(e: Entry, jobNames: Map<string, string>): EntryView {
     segmentCount: e.segments.length,
     noteRequired: e.status === "open" ? noteRequiredFor(e.jobId) : false,
     adminApproved: e.approvedBy != null,
+    heldBy: held.get(e.id)?.found.map((f) => ({ txnId: f.txnId, minutes: f.minutes, notes: f.notes })) ?? null,
   };
 }
 
@@ -74,6 +79,13 @@ export function loadDay(userId: number, workDate: string): DayModel {
   const weekStart = weekStartOf(workDate, weekStartsOn());
   const weekEnd = addDays(weekStart, 6);
   const totals = totalsByDate(userId, weekStart, weekEnd);
+  const held = heldEntries(userId);
+  // Only days where the hold is in force: signed-off time that would otherwise be sent.
+  const heldDays = [
+    ...new Set([...held.values()].filter((h) => h.workDate !== workDate && !isEditable(h.status)).map((h) => h.workDate)),
+  ]
+    .sort()
+    .reverse();
 
   return {
     userId,
@@ -86,9 +98,10 @@ export function loadDay(userId: number, workDate: string): DayModel {
     requireNoteOnStop: requireNoteOnStop(),
     requireApproval: requireApproval(),
     unsubmittedDays: unsubmittedDatesBefore(userId, workDate),
-    open: open ? entryView(open, jobNames) : null,
+    heldDays,
+    open: open ? entryView(open, jobNames, held) : null,
     entries: listEntriesForDate(userId, workDate)
-      .map((e) => entryView(e, jobNames))
+      .map((e) => entryView(e, jobNames, held))
       .sort(compareEntries),
     notes: listNotesForDate(userId, workDate).map((n) => ({
       id: n.id,

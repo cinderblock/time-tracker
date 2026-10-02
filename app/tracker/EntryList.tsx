@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from "@mantine/core";
+import { Anchor, Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from "@mantine/core";
 import { useState } from "react";
 
 import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
@@ -71,6 +71,8 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
   const tz = model.timezone;
   const running = entry.status === "open";
   const locked = !isEditable(entry.status);
+  // Signed off, but QuickBooks already has time for this job that day: waiting on the person (HeldEntries).
+  const held = locked && entry.heldBy != null && entry.heldBy.length > 0;
   const seconds = now === undefined ? entry.durationSeconds : liveSeconds(entry, now);
 
   const span =
@@ -103,9 +105,14 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
             from notes
           </Badge>
         )}
-        {locked && (
+        {locked && !held && (
           <Badge size="sm" variant="light" color="teal">
             {entry.status === "synced" ? "in accounting" : entry.status === "submitted" ? "submitted" : "approved"}
+          </Badge>
+        )}
+        {held && (
+          <Badge size="sm" variant="light" color="orange">
+            already in QuickBooks
           </Badge>
         )}
       </Group>
@@ -122,12 +129,22 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
           {entry.note}
         </Text>
       )}
-      {locked && (
-        <Text size="xs" c="dimmed">
-          {isOwnerReopenable(entry.status, entry.adminApproved)
-            ? "Locked — take the day back to change it."
-            : "Locked — an admin can reopen it for changes."}
+      {held ? (
+        <Text size="xs" c="orange">
+          QuickBooks already has time for this —{" "}
+          <Anchor href="#held" size="xs" c="orange" underline="always">
+            compare and choose
+          </Anchor>{" "}
+          below.
         </Text>
+      ) : (
+        locked && (
+          <Text size="xs" c="dimmed">
+            {isOwnerReopenable(entry.status, entry.adminApproved)
+              ? "Locked — take the day back to change it."
+              : "Locked — an admin can reopen it for changes."}
+          </Text>
+        )
       )}
     </Stack>
   );

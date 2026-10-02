@@ -24,6 +24,8 @@ export function applyPending(base: DayModel, ops: readonly Op[]): DayModel {
       jobs: [...base.jobs],
       recentJobIds: [...base.recentJobIds],
       unsubmittedDays: [...base.unsubmittedDays],
+      // A copy stored before this field existed has none.
+      heldDays: [...(base.heldDays ?? [])],
       week: base.week.map((d) => ({ ...d })),
     },
     deletedEntries: new Map(),
@@ -154,6 +156,7 @@ function applyOne(s: State, op: Op): void {
         segmentCount: 1,
         noteRequired: noteRequired(m, p.jobId),
         adminApproved: false,
+        heldBy: null,
       };
       m.open = entry;
       putEntry(m, entry);
@@ -208,6 +211,7 @@ function applyOne(s: State, op: Op): void {
         segmentCount: spanned ? 1 : 0,
         noteRequired: false,
         adminApproved: false,
+        heldBy: null,
       });
       addToWeek(m, workDate, seconds);
       touchRecent(m, p.jobId);
@@ -395,6 +399,7 @@ function applyOne(s: State, op: Op): void {
           segmentCount: spanned ? 1 : 0,
           noteRequired: false,
           adminApproved: false,
+          heldBy: null,
         });
         addToWeek(m, p.workDate, seconds);
         touchRecent(m, line.jobId);
@@ -423,11 +428,33 @@ function applyOne(s: State, op: Op): void {
         if (!m.unsubmittedDays.includes(workDate)) {
           m.unsubmittedDays = [...m.unsubmittedDays, workDate].sort().reverse();
         }
+        // Draft time isn't sent, so it isn't held either.
+        m.heldDays = m.heldDays.filter((d) => d !== workDate);
         return;
       }
       m.entries = m.entries.map((e) =>
         isOwnerReopenable(e.status, e.adminApproved) ? { ...e, status: "draft" } : e,
       );
+      return;
+    }
+
+    case "duplicate.resolve": {
+      const p = op.payload;
+      const e = findEntry(m, p.entryId);
+      if (!e?.heldBy) return;
+      if (p.action === "discard") {
+        // The person's own submission is taken back and the entry deleted;
+        // an admin's approval stops it, as it stops any reopening. (An admin
+        // acting for them may delete it anyway — the server says so, and the
+        // fresh copy shows it.)
+        if (e.status !== "draft" && !isOwnerReopenable(e.status, e.adminApproved)) return;
+        m.entries = m.entries.filter((x) => x.id !== e.id);
+        if (m.open?.id === e.id) m.open = null;
+        addToWeek(m, e.workDate, -e.durationSeconds);
+        return;
+      }
+      // Replaced, sent as well, or to be looked at again: no longer waiting on anyone here.
+      putEntry(m, { ...e, heldBy: null });
       return;
     }
   }

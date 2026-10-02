@@ -80,3 +80,50 @@ into the books.
   this app's entries on the same job and day, which is normal.
 - Don't read the billable switch into `rate_snapshot` or reports' cost:
   billable is about the accounting record, cost is about the rate.
+
+## Round two: the person sees and fixes it (2026-10-02)
+
+Decision 6 is reversed. The first real hold showed why: the person whose time
+is held is the one who knows whether it is the same work, and nobody tells
+them. Admin-only meant it waited for someone to open a page nobody opens.
+
+- **Marked on their day.** A held entry carries `heldBy` on the day model —
+  the records found — and shows an "already in QuickBooks" badge. A banner
+  under the day header links to any other days with held entries.
+- **Side by side.** A panel above Submit shows, per held entry, this app's
+  entry next to what QuickBooks has, and the four ways out, each with its
+  consequence in one line: keep mine (replace QuickBooks' record), keep
+  QuickBooks' (delete mine), they're different (send both), I fixed it in
+  QuickBooks (check again).
+- **An op, `duplicate.resolve`**, like every other change: it goes through the
+  outbox, works in acting-for mode, and the reducer mirrors it. The owner may
+  resolve their own entries; the admin page still resolves anyone's through
+  the same function.
+- **`heldBy` stays on the entry whatever its status**, and the screen shows
+  it only while the entry is signed off. Otherwise taking a day back and
+  submitting it again would need the reducer to know what the server knows.
+- "Delete mine" reopens the person's own submission and soft-deletes the
+  entry in one transaction; an admin's approval still stops it, with the
+  usual "ask an admin".
+
+### Steps
+
+- [x] `duplicate.resolve` op; `resolveDuplicate` shared by the op and the
+      admin page (OpError → UserInputError there); `heldEntries(userId)`.
+- [x] `EntryView.heldBy`, `DayModel.heldDays`; reducer mirror, including
+      a day taken back dropping out of `heldDays`.
+- [x] `HeldEntries.tsx`: the banner, the badge on the row, the side-by-side
+      and the four choices. Buttons wrap on a phone — Mantine's don't by
+      default, and a clipped label was the first thing the phone screenshot
+      showed.
+- [x] Tests: sync (every path, owner check, admin acting for), reducer
+      mirror (through the pretend bridge), e2e on the day screen (replace;
+      delete mine), README.
+
+### Traps met
+
+- The op description switch in `SyncStatusBadge.tsx` is exhaustive: a new
+  op type fails typecheck there until it has words.
+- On the day screen the recent-job buttons also carry the job's name, so an
+  e2e locator for "the card with this job" must use `[data-entry-id]`.
+- A held entry with no note on either side says "No note" twice.

@@ -109,9 +109,13 @@ repository. All of that is deployment configuration or an admin setting.
   - **Time QuickBooks already has is held, not added twice.** Before an entry is
     first sent, the app asks QuickBooks what it has for that person and day. A
     record on the same job that didn't come from here — another tracker still
-    feeding the same books, or time typed in at the desk — holds the entry on the
-    Accounting page until an admin says which it is: the same time (the entry
-    takes that record over and amends it) or different time (both are sent).
+    feeding the same books, or time typed in at the desk — holds the entry. The
+    person sees it on their own day: the entry is marked, a banner points at any
+    other days waiting, and a side-by-side of their entry and QuickBooks' record
+    offers the ways out, each with what it does — keep mine (QuickBooks' record is
+    changed to match), keep QuickBooks' (the entry is deleted here), they're
+    different (both are sent), or check again after fixing it in QuickBooks.
+    Admins can answer from the Accounting page too.
   - **A job, or a whole customer, can be not billable** (Jobs page). Its time is
     still sent, with its service item, marked not billable — for internal work
     that is tracked but never invoiced.

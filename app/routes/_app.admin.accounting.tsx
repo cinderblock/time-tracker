@@ -7,6 +7,7 @@ import { config } from "../../src/config.server.ts";
 import { formatDateTime, formatRelative } from "../../src/format.ts";
 import { jobLabel } from "../../src/job-names.ts";
 import { listJobs } from "../../src/jobs.ts";
+import { OpError } from "../../src/op-error.ts";
 import {
   categoryPayrollItems,
   linkJob,
@@ -25,7 +26,7 @@ import { defaultPayrollItemId, defaultServiceItemId, syncState } from "../../src
 import { recheckDuplicates, resolveDuplicate, retryFailedNow, syncOverview } from "../../src/sync.ts";
 import { runSync } from "../../src/sync-worker.ts";
 import { formatDurationHuman, formatWorkDate } from "../../src/time.ts";
-import { listUsers } from "../../src/users.ts";
+import { UserInputError, listUsers } from "../../src/users.ts";
 import { type ActionResult, handleForm, intField, stringField } from "../actions.server.ts";
 import { requireAdmin } from "../auth.server.ts";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
@@ -143,6 +144,15 @@ export async function action({ request, context }: Route.ActionArgs) {
   const { user } = requireAdmin(context, request);
   const actorUserId = user.id;
   const item = (form: FormData) => stringField(form, "itemId") || null;
+  // resolveDuplicate speaks the op dialect; this is a form.
+  const resolve = (args: Omit<Parameters<typeof resolveDuplicate>[0], "actorUserId">) => {
+    try {
+      resolveDuplicate({ ...args, actorUserId });
+    } catch (err) {
+      if (err instanceof OpError) throw new UserInputError(err.message);
+      throw err;
+    }
+  };
   // After a change that creates work, try to send it straight away (push backends).
   const summary = async (lead: string): Promise<ActionResult> => {
     const run = await runSync();
@@ -160,11 +170,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     },
     // Time the accounting system already has (see sync.ts): which is it?
     "duplicate-replace": (form) => {
-      resolveDuplicate({ entryId: stringField(form, "entryId"), action: "replace", txnId: stringField(form, "txnId"), actorUserId });
+      resolve({ entryId: stringField(form, "entryId"), action: "replace", txnId: stringField(form, "txnId") });
       return summary("It will replace the record in QuickBooks.");
     },
     "duplicate-separate": (form) => {
-      resolveDuplicate({ entryId: stringField(form, "entryId"), action: "separate", actorUserId });
+      resolve({ entryId: stringField(form, "entryId"), action: "separate" });
       return summary("It will be sent as well.");
     },
     "duplicate-recheck": () => {

@@ -153,6 +153,18 @@ export const opPayloads = {
   "day.submit": z.object({ workDate }),
   "day.unsubmit": z.object({ workDate }),
 
+  // Time the accounting system already has for the same person, day and job
+  // (sync.ts): which is it? Replace that record with this entry, delete this
+  // entry, send both, or look again after fixing it there.
+  "duplicate.resolve": z
+    .object({
+      entryId: id,
+      action: z.enum(["replace", "discard", "separate", "recheck"]),
+      /** For `replace`: which of the records found. */
+      txnId: z.string().min(1).max(200).optional(),
+    })
+    .refine((p) => p.action !== "replace" || p.txnId != null, "Say which record to replace"),
+
   "job.create": z.object({
     // Chosen by the device, so a timer can be started on the job before the
     // server has ever heard of it.
