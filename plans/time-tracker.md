@@ -1006,6 +1006,12 @@ to import history — belong to that deployment's notes.
   people, customers (test fixtures too), hostnames or addresses — in code, tests,
   plans or commit messages. They come from the environment and admin settings; the
   repo's defaults stay generic.
+  **"Deployed" entries in plans are wanted — sanitized.** Say what shipped and
+  how it was checked (commit, image digest, CI run, tests, "container healthy",
+  "the deployment's `/sw.js` serves build X"), never where or for whom: no site
+  hostname, server name, address, deploy-repo commit, or path to a private
+  plan. This repo is public; that slipped through for eleven days once, and the
+  history still has it. Re-read the diff and the commit message before pushing.
 - **Don't give the bridge a hostname.** IPv4 address only — see gotchas.
 - **Don't let a QuickBooks outage block time tracking.** The bridge is *usually* down
   (it only answers while its process runs). Sync is always a background retrying queue.
