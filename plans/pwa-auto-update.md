@@ -14,10 +14,9 @@ were missing. A force reload fixed it.
 
 - Repo: `~/git/Personal Projects/time-tracker`, branch `master`.
 - Checks: `bun run typecheck`, `bun test src/ app/`, `bun run test:e2e`.
-- Deployed to `https://time.twilltech.com` on steamboat by an ops-owned,
-  pinned-digest deploy — see the TWILL deployment plan in
-  `playgrounds/qb-time/plans/twill-time-tracker-deployment.md`. Nothing here
-  touches deployment; this is app code.
+- Deployed by pinning an image digest; the deployment's details are its own
+  and live outside this repo. Nothing here touches deployment; this is app
+  code.
 - The pieces already in place before this work:
   - `public/sw.js` — the service worker, served unbundled at the site root.
   - `scripts/finalize-build.ts` — stamps a build id and the asset list into
@@ -116,9 +115,9 @@ loop-guarded path as the event.
 7. [x] `bun run typecheck` clean; `bun test src/ app/` 309 pass / 0 fail (12 of
    them new); `bun run test:e2e` 61 passed, 2 skipped (the pre-existing
    screenshot skips). Committed as `4f743e7`, unpushed at the time of writing.
-8. [x] Deployed 2026-09-22 as `f105b31` (image `sha256:1a010bb2…`, ops pin
-   `f75b21a`). Container healthy on steamboat; `https://time.twilltech.com/sw.js`
-   serves `Cache-Control: no-cache` and build `0d1b0c2842c471b3`.
+8. [x] Deployed 2026-09-22 as `f105b31` (image `sha256:1a010bb2…`).
+   Container healthy; the deployment's `/sw.js` serves
+   `Cache-Control: no-cache` and build `0d1b0c2842c471b3`.
 9. [ ] **Confirm on a real phone at the *next* deploy**: install, deploy a
    change, background the app, reopen, see the new feature without touching
    anything. This cannot be proven by the deploy that introduced it — every

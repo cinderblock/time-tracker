@@ -250,13 +250,11 @@ everything else.
   and the field reading "Riverside › Alpha Site". Committed as 5d3f1c4.
 
 - 2026-09-21, deployed — master pushed (`b551402..459cca7`, app CI run
-  35666866918: 61 e2e passed, 2 skipped) and ops `85ed992` pinned that digest
-  for steamboat. Server Deploys run 35667101445 recreated the container in
-  four seconds, `Up (healthy)`, and `time.twilltech.com` serves the new build
+  35666866918: 61 e2e passed, 2 skipped) and the deployment pinned that
+  digest. The container came up `Up (healthy)` and serves the new build
   (`/sw.js` buildId `315bf0a55f18e627`, was `c7eaf59c845484bf`). Migration 005
-  applied itself on the first request. The private deployment plan
-  (`playgrounds/qb-time/plans/twill-time-tracker-deployment.md`) carries the
-  full entry, including what TWILL's own data will notice.
+  applied itself on the first request. What a particular deployment's data
+  will notice belongs in that deployment's own notes, not here.
 
 ## Open questions for the user
 
