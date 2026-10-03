@@ -219,6 +219,13 @@ describe("held and refused time", () => {
     expect(dueNotifications(prefs(), state({ held, today: "2026-10-03", minutesNow: 9 * 60 }), log(), NOW)).toEqual([]);
   });
 
+  test("with no workdays set, quiet hours' window is every day", () => {
+    const noWorkdays = prefs({ workdays: [], dayEmpty: { on: false, minHours: 0 } });
+    const saturday = state({ held, today: "2026-10-03", minutesNow: 9 * 60 });
+    expect(kinds(dueNotifications(noWorkdays, saturday, log(), NOW))).toEqual(["time_held@a,b"]);
+    expect(dueNotifications(noWorkdays, { ...saturday, minutesNow: 21 * 60 }, log(), NOW)).toEqual([]);
+  });
+
   test("refused", () => {
     const failed = [{ entryId: "x", workDate: "2026-09-30", error: "Item not found" }];
     const due = dueNotifications(prefs(), state({ failed, secondsToday: 1, minutesNow: 9 * 60 }), log(), NOW);

@@ -43,6 +43,9 @@ export default [
   route("qbwc", "routes/qbwc.ts"),
   route("qbwc/support", "routes/qbwc.support.ts"),
 
+  // A button pressed on a notification, sent by the service worker.
+  route("api/notifications/action", "routes/api.notifications.action.ts"),
+
   // JSON endpoints for the passkey ceremonies.
   ...prefix("api/passkey", [
     route("register-options", "routes/api.passkey.register-options.ts"),

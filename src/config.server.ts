@@ -57,6 +57,10 @@ export function publicOrigin(raw: string): string {
   return raw;
 }
 
+function vapidSubject(raw: string): string | null {
+  return /^(https:\/\/|mailto:)\S+$/.test(raw) ? raw : null;
+}
+
 function currencyCode(raw: string): string {
   const code = raw.trim().toUpperCase();
   try {
@@ -127,10 +131,12 @@ export const config = {
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || null,
     /**
-     * Who push services contact about this sender: a mailto: or https: URL.
-     * Defaults to the site's own address, so no one's email goes to them.
+     * Who push services contact about this sender: a mailto: or https: URL
+     * (anything else, and they refuse every message). Defaults to the site's
+     * own address when that is https, so no one's email goes to them; null
+     * means push is off, and the startup log says why.
      */
-    vapidSubject: process.env.VAPID_SUBJECT || process.env.PUBLIC_BASE_URL || null,
+    vapidSubject: vapidSubject(process.env.VAPID_SUBJECT || process.env.PUBLIC_BASE_URL || ""),
     /** How often reminders are checked for, in seconds. 0 turns them off (tests still send). */
     checkEverySeconds: nonNegativeInt("NOTIFY_EVERY_SECONDS", 60),
   },
@@ -163,7 +169,9 @@ export function describeConfig(): string {
   const p = config.push;
   lines.push(
     `  web push            ${
-      p.vapidPublicKey && p.vapidPrivateKey
+      p.vapidPublicKey && p.vapidPrivateKey && !p.vapidSubject
+        ? "OFF — VAPID_SUBJECT must be an https: or mailto: URL (PUBLIC_BASE_URL is used when it is https)"
+        : p.vapidPublicKey && p.vapidPrivateKey
         ? `on, reminders ${p.checkEverySeconds ? `checked every ${p.checkEverySeconds}s` : "off"}`
         : p.vapidPublicKey || p.vapidPrivateKey
           ? "OFF — only one of VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY is set"

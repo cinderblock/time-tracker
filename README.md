@@ -76,6 +76,17 @@ repository. All of that is deployment configuration or an admin setting.
   hours.
 - **Location**, if a person turns it on for their device, is recorded with timer
   starts, stops and notes — samples at those moments, not a trail.
+- **Notifications** (Web Push), on each device a person turns them on for
+  (Account → Notifications). At the end of a workday: no time entered (or less
+  than a chosen number of hours), notes not yet turned into hours, a timer still
+  going, days not submitted (daily, or once a week). As they happen: time
+  QuickBooks already has, time it refused, a timer that has run very long, and
+  for admins anything waiting on an admin. Each is the person's to switch off,
+  with their own workdays, reminder time, repeats, quiet hours for alerts, a
+  pause for time off, and a "day off" for today; Android and desktop
+  notifications carry "Remind me in an hour" and "Day off" buttons. Signing a
+  device out stops its notifications. On iPhone and iPad they need iOS 16.4+
+  and the app added to the Home Screen.
 
 - **Works offline.** Installed to a home screen, the app starts and tracks time
   with no connection, or while the server is down. Changes are kept on the device,
@@ -215,6 +226,9 @@ annotated list. The ones worth calling out:
 | `QBWC_USERNAME`, `QBWC_PASSWORD` | For `qb-webconnector`: what the Web Connector signs in with. The password is typed into the Web Connector once. |
 | `APP_NAME`, `APP_SHORT_NAME`, `APP_THEME_COLOR` | The name and colour until an admin sets them under Settings (they drive the UI theme and the generated PWA manifest). |
 | `APP_CURRENCY` | ISO 4217 code rates and costs are shown in (default `USD`). Display only. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Turn on notifications (`bunx web-push generate-vapid-keys`). Optional: without both, nothing is sent and the account page says so. Keep the pair for good — a new pair silently orphans every device that turned notifications on. |
+| `VAPID_SUBJECT` | Who push services contact about this sender, a `mailto:` or `https:` URL — they refuse anything else. Defaults to `PUBLIC_BASE_URL` when that is https, so no one's address goes to them; on a plain-http address set it, or push stays off (the startup log says so). |
+| `NOTIFY_EVERY_SECONDS` | How often reminders and alerts are checked for (default 60). `0` stops them; test notifications still send. |
 
 ## Accounting backends
 
@@ -278,6 +292,10 @@ Deploying is the deployer's, and wants three things:
   ([`.env.example`](.env.example) lists it) and keeps its SQLite database in the
   volume at `/data`; back that up.
 
+Notifications need HTTPS too (browsers only allow push on a secure origin) and
+outbound HTTPS from the container to the browsers' push services (Google, Apple,
+Mozilla, Microsoft).
+
 At startup the app logs its resolved settings (never the secrets) and, until an
 admin exists, a one-time setup link. It refuses to start when a required setting
 is missing or wrong: `PUBLIC_BASE_URL`, `SESSION_SECRET`, or the credentials of
@@ -294,12 +312,14 @@ app/components/  Pieces shared across screens (duration field, link reveal, week
 app/motion.ts    Durations and easings, in one place — see "Motion" below
 app/tracker/     The time-tracking screen (also used by admins for someone else's day)
 app/offline/     Outbox, sync engine, device copies, offline loaders
-app/pwa/         Service worker registration, and keeping an installed app current
+app/pwa/         Service worker registration, keeping an installed app current, push subscriptions
+app/notifications/ The account page's notification settings
 src/             Server-side modules (SQLite, auth flows, time, sign-off, reports, sync)
 src/accounting/  Accounting backends and the qbXML encoder
+src/notifications/ What to notify whom about and when (pure rules), sending it by Web Push
 src/testing/     Test helpers: the software passkey authenticator, a pretend QuickBooks and bridge
 src/cli/         Operator commands (`bun run admin-link`)
-e2e/             Playwright end-to-end tests (three app instances: standalone, bridge, Web Connector)
+e2e/             Playwright end-to-end tests (app instances: standalone, bridge, Web Connector; a pretend push service)
 docs/            Contracts with other systems
 public/          Service worker and icons served at the site root
 scripts/         Build steps

@@ -137,6 +137,23 @@ From the notification itself (platforms that show buttons — not iOS):
   Pick one of its jobs.") — tests need a customer with a job under it.
 - **Fridays fire the weekly "not submitted" reminder by default**, so a test
   of "time entered → no reminder" on a Friday gets that one instead.
+- **Headless Chromium keeps `Notification.permission` at `"denied"` even after
+  `context.grantPermissions(["notifications"])`**, while
+  `navigator.permissions.query({name:"notifications"})` says `"granted"`
+  (probe: `[ "denied", "granted" ]`, with and without an origin). The client
+  asks the Permissions API first (`notificationPermission()` in
+  `app/pwa/push-client.ts`) and falls back to `Notification.permission`.
+- **Headless Chromium can't make a real push subscription**, so the e2e spec
+  makes up a subscription with real ECDH keys, posts it as the page would, and
+  decrypts what the fake push service (`e2e/fake-push-server.ts`, HTTPS with a
+  throwaway openssl cert) receives with `http_ece`.
+- **`prefs.ts` imports the database**, so the account page's component must
+  import from `prefs-schema.ts` (pure) — a value import from `prefs.ts` would
+  drag `db.server.ts` toward the client bundle.
+- **The other session runs the full e2e suite on the same fixed ports
+  (3140–3144) without a compute-budget claim.** Don't start a run while
+  theirs is up: "port already used" at best, false timeouts at worst. Wait for
+  3140 to be free; `E2E_PORT` moves a run elsewhere when the machine is idle.
 
 ## Progress log
 
@@ -146,10 +163,14 @@ From the notification itself (platforms that show buttons — not iOS):
 - [x] `src/notifications/`: prefs (zod, audited), rules (pure), state, store,
       send (`web-push` + fake), worker (loop from `ensureServerInit`). 47 unit
       tests pass; typecheck clean.
-- [ ] Routes + account page UI.
-- [ ] Service worker buttons.
-- [ ] e2e with a fake HTTPS push service.
-- [ ] README, `.env.example`, app plan.
+- [x] Routes + account page UI (`app/notifications/NotificationSettings.tsx`,
+      `app/notifications.server.ts`, `api/notifications/action`).
+- [x] Service worker buttons (snooze, day off) through the token endpoint.
+- [ ] ⬅️ e2e with a fake HTTPS push service: spec written; first test fixed
+      (permission quirk); waiting for the other session's e2e run to free the
+      ports before re-running.
+- [x] README, `.env.example`. App plan (`plans/time-tracker.md`) not touched:
+      the other session has it modified; add a pointer after rebasing.
 - [ ] Rebase onto the other session's work; deploy.
 
 ## Open questions for the user

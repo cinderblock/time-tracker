@@ -48,6 +48,8 @@ export async function deliver(args: {
 }): Promise<DeliverySummary> {
   const { userId, due, sender, now } = args;
   const targets = liveSubscriptions(userId, now).filter((s) => !args.endpoint || s.endpoint === args.endpoint);
+  // Nowhere to send it: don't record it as sent, so it goes once there is.
+  if (targets.length === 0) return { logId: 0, devices: 0, delivered: 0, errors: [] };
   const logId = recordSend({ userId, kind: due.kind, key: due.key, title: due.title, body: due.body, url: due.url, now });
   const payload = JSON.stringify({
     title: due.title,

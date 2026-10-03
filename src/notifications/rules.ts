@@ -114,9 +114,10 @@ export function dueNotifications(prefs: NotificationPrefs, state: PersonState, l
   const workday = prefs.workdays.includes(weekdayOf(state.today));
   const dayReminders = workday && !state.dayOff;
   const atReminder = state.minutesNow >= minutesOf(prefs.reminderAt);
+  // Quiet hours are a window on workdays — or on every day, for someone with no workdays set.
   const alertsMayGo =
     !prefs.quietHours.on ||
-    (workday &&
+    ((workday || prefs.workdays.length === 0) &&
       state.minutesNow >= minutesOf(prefs.quietHours.from) &&
       state.minutesNow < minutesOf(prefs.quietHours.until));
 

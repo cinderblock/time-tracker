@@ -239,4 +239,14 @@ describe("a test notification", () => {
     expect(sent[0]!.payload).toMatchObject({ title: "Notifications are working", url: "/account#notifications" });
     expect(sent[0]!.options.urgency).toBe("high");
   });
+
+  test("to a device that's signed out: nothing sent, nothing recorded", async () => {
+    subscribeAlice(1);
+    revokeSession({ id: aliceSession, userId: alice, actorUserId: alice, now: NINE_AM });
+    const { sender, sent } = fakeSender();
+    const result = await sendTest({ userId: alice, sender, endpoint: browser(1).endpoint, now: NINE_AM });
+    expect(result).toMatchObject({ devices: 0, delivered: 0 });
+    expect(sent).toEqual([]);
+    expect(recentNotifications(alice)).toEqual([]);
+  });
 });

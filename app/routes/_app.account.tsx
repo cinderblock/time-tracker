@@ -12,6 +12,8 @@ import { handleForm, intField, stringField } from "../actions.server.ts";
 import { requireUser } from "../auth.server.ts";
 import { PasskeyList, SessionList } from "../components/credential-lists.tsx";
 import { useActionFeedback } from "../components/use-action-feedback.ts";
+import { NotificationSettings } from "../notifications/NotificationSettings.tsx";
+import { notificationHandlers, notificationsView } from "../notifications.server.ts";
 import { PasskeyError, passkeysSupported, registerPasskey } from "../passkey-client.ts";
 import { SignOutButton } from "../offline/SyncStatusBadge.tsx";
 import { locationEnabled, setLocationEnabled } from "../tracker/location.ts";
@@ -28,6 +30,7 @@ export function loader({ request, context }: Route.LoaderArgs) {
     trackingMode: user.trackingMode,
     passkeys: passkeyViews(user.id),
     sessions: sessionViews(user.id, session.id),
+    notifications: notificationsView(user.id),
   };
 }
 
@@ -39,6 +42,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const { user, session } = requireUser(context, request);
   const self = { userId: user.id, actorUserId: user.id };
   return handleForm(request, {
+    ...notificationHandlers({ userId: user.id, sessionId: session.id, userAgent: request.headers.get("user-agent") }),
     rename: (form) => {
       renameUser({ ...self, name: stringField(form, "name") });
       return { ok: true, message: "Name updated." };
@@ -70,7 +74,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 }
 
 export default function Account({ loaderData }: Route.ComponentProps) {
-  const { userId, name, role, trackingMode, passkeys, sessions } = loaderData;
+  const { userId, name, role, trackingMode, passkeys, sessions, notifications } = loaderData;
 
   return (
     <Stack gap="xl" maw={640}>
@@ -82,6 +86,8 @@ export default function Account({ loaderData }: Route.ComponentProps) {
       <RenameSelf name={name} />
 
       <TrackingModeSetting mode={trackingMode} />
+
+      <NotificationSettings view={notifications} isAdmin={role === "admin"} />
 
       <Stack gap="sm">
         <Title order={3}>Passkeys</Title>

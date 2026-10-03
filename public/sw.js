@@ -168,7 +168,10 @@ async function staleWhileRevalidate(event, request) {
 
 // ---- Web Push ------------------------------------------------------------------------
 
-// A push arrives as JSON: { title, body, tag?, url? }.
+// A push arrives as JSON (src/notifications/worker.ts):
+//   { title, body, url, tag, actions: [{ action, title }], id, token }
+// `id` and `token` let a button on the notification act on it (snooze, day
+// off) through /api/notifications/action without a session.
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -177,6 +180,7 @@ self.addEventListener("push", (event) => {
     payload = { body: event.data ? event.data.text() : "" };
   }
   const title = payload.title || "Time Tracker";
+  const actions = Array.isArray(payload.actions) ? payload.actions : [];
   event.waitUntil(
     self.registration.showNotification(title, {
       body: payload.body || "",
@@ -185,14 +189,29 @@ self.addEventListener("push", (event) => {
       // A shared tag collapses repeats instead of stacking them.
       tag: payload.tag || "time-tracker",
       renotify: true,
-      data: { url: payload.url || "/" },
+      // Platforms that don't show buttons (iOS) ignore these; a tap still opens the app.
+      actions: actions.slice(0, 2),
+      data: { url: payload.url || "/", id: payload.id, token: payload.token },
     }),
   );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || "/";
+  const data = event.notification.data || {};
+  if ((event.action === "snooze" || event.action === "day-off") && data.id && data.token) {
+    event.waitUntil(
+      fetch("/api/notifications/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: data.id, token: data.token, action: event.action }),
+      }).catch(() => {
+        // Offline: nothing to do but let it come again at its next time.
+      }),
+    );
+    return;
+  }
+  const target = data.url || "/";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {

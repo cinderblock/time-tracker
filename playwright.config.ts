@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
+import webpush from "web-push";
 
 /**
  * End-to-end tests against the real production build, driven through
@@ -11,6 +12,9 @@ import { defineConfig, devices } from "@playwright/test";
  *   - standalone (no accounting system): auth, tracking, offline, admin
  *   - QuickBooks through a pretend QB Bridge (e2e/fake-bridge-server.ts)
  *   - QuickBooks through the Web Connector, driven by SOAP calls
+ *
+ * The standalone copy also sends Web Push, to a pretend push service
+ * (e2e/fake-push-server.ts).
  *
  * Database paths are fixed in the environment once, by the main process, so
  * worker processes (which re-evaluate this file and inherit the environment)
@@ -22,12 +26,19 @@ const BRIDGE_PORT = PORT + 1;
 const BRIDGE_APP_PORT = PORT + 2;
 const QBWC_APP_PORT = PORT + 3;
 const PROXIED_APP_PORT = PORT + 4;
+const PUSH_PORT = PORT + 5;
 
 const stamp = `${process.pid}-${Date.now()}`;
 process.env.E2E_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-${stamp}.db`);
 process.env.E2E_BRIDGE_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-bridge-${stamp}.db`);
 process.env.E2E_QBWC_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-qbwc-${stamp}.db`);
 process.env.E2E_PROXIED_DATABASE_PATH ??= join(tmpdir(), `time-tracker-e2e-proxied-${stamp}.db`);
+// Made once in the main process, like the paths above, so every process agrees.
+if (!process.env.E2E_VAPID_PUBLIC_KEY) {
+  const keys = webpush.generateVAPIDKeys();
+  process.env.E2E_VAPID_PUBLIC_KEY = keys.publicKey;
+  process.env.E2E_VAPID_PRIVATE_KEY = keys.privateKey;
+}
 
 const common = {
   SESSION_SECRET: "e2e-only-session-secret",
@@ -41,7 +52,17 @@ export const e2eEnv = {
   DATABASE_PATH: process.env.E2E_DATABASE_PATH,
   APP_NAME: "E2E Time",
   ACCOUNTING_BACKEND: "none",
+  VAPID_PUBLIC_KEY: process.env.E2E_VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY: process.env.E2E_VAPID_PRIVATE_KEY,
+  // The site address is http here, which push services won't take as a contact.
+  VAPID_SUBJECT: "mailto:push-e2e@example.invalid",
+  // Tests send on demand (the test button); no reminders behind their backs.
+  NOTIFY_EVERY_SECONDS: "0",
+  // The pretend push service's certificate is self-signed.
+  NODE_TLS_REJECT_UNAUTHORIZED: "0",
 };
+
+export const fakePushUrl = `https://127.0.0.1:${PUSH_PORT}`;
 
 export const fakeBridgeUrl = `http://127.0.0.1:${BRIDGE_PORT}`;
 
@@ -127,6 +148,14 @@ export default defineConfig({
   ],
   webServer: [
     app(e2eEnv),
+    {
+      command: "bun e2e/fake-push-server.ts",
+      url: `${fakePushUrl}/__test/received`,
+      ignoreHTTPSErrors: true,
+      env: { PORT: String(PUSH_PORT) },
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
     {
       command: "bun e2e/fake-bridge-server.ts",
       url: `${fakeBridgeUrl}/__test/state`,
