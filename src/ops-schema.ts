@@ -134,10 +134,12 @@ export const opPayloads = {
             jobId: id,
             note,
             noteIds: z.array(id).min(1),
-            // Either a span, or a duration on the day.
+            // Either a span, or a duration on the day. When the job already
+            // has hours that day these join them, and a duration of 0 is
+            // allowed: the notes are attached to hours already counted.
             startedAt: instant.optional(),
             endedAt: instant.optional(),
-            durationSeconds: z.number().int().positive().max(MAX_ENTRY_SECONDS).optional(),
+            durationSeconds: z.number().int().nonnegative().max(MAX_ENTRY_SECONDS).optional(),
           })
           .refine(
             (l) =>
@@ -149,6 +151,20 @@ export const opPayloads = {
       .min(1)
       .max(100),
   }),
+
+  // Take back exactly what joining a job's hours added — the undo of an add
+  // that landed on a line already there: untimed seconds, or the segment it
+  // added; the description as it was; and the notes it made hours of.
+  "entry.unmerge": z.object({
+    entryId: id,
+    removeSeconds: z.number().int().positive().max(MAX_ENTRY_SECONDS).optional(),
+    removeSegment: z.object({ startedAt: instant, endedAt: instant.nullable().optional() }).optional(),
+    note,
+    releaseNoteIds: z.array(id).max(500).optional(),
+  }),
+  // Fold several lines of one job and day (from before one line per job) into
+  // the first. Deliberate and not undoable.
+  "entry.combine": z.object({ intoEntryId: id, entryIds: z.array(id).min(1).max(50) }),
 
   // A day's worth of time at once: submitting says the day is done, taking it
   // back reopens it for corrections. Several days are several ops.

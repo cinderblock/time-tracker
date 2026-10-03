@@ -1,4 +1,5 @@
 import { config } from "../src/config.server.ts";
+import { db } from "../src/db.server.ts";
 import {
   type Entry,
   getOpenEntry,
@@ -43,6 +44,7 @@ function entryView(e: Entry, jobNames: Map<string, string>, held: Held): EntryVi
     source: e.source,
     status: e.status,
     durationSeconds: e.durationSeconds,
+    untimedSeconds: e.untimedSeconds,
     startedAt: first?.startedAt ?? null,
     endedAt: e.status === "open" ? null : (last?.endedAt ?? null),
     runningSince: e.segments.find((s) => s.endedAt == null)?.startedAt ?? null,
@@ -52,6 +54,17 @@ function entryView(e: Entry, jobNames: Map<string, string>, held: Held): EntryVi
     adminApproved: e.approvedBy != null,
     heldBy: held.get(e.id)?.found.map((f) => ({ txnId: f.txnId, minutes: f.minutes, notes: f.notes })) ?? null,
   };
+}
+
+/** Ids that stand for these lines (their time joined them; see entry_aliases). */
+function aliasesOf(entryIds: string[]): Record<string, string> {
+  if (entryIds.length === 0) return {};
+  const rows = db()
+    .query<{ alias_id: string; entry_id: string }, string[]>(
+      `SELECT alias_id, entry_id FROM entry_aliases WHERE entry_id IN (${entryIds.map(() => "?").join(",")})`,
+    )
+    .all(...entryIds);
+  return Object.fromEntries(rows.map((r) => [r.alias_id, r.entry_id]));
 }
 
 export function loadDay(userId: number, workDate: string): DayModel {
@@ -72,6 +85,7 @@ export function loadDay(userId: number, workDate: string): DayModel {
     }));
 
   const open = getOpenEntry(userId);
+  const dayEntries = listEntriesForDate(userId, workDate);
   const todayDate = today(config.timezone);
   const person = getUser(userId);
   const mode = person?.trackingMode ?? DEFAULT_TRACKING_MODE;
@@ -102,9 +116,8 @@ export function loadDay(userId: number, workDate: string): DayModel {
     unsubmittedDays: unsubmittedDatesBefore(userId, workDate),
     heldDays,
     open: open ? entryView(open, jobNames, held) : null,
-    entries: listEntriesForDate(userId, workDate)
-      .map((e) => entryView(e, jobNames, held))
-      .sort(compareEntries),
+    entries: dayEntries.map((e) => entryView(e, jobNames, held)).sort(compareEntries),
+    aliases: aliasesOf([...dayEntries.map((e) => e.id), ...(open ? [open.id] : [])]),
     notes: listNotesForDate(userId, workDate).map((n) => ({
       id: n.id,
       at: n.at,

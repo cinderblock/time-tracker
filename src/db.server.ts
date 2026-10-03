@@ -580,6 +580,32 @@ const migrations: Migration[] = [
           CHECK (notes_hold_next_day IN (0, 1));
     `,
   },
+  {
+    name: "011_one_line_per_job",
+    sql: `
+        -- One line of hours per person, job and day: time added to a job that
+        -- already has hours that day joins them. A line can then hold timed
+        -- time (segments) and untimed time (typed durations, notes turned into
+        -- hours) together: duration = segments + untimed_seconds. Every entry
+        -- so far is one or the other, so a duration-only one is all untimed.
+        ALTER TABLE time_entries ADD COLUMN untimed_seconds INTEGER NOT NULL DEFAULT 0
+          CHECK (untimed_seconds >= 0);
+        UPDATE time_entries SET untimed_seconds = duration_seconds
+         WHERE NOT EXISTS (SELECT 1 FROM time_segments s WHERE s.entry_id = time_entries.id);
+
+        -- An op names the entry its device made; when the server added that
+        -- time to an existing line instead, the new id is an alias of the
+        -- line, so later ops naming it (a stop, an edit) land on the line.
+        CREATE TABLE entry_aliases (
+          alias_id    TEXT PRIMARY KEY,
+          entry_id    TEXT NOT NULL REFERENCES time_entries(id),
+          created_at  INTEGER NOT NULL
+        );
+        CREATE INDEX idx_entry_aliases_entry ON entry_aliases(entry_id);
+
+        CREATE INDEX idx_time_entries_line ON time_entries(user_id, job_id, work_date) WHERE deleted_at IS NULL;
+    `,
+  },
 ];
 
 /**

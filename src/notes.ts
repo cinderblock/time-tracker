@@ -1,6 +1,6 @@
 import { audit } from "./audit.ts";
 import { db } from "./db.server.ts";
-import { type LocationFix, createManualEntry } from "./entries.ts";
+import { type LocationFix, addToLine, createManualEntry, lineFor, recordEntryAlias } from "./entries.ts";
 import { requireBookableJob } from "./jobs.ts";
 import { OpError } from "./op-error.ts";
 import type { NoteKind } from "./ops-schema.ts";
@@ -190,9 +190,11 @@ export function restoreNote(args: { userId: number; noteId: string; now: number 
 }
 
 /**
- * Commit a reviewed rollup: create one entry per line — a span, or a duration
- * on the day — and mark its notes as rolled into it. All or nothing — the
- * caller runs this in one transaction.
+ * Commit a reviewed rollup: one entry per line — a span, or a duration on the
+ * day — with its notes marked as rolled into it. A job that already has hours
+ * that day gets these added to them instead (one line per job per day), and
+ * the line's id stands for them. All or nothing — the caller runs this in one
+ * transaction.
  */
 export function commitRollup(args: {
   userId: number;
@@ -212,8 +214,12 @@ export function commitRollup(args: {
   clientTime: number;
   now: number;
 }): string[] {
-  const problems = rollupProblems(args.lines);
+  const lines = args.lines.map((l) => ({ ...l, line: lineFor(args.userId, l.jobId, args.workDate, l.entryId) }));
+  const problems = rollupProblems(lines.map((l) => ({ ...l, joinsLine: l.line != null })));
   if (problems.length > 0) throw new OpError("invalid", problems.join(" "));
+  if (new Set(lines.map((l) => l.jobId)).size < lines.length) {
+    throw new OpError("invalid", "Each job's notes become one line of hours; give each job one line.");
+  }
 
   const seen = new Set<string>();
   for (const line of args.lines) {
@@ -227,8 +233,23 @@ export function commitRollup(args: {
   }
 
   const created: string[] = [];
-  for (const line of args.lines) {
+  for (const line of lines) {
     const spanned = line.startedAt != null && line.endedAt != null;
+    const mark = db().query("UPDATE day_notes SET rolled_into_entry_id = ?, updated_at = ? WHERE id = ?");
+    if (line.line) {
+      const joined = addToLine({
+        line: line.line,
+        userId: args.userId,
+        actorUserId: args.actorUserId ?? args.userId,
+        ...(spanned ? { startedAt: line.startedAt!, endedAt: line.endedAt! } : { seconds: line.durationSeconds! }),
+        note: line.note,
+        now: args.now,
+      });
+      recordEntryAlias(line.entryId, joined.id, args.now);
+      for (const noteId of line.noteIds) mark.run(joined.id, args.now, noteId);
+      created.push(joined.id);
+      continue;
+    }
     createManualEntry({
       userId: args.userId,
       entryId: line.entryId,
@@ -242,7 +263,6 @@ export function commitRollup(args: {
       clientTime: args.clientTime,
       now: args.now,
     });
-    const mark = db().query("UPDATE day_notes SET rolled_into_entry_id = ?, updated_at = ? WHERE id = ?");
     for (const noteId of line.noteIds) mark.run(line.entryId, args.now, noteId);
     created.push(line.entryId);
   }

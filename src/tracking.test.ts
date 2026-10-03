@@ -397,7 +397,8 @@ describe("delete and undo", () => {
     ok(send("timer.stop", { entryId: a, at: NINE + 30 * MIN }));
     ok(send("timer.start", { entryId: b, jobId: jobB, at: NINE + 31 * MIN }));
     expect(rejected(send("timer.reopen", { entryId: a }), "conflict")).toContain("Another timer is running");
-    ok(send("entry.create", { entryId: typed, jobId: jobA, workDate: TODAY, durationSeconds: 600 }));
+    // On another day: on this one it would join a's line.
+    ok(send("entry.create", { entryId: typed, jobId: jobA, workDate: "2026-09-15", durationSeconds: 600 }));
     expect(rejected(send("timer.reopen", { entryId: typed }), "conflict")).toContain("typed in as a duration");
     ok(send("timer.stop", { entryId: b, at: NINE + 40 * MIN }));
     ok(send("day.submit", { workDate: TODAY }));
@@ -593,7 +594,7 @@ describe("totals", () => {
   test("sum live entries per date, ignoring deleted ones", () => {
     ok(send("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: TODAY, durationSeconds: 1800 }));
     const gone = uuidv7();
-    ok(send("entry.create", { entryId: gone, jobId: jobA, workDate: TODAY, durationSeconds: 999 }));
+    ok(send("entry.create", { entryId: gone, jobId: jobB, workDate: TODAY, durationSeconds: 999 }));
     ok(send("entry.delete", { entryId: gone, at: NINE }));
     ok(send("entry.create", { entryId: uuidv7(), jobId: jobB, workDate: "2026-09-15", durationSeconds: 60 }));
     const totals = totalsByDate(userId, "2026-09-14", TODAY);

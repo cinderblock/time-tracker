@@ -62,6 +62,10 @@ function describe(op: Op): string {
       return "Deleting an entry";
     case "entry.restore":
       return "Undoing a delete";
+    case "entry.unmerge":
+      return "Taking back added time";
+    case "entry.combine":
+      return "Combining hours";
     case "note.create":
       return "Adding a note";
     case "note.update":

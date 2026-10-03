@@ -6,6 +6,7 @@ import { linkPerson } from "../../src/remote-lists.ts";
 import { runSync } from "../../src/sync-worker.ts";
 import { fakeBridgeFetch } from "../../src/testing/fake-bridge.ts";
 import { sampleCompany } from "../../src/testing/fake-quickbooks.ts";
+import { db } from "../../src/db.server.ts";
 import { applyOp } from "../../src/ops.ts";
 import type { Op, OpPayload, OpType } from "../../src/ops-schema.ts";
 import { freshDb } from "../../src/testing/db.ts";
@@ -30,6 +31,7 @@ const DAY = "2026-09-16";
 let userId = 0;
 let jobA = "";
 let jobB = "";
+let jobC = "";
 
 const op = <T extends OpType>(type: T, payload: OpPayload<T>): Op =>
   ({ opId: uuidv7(), type, deviceId: "t", clientTime: NINE, payload }) as Op;
@@ -40,15 +42,34 @@ beforeEach(() => {
   const customer = uuidv7();
   jobA = uuidv7();
   jobB = uuidv7();
+  jobC = uuidv7();
   for (const [id, name, parentId] of [
     [customer, "Acme", null],
     [jobA, "Alpha", customer],
     [jobB, "Bravo", customer],
+    [jobC, "Charlie", customer],
   ] as const) {
     const r = applyOp(userId, op("job.create", { jobId: id, name, parentId }), NINE);
     if (!r.ok) throw new Error(r.error);
   }
 });
+
+/**
+ * A duration-only line written straight to the table — the way days from
+ * before one line per job hold several for one job and day.
+ */
+function oldLine(jobId: string, seconds: number): string {
+  const id = uuidv7();
+  db()
+    .query(
+      `INSERT INTO time_entries
+         (id, user_id, job_id, work_date, duration_seconds, untimed_seconds, note, source, status,
+          device_id, client_created_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, 'manual', 'draft', 'old-device', ?, ?, ?)`,
+    )
+    .run(id, userId, jobId, DAY, seconds, seconds, NINE, NINE, NINE);
+  return id;
+}
 
 /** The comparable part of a day model. */
 function shape(m: DayModel) {
@@ -192,7 +213,7 @@ describe("the reducer mirrors the server", () => {
     mirror([
       op("entry.create", { entryId: timed, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "x" }),
       op("entry.create", { entryId: plain, jobId: jobB, workDate: DAY, durationSeconds: 1800 }),
-      op("entry.update", { entryId: timed, startedAt: NINE - 30 * MIN, endedAt: NINE + 2 * HOUR, jobId: jobB, note: null }),
+      op("entry.update", { entryId: timed, startedAt: NINE - 30 * MIN, endedAt: NINE + 2 * HOUR, jobId: jobC, note: null }),
       op("entry.update", { entryId: plain, durationSeconds: 2700, note: "paperwork" }),
       op("entry.delete", { entryId: plain, at: NINE + 3 * HOUR }),
       op("entry.restore", { entryId: plain, at: NINE + 3 * HOUR }),
@@ -204,7 +225,7 @@ describe("the reducer mirrors the server", () => {
     const [timed, plain] = [uuidv7(), uuidv7()];
     mirror([
       op("entry.create", { entryId: timed, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }),
-      op("entry.create", { entryId: plain, jobId: jobA, workDate: DAY, durationSeconds: 600 }),
+      op("entry.create", { entryId: plain, jobId: jobB, workDate: DAY, durationSeconds: 600 }),
     ]);
     mirror([
       op("entry.update", { entryId: timed, startedAt: NINE - 25 * HOUR, endedAt: NINE - 24 * HOUR }),
@@ -405,12 +426,11 @@ describe("the reducer mirrors the server", () => {
     setDefaultServiceItemId("I-LABOR", userId);
     const phase2 = loadDay(userId, DAY).jobs.find((j) => j.fullName === "Acme:Phase 2")!.id;
     qb.addForeign({ txnDate: DAY, entity: "E-ALICE", customer: "C-ACME-2", duration: "PT1H0M0S", notes: "Theirs" });
-    const [keep, drop, both] = [uuidv7(), uuidv7(), uuidv7()];
-    mirror([
-      op("entry.create", { entryId: keep, jobId: phase2, startedAt: NINE, endedAt: NINE + HOUR }),
-      op("entry.create", { entryId: drop, jobId: phase2, workDate: DAY, durationSeconds: 1800 }),
-      op("entry.create", { entryId: both, jobId: phase2, workDate: DAY, durationSeconds: 900 }),
-    ]);
+    const keep = uuidv7();
+    mirror([op("entry.create", { entryId: keep, jobId: phase2, startedAt: NINE, endedAt: NINE + HOUR })]);
+    // Two more lines on the same job and day, as days from before one line per
+    // job can have them: all three are held by the one record there.
+    const [drop, both] = [oldLine(phase2, 1800), oldLine(phase2, 900)];
     submitEntries({ userId, from: DAY, to: DAY, actorUserId: userId });
     await sync();
     const held = loadDay(userId, DAY);
@@ -436,5 +456,110 @@ describe("the reducer mirrors the server", () => {
     const id = uuidv7();
     mirror([op("timer.start", { entryId: id, jobId: jobA, at: NINE - 24 * HOUR })]);
     mirror([op("timer.stop", { entryId: id, at: NINE })]);
+  });
+});
+
+describe("one line per job per day, mirrored", () => {
+  test("a job worked again continues its line, through a switch and back", () => {
+    const [a, b, again] = [uuidv7(), uuidv7(), uuidv7()];
+    const m = mirror([
+      op("timer.start", { entryId: a, jobId: jobA, at: NINE, note: "Framing" }),
+      op("timer.start", { entryId: b, jobId: jobB, at: NINE + HOUR }),
+      op("timer.start", { entryId: again, jobId: jobA, at: NINE + 2 * HOUR, note: "Trim" }),
+      op("timer.stop", { entryId: again, at: NINE + 3 * HOUR }),
+    ]);
+    expect(m.entries.map((e) => [e.jobId, e.durationSeconds, e.note])).toEqual([
+      [jobA, 2 * 3600, "Framing; Trim"],
+      [jobB, 3600, null],
+    ]);
+  });
+
+  test("starting the paused job resumes it", () => {
+    const [a, again] = [uuidv7(), uuidv7()];
+    mirror([
+      op("timer.start", { entryId: a, jobId: jobA, at: NINE }),
+      op("timer.pause", { entryId: a, at: NINE + HOUR }),
+      op("timer.start", { entryId: again, jobId: jobA, at: NINE + 2 * HOUR }),
+      op("timer.pause", { entryId: again, at: NINE + 3 * HOUR }),
+    ]);
+  });
+
+  test("typed-in time joins a line: a duration as untimed time, times as another segment", () => {
+    const a = uuidv7();
+    const m = mirror([
+      op("entry.create", { entryId: a, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "Framing" }),
+      op("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: DAY, durationSeconds: 1800, note: "Paperwork" }),
+      op("entry.create", { entryId: uuidv7(), jobId: jobA, startedAt: NINE + 2 * HOUR, endedAt: NINE + 3 * HOUR }),
+    ]);
+    expect(m.entries.map((e) => [e.durationSeconds, e.untimedSeconds, e.note])).toEqual([[2 * 3600 + 1800, 1800, "Framing; Paperwork"]]);
+  });
+
+  test("a line with both takes a duration as its total", () => {
+    const a = uuidv7();
+    mirror([
+      op("entry.create", { entryId: a, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR }),
+      op("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: DAY, durationSeconds: 1800 }),
+    ]);
+    mirror([op("entry.update", { entryId: a, durationSeconds: 3 * 3600 })]);
+    // Below the timed part: refused on both sides.
+    mirror([op("entry.update", { entryId: a, durationSeconds: 600 })], { expectRejected: 1 });
+  });
+
+  test("notes join the job's hours — with time, or attached to hours already counted", () => {
+    const [n1, n2] = [uuidv7(), uuidv7()];
+    mirror([
+      op("entry.create", { entryId: uuidv7(), jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "Framing" }),
+      op("note.create", { noteId: n1, at: NINE + 2 * HOUR, text: "Paint", jobId: jobA }),
+      op("note.create", { noteId: n2, at: NINE + 3 * HOUR, text: "Sand", jobId: jobA }),
+    ]);
+    const m = mirror([
+      op("rollup.commit", { workDate: DAY, lines: [{ entryId: uuidv7(), jobId: jobA, durationSeconds: 1800, note: "Paint", noteIds: [n1] }] }),
+      op("rollup.commit", { workDate: DAY, lines: [{ entryId: uuidv7(), jobId: jobA, durationSeconds: 0, note: "Sand", noteIds: [n2] }] }),
+    ]);
+    expect(m.entries.map((e) => [e.durationSeconds, e.note])).toEqual([[5400, "Framing; Paint; Sand"]]);
+    expect(m.notes.every((n) => n.rolledIntoEntryId === m.entries[0]!.id)).toBe(true);
+  });
+
+  test("taking back what an add put on a line", () => {
+    const [a, n1] = [uuidv7(), uuidv7()];
+    mirror([
+      op("entry.create", { entryId: a, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "Framing" }),
+      op("note.create", { noteId: n1, at: NINE + 2 * HOUR, text: "Paint", jobId: jobA }),
+      op("rollup.commit", { workDate: DAY, lines: [{ entryId: uuidv7(), jobId: jobA, durationSeconds: 1800, note: "Paint", noteIds: [n1] }] }),
+    ]);
+    const m = mirror([op("entry.unmerge", { entryId: a, removeSeconds: 1800, note: "Framing", releaseNoteIds: [n1] })]);
+    expect(m.entries.map((e) => [e.durationSeconds, e.untimedSeconds, e.note])).toEqual([[3600, 0, "Framing"]]);
+    expect(m.notes[0]!.rolledIntoEntryId).toBeNull();
+  });
+
+  test("moving hours onto another line, or deleting by an id that joined one: refused on both sides", () => {
+    const [a, b, joined] = [uuidv7(), uuidv7(), uuidv7()];
+    mirror([
+      op("entry.create", { entryId: a, jobId: jobA, workDate: DAY, durationSeconds: 600 }),
+      op("entry.create", { entryId: b, jobId: jobB, workDate: DAY, durationSeconds: 600 }),
+      op("entry.create", { entryId: joined, jobId: jobA, workDate: DAY, durationSeconds: 600 }),
+    ]);
+    mirror([op("entry.update", { entryId: b, jobId: jobA })], { expectRejected: 1 });
+    mirror([op("entry.delete", { entryId: joined, at: NINE })], { expectRejected: 1 });
+  });
+
+  test("an op naming an id the server already merged lands on the line, from the server's copy", () => {
+    const [a, again] = [uuidv7(), uuidv7()];
+    mirror([
+      op("timer.start", { entryId: a, jobId: jobA, at: NINE }),
+      op("timer.stop", { entryId: a, at: NINE + HOUR }),
+      op("timer.start", { entryId: again, jobId: jobA, at: NINE + 2 * HOUR }),
+    ]);
+    expect(loadDay(userId, DAY).aliases).toEqual({ [again]: a });
+    // The stop was queued before the copy said so: it still finds the line.
+    mirror([op("timer.stop", { entryId: again, at: NINE + 3 * HOUR })]);
+  });
+
+  test("combining old duplicates", () => {
+    const a = uuidv7();
+    mirror([op("entry.create", { entryId: a, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "Morning" })]);
+    const old = oldLine(jobA, 1800);
+    const m = mirror([op("entry.combine", { intoEntryId: a, entryIds: [old] })]);
+    expect(m.entries.map((e) => [e.id, e.durationSeconds])).toEqual([[a, 5400]]);
   });
 });

@@ -4,9 +4,9 @@ import { XMLParser } from "fast-xml-parser";
 
 import { approveEntries } from "../approvals.ts";
 import { config } from "../config.server.ts";
+import { db } from "../db.server.ts";
 import { getEntry } from "../entries.ts";
 import { listJobs } from "../jobs.ts";
-import { applyOp } from "../ops.ts";
 import { linkPerson } from "../remote-lists.ts";
 import { syncState, webConnectorIds } from "../settings.ts";
 import { freshDb } from "../testing/db.ts";
@@ -80,6 +80,25 @@ function session(): number {
   return requests;
 }
 
+/**
+ * A line of hours written straight to the table — the way days from before
+ * one line per job can hold several for one job and day, which no op makes now.
+ */
+function oldLine(userId: number, jobId: string, startedAt: number, endedAt: number, note: string | null = null): string {
+  const id = uuidv7();
+  const seconds = Math.round((endedAt - startedAt) / 1000);
+  db()
+    .query(
+      `INSERT INTO time_entries
+         (id, user_id, job_id, work_date, duration_seconds, untimed_seconds, note, source, status,
+          device_id, client_created_at, created_at, updated_at)
+       VALUES (?, ?, ?, '2026-09-16', ?, 0, ?, 'manual', 'draft', 'old-device', ?, ?, ?)`,
+    )
+    .run(id, userId, jobId, seconds, note, startedAt, startedAt, startedAt);
+  db().query("INSERT INTO time_segments (entry_id, started_at, ended_at) VALUES (?, ?, ?)").run(id, startedAt, endedAt);
+  return id;
+}
+
 describe("the Web Connector", () => {
   test("wrong credentials are refused, slowly; the right ones with nothing to do get 'none'", () => {
     const refused = call("authenticate", { strUserName: "qbwc", strPassword: "wrong" });
@@ -103,18 +122,11 @@ describe("the Web Connector", () => {
     const alice = createUser({ name: "Alice", role: "employee", actorUserId: admin }).id;
     linkPerson({ userId: alice, remoteId: "E-ALICE", actorUserId: admin });
     const acme = listJobs().find((j) => j.remoteId === "C-ACME-2")!.id;
-    const ids = [0, 1, 2].map((i) => {
-      const entryId = uuidv7();
-      const r = applyOp(alice, {
-        opId: uuidv7(),
-        type: "entry.create",
-        deviceId: "t",
-        clientTime: now,
-        payload: { entryId, jobId: acme, startedAt: NINE + i * 3_600_000, endedAt: NINE + i * 3_600_000 + 1_800_000, note: `Part ${i}` },
-      }, now);
-      expect(r.ok).toBe(true);
-      return entryId;
-    });
+    // Three lines for one job and day, as days from before one line per job
+    // can have them: one question about what's there answers for all three.
+    const ids = [0, 1, 2].map((i) =>
+      oldLine(alice, acme, NINE + i * 3_600_000, NINE + i * 3_600_000 + 1_800_000, `Part ${i}`),
+    );
     approveEntries({ userId: alice, entryIds: ids, actorUserId: admin });
 
     const [ticket, status] = signIn().string;
@@ -141,12 +153,8 @@ describe("the Web Connector", () => {
     const admin = createUser({ name: "Ada", role: "admin", actorUserId: null }).id;
     linkPerson({ userId: admin, remoteId: "E-ALICE", actorUserId: admin });
     const acme = listJobs().find((j) => j.remoteId === "C-ACME-2")!.id;
-    const make = () => {
-      const entryId = uuidv7();
-      applyOp(admin, { opId: uuidv7(), type: "entry.create", deviceId: "t", clientTime: now, payload: { entryId, jobId: acme, workDate: "2026-09-16", durationSeconds: 3600 } }, now);
-      return entryId;
-    };
-    const [bad, good] = [make(), make()];
+    // Two lines for one job and day (from before one line per job).
+    const [bad, good] = [oldLine(admin, acme, NINE, NINE + 3_600_000), oldLine(admin, acme, NINE + 7_200_000, NINE + 10_800_000)];
     approveEntries({ userId: admin, entryIds: [bad, good], actorUserId: admin });
 
     const [ticket] = signIn().string;

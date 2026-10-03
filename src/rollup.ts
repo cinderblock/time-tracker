@@ -64,6 +64,19 @@ export function joinNotes(texts: readonly string[]): string {
     .join("; ");
 }
 
+/**
+ * A line's description with more added to it: "; "-joined, as notes are,
+ * and the same text twice kept once. Shared by the server and the browser's
+ * mirror so both say the same thing. The caller checks the length.
+ */
+export function joinDescriptions(existing: string | null | undefined, added: string | null | undefined): string | null {
+  const a = existing?.trim() || null;
+  const b = added?.trim() || null;
+  if (!b || b === a) return a;
+  if (!a) return b;
+  return `${a}; ${b}`;
+}
+
 export const MAX_LINE_SECONDS = 24 * 3600;
 
 /** A line as it is committed: a span on the day, or just a duration. */
@@ -72,6 +85,12 @@ export interface CommitLine {
   startedAt?: number | null;
   endedAt?: number | null;
   durationSeconds?: number | null;
+  /**
+   * The job already has hours that day, which this joins (one line per job
+   * per day). Then no added time is fine: the notes are attached to hours
+   * already counted.
+   */
+  joinsLine?: boolean;
 }
 
 /** Problems that would stop a set of lines from being committed, in plain words. */
@@ -84,7 +103,9 @@ export function rollupProblems(lines: readonly CommitLine[]): string[] {
   const durations = lines.filter((l) => l.startedAt == null && l.endedAt == null);
   if (spans.length + durations.length < lines.length) problems.push("A line needs both a start and an end, or a duration.");
   if (spans.some((l) => l.endedAt! <= l.startedAt!)) problems.push("Every line must end after it starts.");
-  if (durations.some((l) => !(l.durationSeconds! > 0))) problems.push("Every line needs some time.");
+  if (durations.some((l) => (l.joinsLine ? !(l.durationSeconds! >= 0) : !(l.durationSeconds! > 0)))) {
+    problems.push("Every line needs some time.");
+  }
   if (
     spans.some((l) => l.endedAt! - l.startedAt! > MAX_LINE_SECONDS * 1000) ||
     durations.some((l) => l.durationSeconds! > MAX_LINE_SECONDS)

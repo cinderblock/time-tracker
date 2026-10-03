@@ -1,6 +1,7 @@
 import { reopenEntries, submitEntries } from "./approvals.ts";
 import { db } from "./db.server.ts";
 import {
+  combineEntries,
   createManualEntry,
   deleteEntry,
   pauseTimer,
@@ -9,6 +10,7 @@ import {
   resumeTimer,
   startTimer,
   stopTimer,
+  unmergeEntry,
   updateEntry,
 } from "./entries.ts";
 import { createJob } from "./jobs.ts";
@@ -67,6 +69,11 @@ const handlers: { [T in OpType]: Handler<T> } = {
   "entry.delete": (c, p) => void deleteEntry({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, ...p }),
   "entry.restore": (c, p) =>
     void restoreEntry({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, entryId: p.entryId }),
+  "entry.unmerge": (c, p) => void unmergeEntry({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, ...p }),
+  "entry.combine": (c, p) => {
+    const line = combineEntries({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, ...p });
+    return { entryId: line.id };
+  },
 
   "note.create": (c, p) => {
     createNote({ userId: c.userId, deviceId: c.deviceId, now: c.now, ...p });

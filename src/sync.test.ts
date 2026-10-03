@@ -91,6 +91,27 @@ function work(userId: number, jobId: string, minutes: number, note: string | nul
   return entryId;
 }
 
+/** The same time of day, a day later: another day's line. */
+const NEXT_DAY = NINE + 24 * 60 * MIN;
+
+/**
+ * A second line for a job and day, as days from before one line per job can
+ * have them — written straight to the table, since no op makes one now.
+ */
+function legacy(userId: number, jobId: string, minutes: number, note: string, start: number): string {
+  const id = uuidv7();
+  db()
+    .query(
+      `INSERT INTO time_entries
+         (id, user_id, job_id, work_date, duration_seconds, untimed_seconds, note, source, status,
+          device_id, client_created_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, 'manual', 'draft', 'old-device', ?, ?, ?)`,
+    )
+    .run(id, userId, jobId, DAY, minutes * 60, note, start, now, now);
+  db().query("INSERT INTO time_segments (entry_id, started_at, ended_at) VALUES (?, ?, ?)").run(id, start, start + minutes * MIN);
+  return id;
+}
+
 /** Pull, link Alice and Bob, set a default service and payroll item. */
 async function connected() {
   expect((await sync()).reached).toBe(true);
@@ -233,7 +254,7 @@ describe("sending time", () => {
 
     // A person's own payroll item beats their category's.
     setPersonPayrollItem({ userId: alice, itemId: "W-HOURLY", actorUserId: admin });
-    const c = work(alice, jobByRemote("C-ACME-2").id, 15);
+    const c = work(alice, jobByRemote("C-ACME-2").id, 15, "Framing", NEXT_DAY);
     approveEntries({ userId: alice, entryIds: [c], actorUserId: admin });
     await sync();
     expect(byMinutes(15).payrollItem).toBe("W-HOURLY");
@@ -315,7 +336,7 @@ describe("the approval gate", () => {
 
     // On: the same submission is no longer enough.
     setRequireApproval(true, admin);
-    const second = work(alice, acme2, 30, "Trim", NINE + 4 * 60 * MIN);
+    const second = work(alice, acme2, 30, "Trim", NEXT_DAY);
     submitEntries({ userId: alice, entryIds: [second], actorUserId: alice });
     expect(syncOverview(now).ready).toBe(0);
     expect(await sync()).toMatchObject({ done: 0 });
@@ -327,7 +348,7 @@ describe("the approval gate", () => {
 
     // Time approved while the gate was on still goes after it's switched off.
     setRequireApproval(false, admin);
-    const third = work(alice, acme2, 15, "Punch list", NINE + 8 * 60 * MIN);
+    const third = work(alice, acme2, 15, "Punch list", NEXT_DAY + 24 * 60 * MIN);
     approveEntries({ userId: alice, entryIds: [third], actorUserId: admin });
     expect(await sync()).toMatchObject({ done: 2 });
     expect(getEntry(third)!.status).toBe("synced");
@@ -420,7 +441,7 @@ describe("time the accounting system already has", () => {
     const record = theirs();
     const acme2 = jobByRemote("C-ACME-2").id;
     const morning = work(alice, acme2, 60, "Framing");
-    const afternoon = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    const afternoon = legacy(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
     approveEntries({ userId: alice, from: DAY, to: DAY, actorUserId: admin });
 
     // One question answers for both.
@@ -445,8 +466,9 @@ describe("time the accounting system already has", () => {
     await sync();
     expect(getEntry(first)!.status).toBe("synced");
 
-    // More time on the same job and day: what's there is ours.
-    const second = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    // Another line on the same job and day (from before one line per job):
+    // what's there is ours.
+    const second = legacy(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
     approveEntries({ userId: alice, entryIds: [second], actorUserId: admin });
     await sync();
     expect(getEntry(second)!.status).toBe("synced");
@@ -454,7 +476,7 @@ describe("time the accounting system already has", () => {
 
     // Then a record from elsewhere holds the next one — until it's removed there.
     const record = theirs();
-    const third = work(alice, acme2, 15, "Punch list", NINE + 7 * 60 * MIN);
+    const third = legacy(alice, acme2, 15, "Punch list", NINE + 7 * 60 * MIN);
     approveEntries({ userId: alice, entryIds: [third], actorUserId: admin });
     await sync();
     expect(syncOverview(now).duplicates.map((d) => d.entryId)).toEqual([third]);
@@ -494,8 +516,8 @@ describe("time the accounting system already has", () => {
     const acme2 = jobByRemote("C-ACME-2").id;
     const record = theirs();
     const mine = work(alice, acme2, 60, "Framing");
-    const theirsToo = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
-    const different = work(alice, acme2, 15, "Punch list", NINE + 7 * 60 * MIN);
+    const theirsToo = legacy(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    const different = legacy(alice, acme2, 15, "Punch list", NINE + 7 * 60 * MIN);
     submitEntries({ userId: alice, from: DAY, to: DAY, actorUserId: alice });
     await sync();
     expect([...heldEntries(alice).keys()].sort()).toEqual([mine, theirsToo, different].sort());
@@ -548,7 +570,7 @@ describe("time the accounting system already has", () => {
     expect(getEntry(id)!.status).toBe("synced");
 
     // An admin acting for the person may delete it even though they approved it.
-    const again = work(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
+    const again = legacy(alice, acme2, 30, "Trim", NINE + 5 * 60 * MIN);
     theirs();
     submitEntries({ userId: alice, entryIds: [again], actorUserId: alice });
     approveEntries({ userId: alice, entryIds: [again], actorUserId: admin });
@@ -601,7 +623,7 @@ describe("provisional jobs", () => {
     // now holds "Back room", so an admin says it takes hours of its own too.
     updateJob({ id: phase2, takesTime: true, actorUserId: admin });
     const later = uuidv7();
-    ok(send(alice, "timer.start", { entryId: later, jobId: local, at: NINE + 60 * MIN }));
+    ok(send(alice, "timer.start", { entryId: later, jobId: local, at: NEXT_DAY }));
     expect(getEntry(later)!.jobId).toBe(phase2);
 
     await sync();
@@ -841,7 +863,7 @@ describe("corrections and failures", () => {
     expect(syncOverview(now).failed).toEqual([]);
 
     // Backoff doubles with each failure.
-    const again = work(alice, jobByRemote("C-ACME-2").id, 30);
+    const again = work(alice, jobByRemote("C-ACME-2").id, 30, "Framing", NEXT_DAY);
     approveEntries({ userId: alice, entryIds: [again], actorUserId: admin });
     for (const wait of [MIN, 2 * MIN, 4 * MIN]) {
       qb.failNext(3140);

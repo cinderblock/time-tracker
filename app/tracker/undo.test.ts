@@ -24,6 +24,7 @@ const DAY = "2026-09-16";
 let userId = 0;
 let jobA = "";
 let jobB = "";
+let jobC = "";
 
 const op = <T extends OpType>(type: T, payload: OpPayload<T>): Op =>
   ({ opId: uuidv7(), type, deviceId: "t", clientTime: NINE, payload }) as Op;
@@ -34,10 +35,12 @@ beforeEach(() => {
   const customer = uuidv7();
   jobA = uuidv7();
   jobB = uuidv7();
+  jobC = uuidv7();
   for (const [id, name, parentId] of [
     [customer, "Acme", null],
     [jobA, "Alpha", customer],
     [jobB, "Bravo", customer],
+    [jobC, "Charlie", customer],
   ] as const) {
     apply(op("job.create", { jobId: id, name, parentId }));
   }
@@ -168,9 +171,9 @@ describe("undo puts the day back", () => {
     undone(
       [
         op("entry.create", { entryId: timed, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "one" }),
-        op("entry.create", { entryId: typed, jobId: jobA, workDate: DAY, durationSeconds: 1800 }),
+        op("entry.create", { entryId: typed, jobId: jobB, workDate: DAY, durationSeconds: 1800 }),
       ],
-      [op("entry.update", { entryId: timed, jobId: jobB, note: "two", startedAt: NINE + 10 * MIN, endedAt: NINE + 2 * HOUR })],
+      [op("entry.update", { entryId: timed, jobId: jobC, note: "two", startedAt: NINE + 10 * MIN, endedAt: NINE + 2 * HOUR })],
       { label: "the change to Acme › Alpha" },
     );
     undone([], [op("entry.update", { entryId: typed, workDate: "2026-09-15", durationSeconds: 60, note: "moved" })], {
@@ -248,5 +251,55 @@ describe("undo puts the day back", () => {
     expect(inverseOf(m, op("duplicate.resolve", { entryId: uuidv7(), action: "separate" }), NINE)).toBeNull();
     // And a change that includes one can't be undone as a whole.
     expect(inverseOfAll(m, [op("job.create", { jobId: uuidv7(), name: "Delta" }), op("timer.start", { entryId: uuidv7(), jobId: jobA, at: NINE })], NINE)).toBeNull();
+  });
+});
+
+describe("undo of time that joined a job's hours", () => {
+  test("a timer that continued a line: the line is as it was", () => {
+    const [a, again] = [uuidv7(), uuidv7()];
+    const inverse = undone(
+      [op("timer.start", { entryId: a, jobId: jobA, at: NINE }), op("timer.stop", { entryId: a, at: NINE + HOUR })],
+      [op("timer.start", { entryId: again, jobId: jobA, at: NINE + 90 * MIN, note: "Trim" })],
+      { label: "starting the timer" },
+    );
+    expect(inverse.ops.map((o) => o.type)).toEqual(["timer.stop", "entry.update"]);
+  });
+
+  test("switching back to a job worked earlier: the line as it was, the other timer running again", () => {
+    const [a, b, again] = [uuidv7(), uuidv7(), uuidv7()];
+    undone(
+      [
+        op("timer.start", { entryId: a, jobId: jobA, at: NINE }),
+        op("timer.start", { entryId: b, jobId: jobB, at: NINE + HOUR }),
+      ],
+      [op("timer.start", { entryId: again, jobId: jobA, at: NINE + 90 * MIN })],
+      { label: "switching jobs" },
+    );
+  });
+
+  test("typed-in time that joined a line", () => {
+    const a = uuidv7();
+    undone(
+      [op("entry.create", { entryId: a, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "Framing" })],
+      [op("entry.create", { entryId: uuidv7(), jobId: jobA, workDate: DAY, durationSeconds: 1800, note: "Paperwork" })],
+      { label: "adding time" },
+    );
+    undone([], [op("entry.create", { entryId: uuidv7(), jobId: jobA, startedAt: NINE + 2 * HOUR, endedAt: NINE + 3 * HOUR })]);
+  });
+
+  test("notes that joined a line: the time and description back, the notes free again", () => {
+    const n1 = uuidv7();
+    undone(
+      [
+        op("entry.create", { entryId: uuidv7(), jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, note: "Framing" }),
+        op("note.create", { noteId: n1, at: NINE + 90 * MIN, text: "Paint", jobId: jobA }),
+      ],
+      [op("rollup.commit", { workDate: DAY, lines: [{ entryId: uuidv7(), jobId: jobA, durationSeconds: 1800, note: "Paint", noteIds: [n1] }] })],
+      { label: "turning notes into hours" },
+    );
+  });
+
+  test("combining has no undo; it's a deliberate button", () => {
+    expect(inverseOf(loadDay(userId, DAY), op("entry.combine", { intoEntryId: uuidv7(), entryIds: [uuidv7()] }), NINE)).toBeNull();
   });
 });

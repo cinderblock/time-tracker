@@ -1,5 +1,7 @@
 import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
+import { MAX_ENTRY_SECONDS, NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import type { Op } from "../../src/ops-schema.ts";
+import { joinDescriptions } from "../../src/rollup.ts";
 import { workDateOf } from "../../src/time.ts";
 import { type DayModel, type EntryView, type JobView, type NoteView, compareEntries, compareNotes } from "../tracker/model.ts";
 
@@ -31,6 +33,7 @@ export function applyPending(base: DayModel, ops: readonly Op[]): DayModel {
     deletedEntries: new Map(),
     deletedNotes: new Map(),
     closedInRun: new Set(),
+    aliases: new Map(Object.entries(base.aliases ?? {})),
   };
   for (const op of ops) applyOne(state, op);
   state.m.entries.sort(compareEntries);
@@ -53,6 +56,71 @@ interface State {
    * of a copy that already shows the stop.
    */
   closedInRun: Set<string>;
+  /**
+   * Ids standing for a line their time joined — from the server's copy, and
+   * from ops in this run that the server will treat the same way.
+   */
+  aliases: Map<string, string>;
+}
+
+/** The entry an op's id names: itself, or the line its time joined. */
+function resolve(s: State, id: string): string {
+  return s.aliases.get(id) ?? id;
+}
+
+/**
+ * The person's line for a job and day, as this copy knows it — the server's
+ * rule (lineFor in entries.ts). Only the shown day's entries and the open
+ * timer are here; a line on another day is the server's to find.
+ */
+export function lineOf(m: DayModel, jobId: string, workDate: string, exceptId?: string): EntryView | undefined {
+  const all = m.open && !m.entries.some((e) => e.id === m.open!.id) ? [...m.entries, m.open] : m.entries;
+  return all
+    .filter((e) => e.jobId === jobId && e.workDate === workDate && e.id !== exceptId)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+}
+
+/**
+ * A line ready to take more time: as it is, or the person's own submission
+ * taken back. Undefined when the server will refuse (an admin approved it).
+ */
+function readyToAdd(e: EntryView): EntryView | undefined {
+  if (isEditable(e.status)) return e;
+  if (isOwnerReopenable(e.status, e.adminApproved)) return { ...e, status: "draft" };
+  return undefined;
+}
+
+/**
+ * Add time to a line, as the server's addToLine does. Undefined, and the copy
+ * untouched, when the server will refuse it.
+ */
+function addTo(
+  m: DayModel,
+  line: EntryView,
+  add: { startedAt?: number; endedAt?: number; seconds?: number; note?: string | null },
+): EntryView | undefined {
+  const ready = readyToAdd(line);
+  if (!ready) return undefined;
+  const spanned = add.startedAt != null && add.endedAt != null;
+  const adding = spanned ? Math.round((add.endedAt! - add.startedAt!) / 1000) : (add.seconds ?? 0);
+  if (ready.durationSeconds + adding > MAX_ENTRY_SECONDS) return undefined;
+  const note = joinDescriptions(ready.note, cleanNote(add.note));
+  if (note && note.length > NOTE_MAX_LENGTH) return undefined;
+  const next: EntryView = {
+    ...ready,
+    note,
+    durationSeconds: ready.durationSeconds + adding,
+    untimedSeconds: (ready.untimedSeconds ?? 0) + (spanned ? 0 : adding),
+  };
+  if (spanned) {
+    next.startedAt = Math.min(ready.startedAt ?? add.startedAt!, add.startedAt!);
+    next.endedAt = ready.status === "open" ? null : Math.max(ready.endedAt ?? add.endedAt!, add.endedAt!);
+    next.lastEndedAt = Math.max(ready.lastEndedAt ?? add.endedAt!, add.endedAt!);
+    next.segmentCount = ready.segmentCount + 1;
+  }
+  addToWeek(m, ready.workDate, adding);
+  putEntry(m, next);
+  return next;
 }
 
 function jobOf(m: DayModel, id: string | null | undefined): JobView | undefined {
@@ -104,13 +172,17 @@ function noteRequired(m: DayModel, jobId: string | null): boolean {
 function stopEntry(s: State, entry: EntryView, at: number, note: string | null | undefined): void {
   const { m } = s;
   const running = entry.runningSince != null ? Math.max(0, Math.round((at - entry.runningSince) / 1000)) : 0;
+  // Stopped the moment it continued a line — its undo: the server drops the
+  // empty segment, so the line ends where it ended before.
+  const empty = entry.runningSince === at && (entry.segmentCount > 1 || (entry.untimedSeconds ?? 0) > 0);
   const stopped: EntryView = {
     ...entry,
     status: "draft",
     durationSeconds: entry.durationSeconds + running,
     runningSince: null,
-    endedAt: entry.runningSince != null ? at : (entry.lastEndedAt ?? at),
-    lastEndedAt: entry.runningSince != null ? at : entry.lastEndedAt,
+    endedAt: empty ? entry.lastEndedAt : entry.runningSince != null ? at : (entry.lastEndedAt ?? at),
+    lastEndedAt: empty ? entry.lastEndedAt : entry.runningSince != null ? at : entry.lastEndedAt,
+    segmentCount: empty ? entry.segmentCount - 1 : entry.segmentCount,
     note: note !== undefined ? note : entry.note,
     noteRequired: false,
   };
@@ -151,7 +223,38 @@ function applyOne(s: State, op: Op): void {
 
     case "timer.start": {
       const p = op.payload;
-      if (findEntry(m, p.entryId)) return;
+      if (findEntry(m, resolve(s, p.entryId))) return;
+      // The job already has hours that day: the timer continues that line.
+      const line = lineOf(m, p.jobId, workDateOf(p.at, m.timezone), p.entryId);
+      if (line) {
+        if (m.open?.id === line.id) {
+          s.aliases.set(p.entryId, line.id);
+          // Already on it; paused, it resumes.
+          if (line.runningSince == null) putEntry(m, { ...line, runningSince: p.at, segmentCount: line.segmentCount + 1 });
+          return;
+        }
+        // Before the line's time ends, the server refuses.
+        if (line.lastEndedAt != null && p.at < line.lastEndedAt) return;
+        const ready = readyToAdd(line);
+        const note = joinDescriptions(ready?.note, cleanNote(p.note));
+        if (!ready || (note && note.length > NOTE_MAX_LENGTH)) return;
+        s.aliases.set(p.entryId, line.id);
+        if (m.open) stopEntry(s, m.open, p.at, undefined);
+        const continued: EntryView = {
+          ...ready,
+          status: "open",
+          note,
+          endedAt: null,
+          runningSince: p.at,
+          segmentCount: ready.segmentCount + 1,
+          startedAt: ready.startedAt ?? p.at,
+          noteRequired: noteRequired(m, p.jobId),
+        };
+        m.open = continued;
+        putEntry(m, continued);
+        touchRecent(m, p.jobId);
+        return;
+      }
       if (m.open) stopEntry(s, m.open, p.at, undefined);
       const entry: EntryView = {
         id: p.entryId,
@@ -162,6 +265,7 @@ function applyOne(s: State, op: Op): void {
         source: "timer",
         status: "open",
         durationSeconds: 0,
+        untimedSeconds: 0,
         startedAt: p.at,
         endedAt: null,
         runningSince: p.at,
@@ -180,7 +284,10 @@ function applyOne(s: State, op: Op): void {
     case "timer.pause": {
       const p = op.payload;
       const open = m.open;
-      if (open?.id !== p.entryId || open.runningSince == null) return;
+      if (open?.id !== resolve(s, p.entryId) || open.runningSince == null) return;
+      // A pause from before this segment began is an earlier one, already in
+      // this copy (a line runs again under the same id); the server refuses it.
+      if (p.at < open.runningSince) return;
       const ran = Math.max(0, Math.round((p.at - open.runningSince) / 1000));
       addToWeek(m, open.workDate, ran);
       putEntry(m, { ...open, durationSeconds: open.durationSeconds + ran, runningSince: null, lastEndedAt: p.at });
@@ -191,14 +298,18 @@ function applyOne(s: State, op: Op): void {
     case "timer.resume": {
       const p = op.payload;
       const open = m.open;
-      if (open?.id !== p.entryId || open.runningSince != null) return;
+      if (open?.id !== resolve(s, p.entryId) || open.runningSince != null) return;
       putEntry(m, { ...open, runningSince: p.at, segmentCount: open.segmentCount + 1 });
       return;
     }
 
     case "timer.stop": {
       const p = op.payload;
-      if (m.open?.id !== p.entryId) return;
+      if (m.open?.id !== resolve(s, p.entryId)) return;
+      // A stop from before the running segment began is an earlier one,
+      // already in this copy (a line runs again under the same id); the server
+      // refuses it.
+      if (m.open.runningSince != null && p.at < m.open.runningSince) return;
       stopEntry(s, m.open, p.at, cleanNote(p.note));
       return;
     }
@@ -207,9 +318,9 @@ function applyOne(s: State, op: Op): void {
       // Running again from the moment it last stopped or paused: a new
       // segment from there, as the server makes it, so the closed time and
       // the last end stay what they were.
-      const e = findEntry(m, op.payload.entryId);
+      const e = findEntry(m, resolve(s, op.payload.entryId));
       // Stopped before this copy was fetched: nothing local to reopen until it syncs.
-      if (!s.closedInRun.has(op.payload.entryId)) return;
+      if (!e || !s.closedInRun.has(e.id)) return;
       if (!e || (e.status !== "draft" && e.status !== "open") || e.runningSince != null || e.lastEndedAt == null) return;
       if (m.open && m.open.id !== e.id) return;
       s.closedInRun.delete(e.id);
@@ -228,10 +339,20 @@ function applyOne(s: State, op: Op): void {
 
     case "entry.create": {
       const p = op.payload;
-      if (findEntry(m, p.entryId)) return;
+      if (findEntry(m, resolve(s, p.entryId))) return;
       const spanned = p.startedAt != null && p.endedAt != null;
       const workDate = spanned ? workDateOf(p.startedAt!, m.timezone) : p.workDate!;
       const seconds = spanned ? Math.round((p.endedAt! - p.startedAt!) / 1000) : p.durationSeconds!;
+      // The job already has hours that day: this joins them.
+      const line = lineOf(m, p.jobId, workDate, p.entryId);
+      if (line) {
+        const added = addTo(m, line, spanned ? { startedAt: p.startedAt!, endedAt: p.endedAt!, note: p.note } : { seconds, note: p.note });
+        if (added) {
+          s.aliases.set(p.entryId, added.id);
+          touchRecent(m, p.jobId);
+        }
+        return;
+      }
       putEntry(m, {
         id: p.entryId,
         jobId: p.jobId,
@@ -241,6 +362,7 @@ function applyOne(s: State, op: Op): void {
         source: "manual",
         status: "draft",
         durationSeconds: seconds,
+        untimedSeconds: spanned ? 0 : seconds,
         startedAt: spanned ? p.startedAt! : null,
         endedAt: spanned ? p.endedAt! : null,
         runningSince: null,
@@ -257,7 +379,7 @@ function applyOne(s: State, op: Op): void {
 
     case "entry.update": {
       const p = op.payload;
-      const e = findEntry(m, p.entryId);
+      const e = findEntry(m, resolve(s, p.entryId));
       // Approved time is locked; the server will refuse the change.
       if (!e || !isEditable(e.status)) return;
       const next: EntryView = { ...e };
@@ -287,6 +409,7 @@ function applyOne(s: State, op: Op): void {
         next.segmentCount = 0;
         next.workDate = p.workDate ?? e.workDate;
         next.durationSeconds = p.durationSeconds;
+        next.untimedSeconds = p.durationSeconds;
       } else if (convertTo === "times") {
         if (p.startedAt == null || p.endedAt == null) return;
         next.startedAt = p.startedAt;
@@ -296,6 +419,19 @@ function applyOne(s: State, op: Op): void {
         next.segmentCount = 1;
         next.workDate = workDateOf(p.startedAt, m.timezone);
         next.durationSeconds = Math.round((p.endedAt - p.startedAt) / 1000);
+        next.untimedSeconds = 0;
+      } else if (
+        hasTimes &&
+        (e.untimedSeconds ?? 0) > 0 &&
+        p.durationSeconds !== undefined &&
+        p.startedAt === undefined &&
+        p.endedAt === undefined
+      ) {
+        // A line with both: a duration is its new total, the times stay.
+        const timed = e.durationSeconds - (e.untimedSeconds ?? 0);
+        if (p.durationSeconds < timed) return;
+        next.durationSeconds = p.durationSeconds;
+        next.untimedSeconds = p.durationSeconds - timed;
       } else if (hasTimes && e.startedAt != null) {
         if (p.startedAt !== undefined) {
           next.startedAt = p.startedAt;
@@ -311,7 +447,14 @@ function applyOne(s: State, op: Op): void {
         }
       } else {
         if (p.workDate !== undefined) next.workDate = p.workDate;
-        if (p.durationSeconds !== undefined) next.durationSeconds = p.durationSeconds;
+        if (p.durationSeconds !== undefined) {
+          next.durationSeconds = p.durationSeconds;
+          next.untimedSeconds = p.durationSeconds;
+        }
+      }
+      // Moved onto a job and day that already has a line: the server refuses.
+      if (next.jobId && (next.jobId !== e.jobId || next.workDate !== e.workDate) && lineOf(m, next.jobId, next.workDate, e.id)) {
+        return;
       }
       addToWeek(m, e.workDate, -e.durationSeconds);
       addToWeek(m, next.workDate, next.durationSeconds);
@@ -321,6 +464,8 @@ function applyOne(s: State, op: Op): void {
 
     case "entry.delete": {
       const p = op.payload;
+      // An id whose time joined a line names only part of it: refused.
+      if (s.aliases.has(p.entryId)) return;
       const e = findEntry(m, p.entryId);
       if (!e || !isEditable(e.status)) return;
       // Notes that had become this entry are notes again (the server's rule: a
@@ -422,9 +567,24 @@ function applyOne(s: State, op: Op): void {
       if (m.notesToRollUp?.date === p.workDate) m.notesToRollUp = null;
       if (p.workDate !== m.workDate) return;
       for (const line of p.lines) {
-        if (findEntry(m, line.entryId)) continue;
+        if (findEntry(m, resolve(s, line.entryId))) continue;
         const spanned = line.startedAt != null && line.endedAt != null;
         const seconds = spanned ? Math.round((line.endedAt! - line.startedAt!) / 1000) : line.durationSeconds!;
+        // The job already has hours that day: these join them.
+        const existing = lineOf(m, line.jobId, p.workDate, line.entryId);
+        if (existing) {
+          const added = addTo(
+            m,
+            existing,
+            spanned ? { startedAt: line.startedAt!, endedAt: line.endedAt!, note: line.note } : { seconds, note: line.note },
+          );
+          if (!added) continue;
+          s.aliases.set(line.entryId, added.id);
+          touchRecent(m, line.jobId);
+          m.notes = m.notes.map((n) => (line.noteIds.includes(n.id) ? { ...n, rolledIntoEntryId: added.id } : n));
+          continue;
+        }
+        if (seconds <= 0) continue;
         putEntry(m, {
           id: line.entryId,
           jobId: line.jobId,
@@ -434,6 +594,7 @@ function applyOne(s: State, op: Op): void {
           source: "note_rollup",
           status: "draft",
           durationSeconds: seconds,
+          untimedSeconds: spanned ? 0 : seconds,
           startedAt: spanned ? line.startedAt! : null,
           endedAt: spanned ? line.endedAt! : null,
           runningSince: null,
@@ -447,6 +608,72 @@ function applyOne(s: State, op: Op): void {
         touchRecent(m, line.jobId);
         m.notes = m.notes.map((n) => (line.noteIds.includes(n.id) ? { ...n, rolledIntoEntryId: line.entryId } : n));
       }
+      return;
+    }
+
+    case "entry.unmerge": {
+      const p = op.payload;
+      const e = findEntry(m, resolve(s, p.entryId));
+      if (!e || !isEditable(e.status)) return;
+      const untimed = e.untimedSeconds ?? 0;
+      const fromUntimed = Math.min(untimed, p.removeSeconds ?? 0);
+      const fromSegment =
+        p.removeSegment?.endedAt != null ? Math.round((p.removeSegment.endedAt - p.removeSegment.startedAt) / 1000) : 0;
+      const next: EntryView = {
+        ...e,
+        durationSeconds: Math.max(0, e.durationSeconds - fromUntimed - fromSegment),
+        untimedSeconds: untimed - fromUntimed,
+        segmentCount: p.removeSegment ? Math.max(0, e.segmentCount - 1) : e.segmentCount,
+      };
+      const note = cleanNote(p.note);
+      if (note !== undefined) next.note = note;
+      addToWeek(m, e.workDate, next.durationSeconds - e.durationSeconds);
+      putEntry(m, next);
+      if (p.releaseNoteIds?.length) {
+        const free = new Set(p.releaseNoteIds);
+        m.notes = m.notes.map((n) => (free.has(n.id) && n.rolledIntoEntryId === e.id ? { ...n, rolledIntoEntryId: null } : n));
+      }
+      return;
+    }
+
+    case "entry.combine": {
+      const p = op.payload;
+      const into = findEntry(m, resolve(s, p.intoEntryId));
+      if (!into) return;
+      const others: EntryView[] = [];
+      for (const id of new Set(p.entryIds.map((x) => resolve(s, x)))) {
+        if (id === into.id) continue;
+        const o = findEntry(m, id);
+        if (!o) return;
+        others.push(o);
+      }
+      if (others.length === 0) return;
+      const all = [into, ...others];
+      if (all.some((e) => e.jobId !== into.jobId || e.workDate !== into.workDate || e.status === "open" || !isEditable(e.status))) {
+        return;
+      }
+      const min = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : Math.min(a, b));
+      const max = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : Math.max(a, b));
+      let combined: EntryView = { ...into, untimedSeconds: into.untimedSeconds ?? 0 };
+      for (const o of others) {
+        combined = {
+          ...combined,
+          note: joinDescriptions(combined.note, o.note),
+          durationSeconds: combined.durationSeconds + o.durationSeconds,
+          untimedSeconds: (combined.untimedSeconds ?? 0) + (o.untimedSeconds ?? 0),
+          segmentCount: combined.segmentCount + o.segmentCount,
+          startedAt: min(combined.startedAt, o.startedAt),
+          endedAt: max(combined.endedAt, o.endedAt),
+          lastEndedAt: max(combined.lastEndedAt, o.lastEndedAt),
+        };
+      }
+      if (combined.durationSeconds > MAX_ENTRY_SECONDS || (combined.note && combined.note.length > NOTE_MAX_LENGTH)) return;
+      for (const o of others) {
+        m.entries = m.entries.filter((x) => x.id !== o.id);
+        m.notes = m.notes.map((n) => (n.rolledIntoEntryId === o.id ? { ...n, rolledIntoEntryId: into.id } : n));
+        s.aliases.set(o.id, into.id);
+      }
+      putEntry(m, combined);
       return;
     }
 

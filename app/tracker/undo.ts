@@ -1,6 +1,7 @@
 import { jobLabel } from "../../src/job-names.ts";
 import type { Op, OpPayload, OpType } from "../../src/ops-schema.ts";
-import { applyPending } from "../offline/reducer.ts";
+import { workDateOf } from "../../src/time.ts";
+import { applyPending, lineOf } from "../offline/reducer.ts";
 import type { DayModel, EntryView } from "./model.ts";
 
 /**
@@ -29,7 +30,9 @@ type Step = { type: OpType; payload: unknown };
 
 const step = <T extends OpType>(type: T, payload: OpPayload<T>): Step => ({ type, payload });
 
-function entryIn(m: DayModel, id: string): EntryView | undefined {
+function entryIn(m: DayModel, given: string): EntryView | undefined {
+  // An id whose time joined a line names that line.
+  const id = m.aliases?.[given] ?? given;
   return m.entries.find((e) => e.id === id) ?? (m.open?.id === id ? m.open : undefined);
 }
 
@@ -50,6 +53,20 @@ export function inverseOf(m: DayModel, op: Op, now: number): Undoable | null {
   switch (op.type) {
     case "timer.start": {
       const p = op.payload;
+      // The job already had hours today, so the timer continued that line:
+      // stopping it where it continued takes back only that (the empty
+      // segment goes), then whatever was running before runs on.
+      const line = lineOf(m, p.jobId, workDateOf(p.at, m.timezone), p.entryId);
+      if (line) {
+        if (m.open?.id === line.id) {
+          if (line.runningSince != null) return null;
+          return { label: "resuming the timer", ops: [step("timer.pause", { entryId: line.id, at: p.at })] };
+        }
+        const ops: Step[] = [step("timer.stop", { entryId: line.id, at: p.at })];
+        if (p.note?.trim()) ops.push(step("entry.update", { entryId: line.id, note: line.note }));
+        if (m.open) ops.push(...reopened(m.open));
+        return { label: m.open ? "switching jobs" : "starting the timer", ops };
+      }
       // Starting while another timer ran stopped it at the same instant; the
       // new one goes first, then the old one runs on as if never stopped.
       const ops: Step[] = [step("entry.delete", { entryId: p.entryId, at: now })];
@@ -87,8 +104,28 @@ export function inverseOf(m: DayModel, op: Op, now: number): Undoable | null {
       };
     }
 
-    case "entry.create":
-      return { label: "adding time", ops: [step("entry.delete", { entryId: op.payload.entryId, at: now })] };
+    case "entry.create": {
+      const p = op.payload;
+      const spanned = p.startedAt != null && p.endedAt != null;
+      const workDate = spanned ? workDateOf(p.startedAt!, m.timezone) : p.workDate!;
+      // Joined the job's hours that day: take back just what it added.
+      const line = lineOf(m, p.jobId, workDate, p.entryId);
+      if (line) {
+        return {
+          label: "adding time",
+          ops: [
+            step("entry.unmerge", {
+              entryId: line.id,
+              ...(spanned
+                ? { removeSegment: { startedAt: p.startedAt!, endedAt: p.endedAt! } }
+                : { removeSeconds: p.durationSeconds! }),
+              note: line.note,
+            }),
+          ],
+        };
+      }
+      return { label: "adding time", ops: [step("entry.delete", { entryId: p.entryId, at: now })] };
+    }
 
     case "entry.update": {
       const p = op.payload;
@@ -111,6 +148,8 @@ export function inverseOf(m: DayModel, op: Op, now: number): Undoable | null {
       } else if (hasTimes) {
         if (p.startedAt !== undefined && e.startedAt != null) back.startedAt = e.startedAt;
         if (p.endedAt !== undefined && e.endedAt != null) back.endedAt = e.endedAt;
+        // A line with both takes a duration as its total; put the total back.
+        if (p.durationSeconds !== undefined && (e.untimedSeconds ?? 0) > 0) back.durationSeconds = e.durationSeconds;
       } else {
         if (p.workDate !== undefined) back.workDate = e.workDate;
         if (p.durationSeconds !== undefined) back.durationSeconds = e.durationSeconds;
@@ -157,12 +196,32 @@ export function inverseOf(m: DayModel, op: Op, now: number): Undoable | null {
     case "note.restore":
       return { label: "restoring a note", ops: [step("note.delete", { noteId: op.payload.noteId, at: now })] };
 
-    case "rollup.commit":
-      // Deleting the hours frees their notes again (the server's rule).
+    case "rollup.commit": {
+      const p = op.payload;
       return {
         label: "turning notes into hours",
-        ops: op.payload.lines.map((line) => step("entry.delete", { entryId: line.entryId, at: now })),
+        ops: p.lines.map((line) => {
+          // Joined the job's hours that day: take back what was added, and
+          // hand the notes back.
+          const existing = lineOf(m, line.jobId, p.workDate, line.entryId);
+          if (existing) {
+            const spanned = line.startedAt != null && line.endedAt != null;
+            return step("entry.unmerge", {
+              entryId: existing.id,
+              ...(spanned
+                ? { removeSegment: { startedAt: line.startedAt!, endedAt: line.endedAt! } }
+                : line.durationSeconds
+                  ? { removeSeconds: line.durationSeconds }
+                  : {}),
+              note: existing.note,
+              releaseNoteIds: line.noteIds,
+            });
+          }
+          // New hours: deleting them frees their notes again (the server's rule).
+          return step("entry.delete", { entryId: line.entryId, at: now });
+        }),
       };
+    }
 
     case "day.submit":
       return { label: "submitting the day", ops: [step("day.unsubmit", { workDate: op.payload.workDate })] };
@@ -170,6 +229,9 @@ export function inverseOf(m: DayModel, op: Op, now: number): Undoable | null {
     case "day.unsubmit":
       return { label: "taking the day back", ops: [step("day.submit", { workDate: op.payload.workDate })] };
 
+    // Itself the undo of an add; and combining is deliberate, with no way back.
+    case "entry.unmerge":
+    case "entry.combine":
     case "duplicate.resolve":
     case "job.create":
       return null;

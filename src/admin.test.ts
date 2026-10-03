@@ -354,7 +354,8 @@ describe("approval", () => {
 
   test("deleted entries and entries of other people aren't selected by id", () => {
     const mine = worked(alice, acmeInstall, NINE, 60);
-    const gone = worked(alice, acmeInstall, NINE + HOUR, 60);
+    // Another day: the same job and day would be one line.
+    const gone = worked(alice, acmeInstall, NINE + 24 * HOUR, 60);
     ok(send(alice, "entry.delete", { entryId: gone, at: NINE }));
     const bobs = worked(bob, acmeInstall, NINE, 60);
     const result = approveEntries({ userId: alice, entryIds: [mine, gone, bobs], actorUserId: admin });

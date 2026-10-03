@@ -32,6 +32,12 @@ export interface EntryView {
   status: "open" | "draft" | "submitted" | "approved" | "synced" | "sync_failed";
   /** Closed time only; add the running segment's elapsed time for a live total. */
   durationSeconds: number;
+  /**
+   * Of that, time with no start and end: typed in as a duration, or notes
+   * turned into hours. A line can hold some of each (one line per job per day).
+   * A copy stored before this existed has none; read it as `?? 0`.
+   */
+  untimedSeconds?: number;
   /** First start / last end. Null for typed-in durations (and `endedAt` for open timers). */
   startedAt: number | null;
   endedAt: number | null;
@@ -98,6 +104,12 @@ export interface DayModel {
    * choice. Off, it's only a reminder.
    */
   notesHold: boolean;
+  /**
+   * Ids that stand for one of this day's lines: time a device sent as a new
+   * entry that the server added to the job's line instead. A queued op naming
+   * one lands on the line. Absent in copies stored before this existed.
+   */
+  aliases?: Record<string, string>;
   requireNoteOnStop: boolean;
   /**
    * Whether submitted time waits for an admin before it reaches the accounting
