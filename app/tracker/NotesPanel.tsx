@@ -12,23 +12,19 @@ import {
   Title,
   UnstyledButton,
 } from "@mantine/core";
-import { TimeInput } from "@mantine/dates";
 import { useMediaQuery } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useFetcher } from "react-router";
 
 import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import { joinNotes, proposeRollup, rollupProblems } from "../../src/rollup.ts";
 import {
-  addDays,
   formatClock,
   formatDurationHuman,
   formatDurationInput,
   formatWorkDate,
   parseDuration,
-  zonedTimeInput,
-  zonedTimeToInstant,
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { DurationInput } from "../components/duration-input.tsx";
@@ -43,18 +39,21 @@ import classes from "./notes.module.css";
  * Notes mode, by job. Adding a job to the day marks being on it from that
  * moment; notes then go under that job as the work happens. At the end of
  * the day each job's notes are turned into hours — one entry per job, its
- * notes as the description — and a day's notes must all be hours before the
- * next day can start.
+ * notes as the description. By default a day's notes must all be hours before
+ * the next day can start; a person can turn that hold off (it's offered in the
+ * alert itself), and then an unfinished day is only a reminder.
  *
  * In timer mode the panel only shows a day's leftover notes (from before a
  * switch), so they can still be turned into hours.
  */
 export function NotesPanel() {
-  const { model, hrefFor } = useTracker();
+  const { model, hrefFor, actingFor } = useTracker();
   const isToday = model.workDate === model.today;
   const notesMode = model.mode === "notes";
-  // An earlier day's notes come first; until they're hours, today takes none.
-  const heldBy = notesMode && isToday ? (model.notesToRollUp ?? null) : null;
+  // An earlier day's notes come first. With the hold on, today takes none until
+  // they're hours; with it off, it's a reminder.
+  const unfinished = notesMode && isToday ? (model.notesToRollUp ?? null) : null;
+  const heldBy = unfinished && model.notesHold ? unfinished : null;
   const canAdd = notesMode && isToday && !heldBy;
   const sections = useMemo(() => groupByJob(model.notes), [model.notes]);
   // The section whose note box should take the cursor next.
@@ -77,8 +76,23 @@ export function NotesPanel() {
               <Button component={Link} to={hrefFor(heldBy.date)} size="sm">
                 Go to {formatWorkDate(heldBy.date)}
               </Button>
+              {/* The setting is the person's own; an admin acting for them can't change it here. */}
+              {!actingFor && <StartAnyway />}
             </Group>
           </Stack>
+        </Alert>
+      )}
+      {unfinished && !heldBy && (
+        <Alert color="gray" variant="light">
+          <Group justify="space-between" gap="xs">
+            <Text size="sm">
+              {formatWorkDate(unfinished.date)} still has{" "}
+              {unfinished.count === 1 ? "a note" : `${unfinished.count} notes`} to turn into hours.
+            </Text>
+            <Button component={Link} to={hrefFor(unfinished.date)} size="compact-sm" variant="light">
+              Go to {formatWorkDate(unfinished.date)}
+            </Button>
+          </Group>
         </Alert>
       )}
       {canAdd && <AddJob sections={sections} onAdded={setFocusJob} />}
@@ -101,6 +115,36 @@ export function NotesPanel() {
               onFocused={clearFocus}
             />
           ))}
+    </Stack>
+  );
+}
+
+/**
+ * Turn the hold off from where it bites: today starts now, and from here on an
+ * unfinished day is a reminder rather than a wall. The Account page has the
+ * same switch, to turn it back on.
+ */
+function StartAnyway() {
+  const fetcher = useFetcher<{ ok: boolean; error?: string }>();
+  const busy = fetcher.state !== "idle";
+  return (
+    <Stack gap={2} align="flex-start">
+      <Button
+        size="sm"
+        variant="default"
+        loading={busy}
+        onClick={() => fetcher.submit({ intent: "notes-hold", hold: "0" }, { method: "post", action: "/account" })}
+      >
+        Start today anyway
+      </Button>
+      <Text size="xs" c="dimmed">
+        From now on, an unfinished day won't hold the next one. Change it back under Your account.
+      </Text>
+      {fetcher.data && !fetcher.data.ok && (
+        <Text size="xs" c="red" role="alert">
+          {fetcher.data.error ?? "That didn't save. Try again when you're online."}
+        </Text>
+      )}
     </Stack>
   );
 }
@@ -494,16 +538,14 @@ function HoursDialog({
   const date = model.workDate;
   const isToday = date === model.today;
   const { name: title } = jobPath(jobName);
-  const [endTime, setEndTime] = useState("");
+  // When the dialog opened: where today's last run is taken to end.
+  const [openedAt, setOpenedAt] = useState(0);
   const [duration, setDuration] = useState("");
   const [touched, setTouched] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // This job runs to the end of the day when the day's last note is one of its pending ones.
-  const lastNote = model.notes.at(-1);
-  const runsToEnd = lastNote != null && lastNote.jobId === jobId && lastNote.rolledIntoEntryId == null;
   const lastAt = model.notes.length ? Math.max(...model.notes.map((n) => n.at)) : 0;
 
   // Fresh each time it opens — and only then. Read through refs: the model is
@@ -512,21 +554,17 @@ function HoursDialog({
   pendingRef.current = pending;
   useEffect(() => {
     if (!opened) return;
-    const suggestedEnd = isToday ? Math.max(Date.now(), lastAt) : lastAt + 3600_000;
-    const roundedEnd = Math.ceil(suggestedEnd / 300_000) * 300_000;
-    setEndTime(zonedTimeInput(roundedEnd, tz));
+    setOpenedAt(Date.now());
     setNote(joinNotes(pendingRef.current.map((n) => n.text)));
     setTouched(false);
     setError(null);
     setBusy(false);
-  }, [opened, isToday, tz, lastAt]);
+  }, [opened]);
 
-  // The end of the day, from the field (a time before the last note means after midnight).
-  const endAt = useMemo(() => {
-    if (!endTime) return lastAt;
-    const at = zonedTimeToInstant(date, endTime, tz);
-    return at <= lastAt ? zonedTimeToInstant(addDays(date, 1), endTime, tz) : at;
-  }, [endTime, date, tz, lastAt]);
+  // Where the day's last run ends: now, today; on an earlier day, its last note
+  // — the notes say no more than that, and the person corrects the total. (A
+  // "worked until" field used to ask; it confused more than it helped.)
+  const endAt = isToday ? Math.max(openedAt, lastAt) : lastAt;
 
   // This job's runs, over the whole day's notes; only their pending part counts.
   const spans = useMemo(() => {
@@ -596,9 +634,6 @@ function HoursDialog({
                 .join(" and ")}
           {spans.length > 0 ? `: ${formatDurationHuman(suggested)}` : ""}. Change it if that's not right.
         </Text>
-        {runsToEnd && (
-          <TimeInput label="Worked until" value={endTime} onChange={(e) => setEndTime(e.currentTarget.value)} />
-        )}
         <DurationInput
           label="Time worked"
           value={duration}

@@ -570,6 +570,16 @@ const migrations: Migration[] = [
         );
     `,
   },
+  {
+    name: "010_notes_hold",
+    sql: `
+        -- Notes mode: whether an earlier day's notes, not yet turned into
+        -- hours, hold the next day's notes back. Each person's own choice;
+        -- on (1) is how it has always worked.
+        ALTER TABLE users ADD COLUMN notes_hold_next_day INTEGER NOT NULL DEFAULT 1
+          CHECK (notes_hold_next_day IN (0, 1));
+    `,
+  },
 ];
 
 /**

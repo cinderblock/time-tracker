@@ -73,7 +73,8 @@ export function loadDay(userId: number, workDate: string): DayModel {
 
   const open = getOpenEntry(userId);
   const todayDate = today(config.timezone);
-  const mode = getUser(userId)?.trackingMode ?? DEFAULT_TRACKING_MODE;
+  const person = getUser(userId);
+  const mode = person?.trackingMode ?? DEFAULT_TRACKING_MODE;
 
   // The week containing the shown date, starting on the organisation's first weekday.
   const weekStart = weekStartOf(workDate, weekStartsOn());
@@ -95,6 +96,7 @@ export function loadDay(userId: number, workDate: string): DayModel {
     timezone: config.timezone,
     mode,
     notesToRollUp: mode === "notes" ? pendingNotesBefore(userId, workDate) : null,
+    notesHold: person?.notesHoldNextDay ?? true,
     requireNoteOnStop: requireNoteOnStop(),
     requireApproval: requireApproval(),
     unsubmittedDays: unsubmittedDatesBefore(userId, workDate),

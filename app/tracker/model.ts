@@ -90,9 +90,14 @@ export interface DayModel {
   mode: TrackingMode;
   /**
    * In notes mode: the latest earlier day whose notes haven't been turned into
-   * time. Until that's done, this day can't take notes.
+   * time. While `notesHold` is on, this day can't take notes until that's done.
    */
   notesToRollUp: { date: string; count: number } | null;
+  /**
+   * Whether an unfinished earlier day holds this one back — the person's own
+   * choice. Off, it's only a reminder.
+   */
+  notesHold: boolean;
   requireNoteOnStop: boolean;
   /**
    * Whether submitted time waits for an admin before it reaches the accounting

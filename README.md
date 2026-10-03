@@ -35,8 +35,11 @@ repository. All of that is deployment configuration or an admin setting.
     when you move to one). Tap a note to correct it or
     move it to another job. At the end of the day (or the next morning) each
     job's notes become hours: the timeline suggests them, you confirm, and one
-    entry per job carries the notes as its description. A day's notes have to
-    become hours before the next day's can start.
+    entry per job carries the notes as its description. By default a day's
+    notes have to become hours before the next day's can start; anyone who'd
+    rather finish old notes later turns that off (it's offered right where it
+    holds them, and on the Account page), and an unfinished day is then just a
+    reminder.
   - *Manual entry*, either way — a start and end time (overnight shifts included)
     or just a duration, on any past day. A duration is one field, written the way
     it's said: `1:30`, `1.5` or `90m` all mean an hour and a half, and the field

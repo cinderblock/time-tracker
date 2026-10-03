@@ -7,7 +7,7 @@ import { removeCredential, renameCredential } from "../../src/credentials.ts";
 import { revokeAllSessions, revokeSession } from "../../src/sessions.ts";
 import { NAME_MAX_LENGTH } from "../../src/limits.ts";
 import type { TrackingMode } from "../../src/tracking-mode.ts";
-import { renameUser, setTrackingMode } from "../../src/users.ts";
+import { renameUser, setNotesHoldNextDay, setTrackingMode } from "../../src/users.ts";
 import { handleForm, intField, stringField } from "../actions.server.ts";
 import { requireUser } from "../auth.server.ts";
 import { PasskeyList, SessionList } from "../components/credential-lists.tsx";
@@ -28,6 +28,7 @@ export function loader({ request, context }: Route.LoaderArgs) {
     name: user.name,
     role: user.role,
     trackingMode: user.trackingMode,
+    notesHold: user.notesHoldNextDay,
     passkeys: passkeyViews(user.id),
     sessions: sessionViews(user.id, session.id),
     notifications: notificationsView(user.id),
@@ -54,6 +55,15 @@ export async function action({ request, context }: Route.ActionArgs) {
         message: user.trackingMode === "notes" ? "You'll jot notes and turn them into time." : "You'll use timers.",
       };
     },
+    "notes-hold": (form) => {
+      const user = setNotesHoldNextDay({ ...self, hold: stringField(form, "hold") === "1" });
+      return {
+        ok: true,
+        message: user.notesHoldNextDay
+          ? "A day's notes will need to be hours before the next day starts."
+          : "An unfinished day won't hold the next one back.",
+      };
+    },
     "rename-passkey": (form) => {
       renameCredential({ ...self, id: intField(form, "credentialId"), nickname: stringField(form, "nickname") });
       return { ok: true, message: "Passkey renamed." };
@@ -74,7 +84,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 }
 
 export default function Account({ loaderData }: Route.ComponentProps) {
-  const { userId, name, role, trackingMode, passkeys, sessions, notifications } = loaderData;
+  const { userId, name, role, trackingMode, notesHold, passkeys, sessions, notifications } = loaderData;
 
   return (
     <Stack gap="xl" maw={640}>
@@ -85,7 +95,7 @@ export default function Account({ loaderData }: Route.ComponentProps) {
 
       <RenameSelf name={name} />
 
-      <TrackingModeSetting mode={trackingMode} />
+      <TrackingModeSetting mode={trackingMode} notesHold={notesHold} />
 
       <NotificationSettings view={notifications} isAdmin={role === "admin"} />
 
@@ -146,9 +156,13 @@ function RenameSelf({ name }: { name: string }) {
 }
 
 /** Timers or notes: the person's own choice, kept with the account so every device agrees. */
-function TrackingModeSetting({ mode }: { mode: TrackingMode }) {
+function TrackingModeSetting({ mode, notesHold }: { mode: TrackingMode; notesHold: boolean }) {
   const fetcher = useFetcher();
   useActionFeedback(fetcher.data);
+  const hold = useFetcher();
+  useActionFeedback(hold.data);
+  const [holdOn, setHoldOn] = useState(notesHold);
+  useEffect(() => setHoldOn(notesHold), [notesHold]);
   const busy = fetcher.state !== "idle";
   // Shows the choice the moment it's made; the server's answer follows.
   const [value, setValue] = useState<string>(mode);
@@ -174,11 +188,25 @@ function TrackingModeSetting({ mode }: { mode: TrackingMode }) {
           <Radio
             value="notes"
             label="Notes through the day"
-            description="Add the job you're on and jot what you do under it as you go. At the end of the day, turn each job's notes into hours — the next day waits until you have."
+            description="Add the job you're on and jot what you do under it as you go. At the end of the day, turn each job's notes into hours."
             disabled={busy}
           />
         </Stack>
       </Radio.Group>
+      {value === "notes" && (
+        <Switch
+          mt="md"
+          label="Finish a day's notes before starting the next"
+          description="On: a new day takes no notes until the last one's are hours. Off: an unfinished day is just a reminder."
+          checked={holdOn}
+          disabled={hold.state !== "idle"}
+          onChange={(e) => {
+            const next = e.currentTarget.checked;
+            setHoldOn(next);
+            hold.submit({ intent: "notes-hold", hold: next ? "1" : "0" }, { method: "post" });
+          }}
+        />
+      )}
     </Card>
   );
 }

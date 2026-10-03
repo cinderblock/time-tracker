@@ -61,8 +61,9 @@ export function DayHeader() {
   const { model, hrefFor } = useTracker();
   const { workDate, today } = model;
   const isToday = workDate === today;
-  // In notes mode a day's notes have to become time before moving on from it.
-  const heldHere = model.mode === "notes" && model.notes.some((n) => !n.rolledIntoEntryId);
+  // In notes mode a day's notes have to become time before moving on from it —
+  // unless the person has turned that hold off.
+  const heldHere = model.mode === "notes" && model.notesHold && model.notes.some((n) => !n.rolledIntoEntryId);
   const weekStart = model.week[0]?.date ?? workDate;
   const steps = daySteps({ workDate, today, weekStart, heldHere });
   const moveTo = (date: string) => moveBetween(workDate, date, weekStart);

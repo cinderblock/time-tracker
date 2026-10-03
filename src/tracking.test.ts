@@ -10,7 +10,7 @@ import type { OpPayload, OpResult, OpType } from "./ops-schema.ts";
 import { proposeRollup, rollupProblems } from "./rollup.ts";
 import { setRequireNoteOnStop } from "./settings.ts";
 import { freshDb } from "./testing/db.ts";
-import { createUser, setTrackingMode } from "./users.ts";
+import { createUser, getUser, setNotesHoldNextDay, setTrackingMode } from "./users.ts";
 import { uuidv7, uuidv7Time } from "./uuid.ts";
 
 const MIN = 60_000;
@@ -769,6 +769,29 @@ describe("notes and rollup", () => {
       }),
     );
     expect(loadDay(userId, TODAY).notesToRollUp).toEqual({ date: "2026-09-12", count: 1 });
+  });
+
+  test("the hold is the person's own choice: on by default, off on request, and audited", () => {
+    ok(send("note.create", { noteId: uuidv7(), at: NINE - 24 * HOUR, text: "Framing", jobId: jobA }));
+    setTrackingMode({ userId, mode: "notes", actorUserId: userId });
+    expect(getUser(userId)!.notesHoldNextDay).toBe(true);
+    expect(loadDay(userId, TODAY)).toMatchObject({ notesHold: true, notesToRollUp: { date: "2026-09-15", count: 1 } });
+
+    setNotesHoldNextDay({ userId, hold: false, actorUserId: userId });
+    // Still told about the unfinished day — only no longer held by it.
+    expect(loadDay(userId, TODAY)).toMatchObject({ notesHold: false, notesToRollUp: { date: "2026-09-15", count: 1 } });
+    // And a note on today is taken, as it always was by the server.
+    ok(send("note.create", { noteId: uuidv7(), at: NINE, text: "Today anyway", jobId: jobA }));
+
+    const changes = db()
+      .query<{ after_json: string }, [string]>(
+        "SELECT after_json FROM audit_log WHERE entity = 'user' AND entity_id = ? AND action = 'notes_hold_next_day'",
+      )
+      .all(String(userId));
+    expect(changes.map((c) => JSON.parse(c.after_json))).toEqual([{ notesHoldNextDay: false }]);
+    // Asking for what's already set changes nothing.
+    setNotesHoldNextDay({ userId, hold: false, actorUserId: userId });
+    expect(db().query("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'notes_hold_next_day'").get()).toEqual({ n: 1 });
   });
 
   test("notes from another day, or someone else's, can't be committed", () => {

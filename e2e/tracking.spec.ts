@@ -608,10 +608,12 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   await expect(bravo.getByText("added to time")).toHaveCount(3);
   await expect(bravo.getByRole("button", { name: /^Turn .*into hours/ })).toHaveCount(0);
 
-  // Alpha runs to the end of the day, so it asks when that was.
+  // Alpha runs to the end of the day: its last run is taken to end now, and
+  // the time worked is the person's to correct — no "worked until" to ask.
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
   const alphaDialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
-  await expect(alphaDialog.getByLabel("Worked until")).toBeVisible();
+  await expect(alphaDialog.getByText(/Alpha Site ran .* – /)).toBeVisible();
+  await expect(alphaDialog.getByLabel("Worked until")).toHaveCount(0);
   await alphaDialog.getByLabel("Time worked").fill("45m");
   await alphaDialog.getByRole("button", { name: "Add 45m to Alpha Site" }).click();
   await expect(alphaDialog).toBeHidden();
@@ -646,7 +648,7 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
 
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
   const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
-  await expect(dialog.getByLabel("Worked until")).toBeVisible();
+  await expect(dialog.getByLabel("Worked until")).toHaveCount(0);
   await dialog.getByLabel("Time worked").fill("1");
   await dialog.getByRole("button", { name: "Add 1h to Alpha Site" }).click();
   await expect(dialog).toBeHidden();
@@ -655,6 +657,44 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
   await page.getByRole("link", { name: "Next day" }).click();
   await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
   await expect(page.getByPlaceholder("Add a job for today — type to search")).toBeVisible();
+});
+
+test("someone who'd rather finish old notes later can turn the hold off where it bites, and back on", async () => {
+  const at = Date.now() - 86_400_000;
+  const yesterday = new Date(at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+  const leftover = uuidv7();
+  await send(ctx.request, "note.create", { noteId: leftover, at, text: "Still to sort out" });
+
+  await page.goto("/");
+  const held = page.getByRole("alert").filter({ hasText: "isn't finished" });
+  await expect(held).toBeVisible();
+  const shots = process.env.E2E_SCREENSHOTS;
+  if (shots) await page.screenshot({ path: `${shots}/notes-held.png`, fullPage: true });
+  await held.getByRole("button", { name: "Start today anyway" }).click();
+
+  // Today takes jobs; the unfinished day is a reminder now, not a wall.
+  await expect(held).toHaveCount(0);
+  await expect(page.getByPlaceholder("Add a job for today — type to search")).toBeVisible();
+  const reminder = page.getByText(/still has a note to turn into hours/);
+  await expect(reminder).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/notes-reminder.png`, fullPage: true });
+  await page.getByRole("link", { name: /^Go to / }).click();
+  await expect(page).toHaveURL(new RegExp(`/day/${yesterday}$`));
+  // Moving on from it isn't held either.
+  await expect(page.getByText("Turn this day's notes into hours to move on.")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Next day" })).toBeVisible();
+
+  // The Account page has the same switch, to turn the hold back on.
+  await page.goto("/account");
+  const hold = page.getByLabel("Finish a day's notes before starting the next");
+  await expect(hold).not.toBeChecked();
+  await hold.check({ force: true });
+  await expect(page.getByText("A day's notes will need to be hours before the next day starts.")).toBeVisible();
+  await page.goto("/");
+  await expect(page.getByRole("alert").filter({ hasText: "isn't finished" })).toBeVisible();
+
+  // Leave the day as it was for what follows.
+  await send(ctx.request, "note.delete", { noteId: leftover, at: Date.now() });
 });
 
 /**

@@ -15,6 +15,11 @@ export interface User {
   webauthnUserId: string;
   /** How they record time (src/tracking-mode.ts). Their own choice. */
   trackingMode: TrackingMode;
+  /**
+   * Notes mode: whether an earlier day's unfinished notes hold the next day's
+   * back. Their own choice; on by default.
+   */
+  notesHoldNextDay: boolean;
   active: boolean;
   createdAt: number;
   updatedAt: number;
@@ -28,13 +33,14 @@ interface UserRow {
   category_id: number | null;
   webauthn_user_id: string;
   tracking_mode: TrackingMode;
+  notes_hold_next_day: number;
   active: number;
   created_at: number;
   updated_at: number;
 }
 
 const COLUMNS =
-  "id, name, email, role, category_id, webauthn_user_id, tracking_mode, active, created_at, updated_at";
+  "id, name, email, role, category_id, webauthn_user_id, tracking_mode, notes_hold_next_day, active, created_at, updated_at";
 
 function toUser(r: UserRow): User {
   return {
@@ -45,6 +51,7 @@ function toUser(r: UserRow): User {
     categoryId: r.category_id,
     webauthnUserId: r.webauthn_user_id,
     trackingMode: r.tracking_mode,
+    notesHoldNextDay: r.notes_hold_next_day === 1,
     active: r.active === 1,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -171,6 +178,27 @@ export function setTrackingMode(args: { userId: number; mode: unknown; actorUser
     action: "tracking_mode",
     before: { trackingMode: user.trackingMode },
     after: { trackingMode: args.mode },
+  });
+  return mustGet(user.id);
+}
+
+/**
+ * Whether an unfinished day's notes hold the next day back. Their own choice:
+ * some people would rather finish old notes when they get to them.
+ */
+export function setNotesHoldNextDay(args: { userId: number; hold: boolean; actorUserId: number }): User {
+  const user = mustGet(args.userId);
+  if (args.hold === user.notesHoldNextDay) return user;
+  db()
+    .query("UPDATE users SET notes_hold_next_day = ?, updated_at = ? WHERE id = ?")
+    .run(args.hold ? 1 : 0, Date.now(), user.id);
+  audit({
+    actorUserId: args.actorUserId,
+    entity: "user",
+    entityId: user.id,
+    action: "notes_hold_next_day",
+    before: { notesHoldNextDay: user.notesHoldNextDay },
+    after: { notesHoldNextDay: args.hold },
   });
   return mustGet(user.id);
 }
