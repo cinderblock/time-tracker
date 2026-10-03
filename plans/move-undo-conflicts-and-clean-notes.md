@@ -171,8 +171,13 @@ Six things from one round of use (2026-10-02):
   (23 new: content-matched lost answers, the clean-note amendment,
   `timer.reopen` on both sides, note un-rolling, `moveBetween`, every undo
   inverse round-tripped through the server); 73 e2e across the four app
-  instances. Committed. Not deployed: the deploy carries migration 008,
-  which amends every record already in QuickBooks — see the private plan.
+  instances. Committed as `578e8fe`.
+- 2026-10-02 — **Deployed** `578e8fe`. The image's revision label was checked
+  against the commit from the registry before it was pinned; the container
+  came up healthy on that digest and applied migration 008 at start. The
+  clean-note amendment went through on the first passes: every record
+  already sent was amended, the ones changed in the accounting system
+  meanwhile through the existing fetch-then-amend path, none refused.
 
 ## Open questions for the user
 
