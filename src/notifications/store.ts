@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { audit } from "../audit.ts";
 import { config } from "../config.server.ts";
 import { db } from "../db.server.ts";
+import { describeUserAgent } from "../user-agent.ts";
 import { UserInputError } from "../users.ts";
 import type { Kind, LogEntry, SentLog } from "./rules.ts";
 
@@ -82,34 +83,6 @@ export function parseBrowserSubscription(value: unknown): BrowserSubscription {
   return { endpoint, keys: { p256dh, auth } };
 }
 
-/** "Chrome on Android" — enough to tell a person's devices apart. */
-export function deviceLabel(userAgent: string | null): string {
-  const ua = userAgent ?? "";
-  const browser = /Edg\//.test(ua)
-    ? "Edge"
-    : /Firefox\//.test(ua)
-      ? "Firefox"
-      : /Chrome\//.test(ua)
-        ? "Chrome"
-        : /Safari\//.test(ua)
-          ? "Safari"
-          : "A browser";
-  const os = /iPhone/.test(ua)
-    ? "iPhone"
-    : /iPad/.test(ua)
-      ? "iPad"
-      : /Android/.test(ua)
-        ? "Android"
-        : /Windows/.test(ua)
-          ? "Windows"
-          : /Mac OS X|Macintosh/.test(ua)
-            ? "Mac"
-            : /Linux/.test(ua)
-              ? "Linux"
-              : null;
-  return os ? `${browser} on ${os}` : browser;
-}
-
 /**
  * Turn notifications on for one browser. Re-subscribing the same browser
  * (same endpoint) takes it over: it now belongs to whoever is signed in there.
@@ -123,7 +96,7 @@ export function addSubscription(args: {
 }): Subscription {
   const now = args.now ?? Date.now();
   const { endpoint, keys } = args.subscription;
-  const label = deviceLabel(args.userAgent);
+  const label = describeUserAgent(args.userAgent);
   const row = db()
     .query<SubscriptionRow, [number, string, string, string, string, string, number]>(
       `INSERT INTO push_subscriptions (user_id, session_id, endpoint, p256dh, auth, label, created_at)

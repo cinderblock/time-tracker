@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
+
+import webpush from "web-push";
 
 import { ensureBootstrapLink } from "./bootstrap.ts";
-import { publicOrigin } from "./config.server.ts";
+import { publicOrigin, vapidKeys } from "./config.server.ts";
 import { formatRelative } from "./format.ts";
 import { findUsableRegistration } from "./registrations.ts";
 import { safeRedirectPath } from "./safe-redirect.ts";
@@ -70,6 +73,31 @@ describe("configuration at startup", () => {
     const run = load({ PUBLIC_BASE_URL: "https://time.example.com/" });
     expect(run.code).not.toBe(0);
     expect(run.stderr).toContain("PUBLIC_BASE_URL must be just the origin");
+  });
+});
+
+describe("vapidKeys", () => {
+  // A pair as `bunx web-push generate-vapid-keys` makes them.
+  const pair = webpush.generateVAPIDKeys();
+
+  test("the public key is derived from the private one", () => {
+    expect(vapidKeys(undefined, pair.privateKey)).toEqual(pair);
+    expect(vapidKeys(pair.publicKey, pair.privateKey)).toEqual(pair);
+  });
+
+  test("a generated 43-character secret is a key, read canonically", () => {
+    const generated = randomBytes(33).toString("base64url").slice(0, 43);
+    const keys = vapidKeys(undefined, generated);
+    expect(keys).toMatchObject({ privateKey: Buffer.from(generated, "base64url").toString("base64url") });
+    expect((keys as { publicKey: string }).publicKey).toHaveLength(87);
+  });
+
+  test("nothing set is off; anything unusable says why", () => {
+    expect(vapidKeys(undefined, undefined)).toBeNull();
+    expect(vapidKeys(pair.publicKey, undefined)).toEqual({ problem: expect.stringContaining("without VAPID_PRIVATE_KEY") });
+    expect(vapidKeys(undefined, "short")).toEqual({ problem: expect.stringContaining("32 bytes") });
+    const other = webpush.generateVAPIDKeys();
+    expect(vapidKeys(other.publicKey, pair.privateKey)).toEqual({ problem: expect.stringContaining("doesn't belong") });
   });
 });
 

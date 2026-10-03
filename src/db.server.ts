@@ -521,7 +521,7 @@ const migrations: Migration[] = [
           endpoint      TEXT NOT NULL UNIQUE,
           p256dh        TEXT NOT NULL,
           auth          TEXT NOT NULL,
-          -- "Chrome on Android", from the user agent, for the device list.
+          -- "Android phone · Chrome", from the user agent, for the device list.
           label         TEXT NOT NULL,
           created_at    INTEGER NOT NULL,
           last_sent_at  INTEGER,

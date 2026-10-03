@@ -226,7 +226,7 @@ annotated list. The ones worth calling out:
 | `QBWC_USERNAME`, `QBWC_PASSWORD` | For `qb-webconnector`: what the Web Connector signs in with. The password is typed into the Web Connector once. |
 | `APP_NAME`, `APP_SHORT_NAME`, `APP_THEME_COLOR` | The name and colour until an admin sets them under Settings (they drive the UI theme and the generated PWA manifest). |
 | `APP_CURRENCY` | ISO 4217 code rates and costs are shown in (default `USD`). Display only. |
-| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Turn on notifications (`bunx web-push generate-vapid-keys`). Optional: without both, nothing is sent and the account page says so. Keep the pair for good — a new pair silently orphans every device that turned notifications on. |
+| `VAPID_PRIVATE_KEY` | Turns on notifications: 32 random bytes, base64url (`openssl rand -base64 33 \| tr '+/' '-_' \| head -c 43`, or the private half of `bunx web-push generate-vapid-keys`). The public key is derived from it; `VAPID_PUBLIC_KEY` may be given too, but must match. Optional: without it nothing is sent and the account page says so. Keep it for good — a new key silently orphans every device that turned notifications on. |
 | `VAPID_SUBJECT` | Who push services contact about this sender, a `mailto:` or `https:` URL — they refuse anything else. Defaults to `PUBLIC_BASE_URL` when that is https, so no one's address goes to them; on a plain-http address set it, or push stays off (the startup log says so). |
 | `NOTIFY_EVERY_SECONDS` | How often reminders and alerts are checked for (default 60). `0` stops them; test notifications still send. |
 

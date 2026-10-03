@@ -52,7 +52,7 @@ export const e2eEnv = {
   DATABASE_PATH: process.env.E2E_DATABASE_PATH,
   APP_NAME: "E2E Time",
   ACCOUNTING_BACKEND: "none",
-  VAPID_PUBLIC_KEY: process.env.E2E_VAPID_PUBLIC_KEY,
+  // The private key alone, as a deployment gives it: the public key is derived.
   VAPID_PRIVATE_KEY: process.env.E2E_VAPID_PRIVATE_KEY,
   // The site address is http here, which push services won't take as a contact.
   VAPID_SUBJECT: "mailto:push-e2e@example.invalid",

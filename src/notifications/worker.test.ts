@@ -12,7 +12,6 @@ import { fakeSender } from "./send.ts";
 import {
   actionToken,
   addSubscription,
-  deviceLabel,
   isDayOff,
   liveSubscriptions,
   parseBrowserSubscription,
@@ -68,14 +67,6 @@ describe("subscriptions", () => {
     expect(() => parseBrowserSubscription({ endpoint: browser(1).endpoint, keys: { p256dh: "a b", auth: "x" } })).toThrow();
   });
 
-  test("devices are labelled from the user agent", () => {
-    expect(deviceLabel(ANDROID)).toBe("Chrome on Android");
-    expect(deviceLabel("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1")).toBe(
-      "Safari on iPhone",
-    );
-    expect(deviceLabel(null)).toBe("A browser");
-  });
-
   test("signing the device out stops its notifications", async () => {
     subscribeAlice();
     expect(liveSubscriptions(alice, NINE_AM)).toHaveLength(1);
@@ -98,7 +89,7 @@ describe("subscriptions", () => {
   test("the keys stay out of the audit log", () => {
     subscribeAlice();
     const logged = db().query<{ j: string | null }, []>("SELECT after_json AS j FROM audit_log WHERE entity = 'push_subscription'").all();
-    expect(logged.map((r) => r.j)).toEqual([JSON.stringify({ label: "Chrome on Android" })]);
+    expect(logged.map((r) => r.j)).toEqual([JSON.stringify({ label: "Android phone · Chrome" })]);
   });
 });
 

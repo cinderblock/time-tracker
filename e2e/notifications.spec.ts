@@ -136,7 +136,7 @@ test("a device is registered, and a test reaches it, signed and encrypted", asyn
 
   await page.reload();
   await expect(devices()).toHaveCount(1);
-  await expect(devices().first()).toContainText("Chrome on Windows");
+  await expect(devices().first()).toContainText("Windows PC · Chrome");
 
   await devices().first().getByRole("button", { name: "Test" }).click();
   await expect(page.getByText("Sent. It should appear in a few seconds.")).toBeVisible();
@@ -150,7 +150,7 @@ test("a device is registered, and a test reaches it, signed and encrypted", asyn
   expect(message!.headers.urgency).toBe("high");
   expect(message!.headers.topic).toBe("tt-test");
   expect(message!.headers.authorization).toMatch(/^vapid t=/);
-  expect(message!.headers.authorization).toContain(`k=${e2eEnv.VAPID_PUBLIC_KEY}`);
+  expect(message!.headers.authorization).toContain(`k=${process.env.E2E_VAPID_PUBLIC_KEY}`);
 
   const payload = decrypt(message!);
   expect(payload).toMatchObject({
@@ -228,7 +228,7 @@ test("screenshots of the Notifications section", async () => {
 test("a device the push service says is gone is forgotten", async () => {
   await page.request.post(`${fakePushUrl}/__test/gone`, { data: { name: "nora" }, ignoreHTTPSErrors: true });
   await devices().first().getByRole("button", { name: "Test" }).click();
-  await expect(page.getByText(/The push service didn't take it: Chrome on Windows: 410/)).toBeVisible();
+  await expect(page.getByText(/The push service didn't take it: Windows PC · Chrome: 410/)).toBeVisible();
   await page.reload();
   await expect(devices()).toHaveCount(0);
 });

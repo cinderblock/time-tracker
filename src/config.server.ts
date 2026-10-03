@@ -1,3 +1,5 @@
+import { createECDH } from "node:crypto";
+
 /**
  * Runtime configuration, read once from the environment.
  *
@@ -60,6 +62,36 @@ export function publicOrigin(raw: string): string {
 function vapidSubject(raw: string): string | null {
   return /^(https:\/\/|mailto:)\S+$/.test(raw) ? raw : null;
 }
+
+/**
+ * The VAPID key pair, from the private key alone if need be: the public key is
+ * derived from it, so a deployment can generate one random 32-byte secret and
+ * nothing else. A public key given alongside must be the private key's own —
+ * a mismatched pair is refused every message by every push service.
+ */
+export function vapidKeys(
+  publicRaw: string | undefined,
+  privateRaw: string | undefined,
+): { publicKey: string; privateKey: string } | { problem: string } | null {
+  if (!privateRaw) return publicRaw ? { problem: "VAPID_PUBLIC_KEY is set without VAPID_PRIVATE_KEY" } : null;
+  const secret = Buffer.from(privateRaw, "base64url");
+  if (secret.length !== 32) return { problem: "VAPID_PRIVATE_KEY must be 32 bytes, base64url-encoded" };
+  let derived: string;
+  try {
+    const ecdh = createECDH("prime256v1");
+    ecdh.setPrivateKey(secret);
+    derived = ecdh.getPublicKey("base64url");
+  } catch {
+    return { problem: "VAPID_PRIVATE_KEY isn't a valid P-256 private key" };
+  }
+  if (publicRaw && publicRaw !== derived) {
+    return { problem: "VAPID_PUBLIC_KEY doesn't belong to VAPID_PRIVATE_KEY (leave it unset; it's derived)" };
+  }
+  // Re-encoded, so a generated value with spare trailing bits reads canonically.
+  return { publicKey: derived, privateKey: secret.toString("base64url") };
+}
+
+const vapid = vapidKeys(process.env.VAPID_PUBLIC_KEY || undefined, process.env.VAPID_PRIVATE_KEY || undefined);
 
 function currencyCode(raw: string): string {
   const code = raw.trim().toUpperCase();
@@ -126,10 +158,12 @@ export const config = {
   },
 
   push: {
-    // Web Push (VAPID). Optional and fail-soft: with either key unset, push is
+    // Web Push (VAPID). Optional and fail-soft: with no usable key, push is
     // disabled — the account page says so and the server never sends.
-    vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
-    vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || null,
+    vapidPublicKey: vapid && "publicKey" in vapid ? vapid.publicKey : null,
+    vapidPrivateKey: vapid && "privateKey" in vapid ? vapid.privateKey : null,
+    /** Why the keys given can't be used, for the startup log. */
+    vapidProblem: vapid && "problem" in vapid ? vapid.problem : null,
     /**
      * Who push services contact about this sender: a mailto: or https: URL
      * (anything else, and they refuse every message). Defaults to the site's
@@ -169,13 +203,13 @@ export function describeConfig(): string {
   const p = config.push;
   lines.push(
     `  web push            ${
-      p.vapidPublicKey && p.vapidPrivateKey && !p.vapidSubject
-        ? "OFF — VAPID_SUBJECT must be an https: or mailto: URL (PUBLIC_BASE_URL is used when it is https)"
-        : p.vapidPublicKey && p.vapidPrivateKey
-        ? `on, reminders ${p.checkEverySeconds ? `checked every ${p.checkEverySeconds}s` : "off"}`
-        : p.vapidPublicKey || p.vapidPrivateKey
-          ? "OFF — only one of VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY is set"
-          : "off (no VAPID keys)"
+      p.vapidProblem
+        ? `OFF — ${p.vapidProblem}`
+        : !p.vapidPrivateKey
+          ? "off (no VAPID_PRIVATE_KEY)"
+          : !p.vapidSubject
+            ? "OFF — VAPID_SUBJECT must be an https: or mailto: URL (PUBLIC_BASE_URL is used when it is https)"
+            : `on, reminders ${p.checkEverySeconds ? `checked every ${p.checkEverySeconds}s` : "off"}`
     }`,
   );
   return lines.join("\n");
