@@ -3,12 +3,14 @@ import type { MiddlewareFunction } from "react-router";
 import { ensureBootstrapLink } from "../src/bootstrap.ts";
 import { describeConfig } from "../src/config.server.ts";
 import { initDb } from "../src/db.server.ts";
+import { startNotificationWorker } from "../src/notifications/worker.ts";
 import { startSyncWorker } from "../src/sync-worker.ts";
 
 /**
  * One-shot startup: log the settings, open (and migrate) the database, print
- * the first-run setup link if no admin exists yet, and start sending time to
- * the accounting system if one is connected.
+ * the first-run setup link if no admin exists yet, start sending time to the
+ * accounting system if one is connected, and start the reminder loop if Web
+ * Push is configured.
  *
  * There is no "server started" hook in a React Router app, so this runs from
  * the first middleware on the first request — which the image's health check
@@ -26,6 +28,7 @@ export function ensureServerInit(): void {
   initDb();
   ensureBootstrapLink();
   startSyncWorker();
+  startNotificationWorker();
   g[KEY] = true;
 }
 

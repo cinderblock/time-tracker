@@ -507,6 +507,69 @@ const migrations: Migration[] = [
          WHERE remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL AND deleted_at IS NULL AND status = 'synced';
     `,
   },
+  {
+    name: "009_notifications",
+    sql: `
+        -- Web Push: one row per browser that turned notifications on. Tied to
+        -- the session it was turned on from, so signing a device out (or the
+        -- session ending) stops its notifications with it. The keys are the
+        -- browser's, for encrypting what is sent; never audited.
+        CREATE TABLE push_subscriptions (
+          id            INTEGER PRIMARY KEY,
+          user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          session_id    TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+          endpoint      TEXT NOT NULL UNIQUE,
+          p256dh        TEXT NOT NULL,
+          auth          TEXT NOT NULL,
+          -- "Chrome on Android", from the user agent, for the device list.
+          label         TEXT NOT NULL,
+          created_at    INTEGER NOT NULL,
+          last_sent_at  INTEGER,
+          last_error    TEXT,
+          -- Consecutive failures; reset by a success.
+          failures      INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+        -- Each person's choices (JSON; see src/notifications/prefs.ts). No row
+        -- means the defaults.
+        CREATE TABLE notification_prefs (
+          user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          prefs       TEXT NOT NULL,
+          updated_at  INTEGER NOT NULL
+        );
+
+        -- What was sent, to whom, about what. One row per (person, kind, key),
+        -- where the key names the thing it is about — a work date, a set of
+        -- held entries — so the same reminder isn't sent twice, repeats are
+        -- counted, and a snooze has somewhere to live.
+        CREATE TABLE notification_log (
+          id             INTEGER PRIMARY KEY,
+          user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          kind           TEXT NOT NULL,
+          key            TEXT NOT NULL,
+          title          TEXT NOT NULL,
+          body           TEXT NOT NULL,
+          url            TEXT NOT NULL,
+          first_at       INTEGER NOT NULL,
+          last_at        INTEGER NOT NULL,
+          sent_count     INTEGER NOT NULL DEFAULT 1,
+          -- Devices that accepted the last send; 0 means nobody got it.
+          delivered      INTEGER NOT NULL DEFAULT 0,
+          snoozed_until  INTEGER,
+          UNIQUE (user_id, kind, key)
+        );
+        CREATE INDEX idx_notification_log_user ON notification_log(user_id, last_at);
+
+        -- Days a person said were days off: no day reminders on them.
+        CREATE TABLE notification_days_off (
+          user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          work_date  TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, work_date)
+        );
+    `,
+  },
 ];
 
 /**

@@ -123,10 +123,16 @@ export const config = {
 
   push: {
     // Web Push (VAPID). Optional and fail-soft: with either key unset, push is
-    // disabled — the client hides the toggle and the server never sends.
+    // disabled — the account page says so and the server never sends.
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || null,
-    vapidSubject: process.env.VAPID_SUBJECT || null,
+    /**
+     * Who push services contact about this sender: a mailto: or https: URL.
+     * Defaults to the site's own address, so no one's email goes to them.
+     */
+    vapidSubject: process.env.VAPID_SUBJECT || process.env.PUBLIC_BASE_URL || null,
+    /** How often reminders are checked for, in seconds. 0 turns them off (tests still send). */
+    checkEverySeconds: nonNegativeInt("NOTIFY_EVERY_SECONDS", 60),
   },
 
   /**
@@ -154,7 +160,16 @@ export function describeConfig(): string {
   ];
   if (a.kind === "qb-bridge") lines.push(`  QB_BRIDGE_URL       ${a.bridgeBaseUrl ?? "(unset)"}`);
   if (a.kind === "qb-webconnector") lines.push(`  QBWC_USERNAME       ${a.webConnectorUsername}`);
-  lines.push(`  web push            ${config.push.vapidPublicKey && config.push.vapidPrivateKey ? "on" : "off"}`);
+  const p = config.push;
+  lines.push(
+    `  web push            ${
+      p.vapidPublicKey && p.vapidPrivateKey
+        ? `on, reminders ${p.checkEverySeconds ? `checked every ${p.checkEverySeconds}s` : "off"}`
+        : p.vapidPublicKey || p.vapidPrivateKey
+          ? "OFF — only one of VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY is set"
+          : "off (no VAPID keys)"
+    }`,
+  );
   return lines.join("\n");
 }
 
