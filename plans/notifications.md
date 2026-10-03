@@ -3,8 +3,8 @@
 ## Goal
 
 People find out about problems with their time only by opening the right page.
-The trigger (2026-10-02): Chris's entries were held because QuickBooks already
-had time for those days, and nothing told him. The user asked for push
+The trigger (2026-10-02): a person's entries were held because QuickBooks
+already had time for those days, and nothing told them. The user asked for push
 notifications, "for end of day if hours weren't entered / notes not
 completed", and to **"give lots of options"**.
 
@@ -30,9 +30,8 @@ and alerts, each one theirs to switch on or off and tune.
   `YYYY-MM-DD` in that zone (`src/time.ts`).
 - Loops are plain `setInterval` started from `ensureServerInit()`
   (`app/server-init.ts`); domain functions take `now` for tests.
-- Deployed on steamboat via ops (`servers/steamboat/stacks/time-tracker/`);
-  the VAPID keys will need to reach the container — an ops change, which
-  needs the user's per-change yes.
+- A deployment needs the VAPID key in its environment; how it gets there is
+  the deployment's business (its own notes), not this repo's.
 
 ## Decisions already made (don't re-ask)
 
@@ -96,7 +95,7 @@ From the notification itself (platforms that show buttons — not iOS):
 - `src/notifications/rules.ts` — pure: given a person's prefs, state and
   `now`, what is due. All the timing lives here and is unit-tested with a
   fixed clock.
-- `src/notifications/log.ts` — `notification_log` table: what was sent to
+- `src/notifications/store.ts` — subscriptions, and the `notification_log` table: what was sent to
   whom, for which key (a work date, a set of held entries), how many times —
   de-duplication, repeat counting, day off, snooze, and a "recent" list on the
   account page.
@@ -112,13 +111,13 @@ From the notification itself (platforms that show buttons — not iOS):
 2. Prefs schema + read/write. ✅
 3. Rules, with unit tests. ✅
 4. Subscriptions + sender + worker, with unit tests (fake sender, fixed clock). ✅
-5. ⬅️ Routes: subscribe/unsubscribe/test/action endpoints; account page section.
-6. Service worker: actions (open / snooze / day off), payload shape.
-7. e2e: settings round trip, a subscription posted directly, the test button
-   reaching the fake sender.
-8. README (configuration, deployment), `.env.example`, app plan.
-9. Rebase onto the other session's work once committed; renumber migration.
-10. Deploy: VAPID keys into ops (needs the user's yes), pin.
+5. Routes and the account page section. ✅
+6. Service worker: actions (snooze / day off), payload shape. ✅
+7. e2e through a pretend HTTPS push service, decrypting what arrives. ✅
+8. README, `.env.example`. ✅
+9. Rebased onto the other session's `578e8fe` (their migration is `008`). ✅
+10. ✅ Pushed. Deploying is the deployment's: give it `VAPID_PRIVATE_KEY`
+    (generated once, kept) and pin the image.
 
 ## Findings / gotchas
 
@@ -150,6 +149,22 @@ From the notification itself (platforms that show buttons — not iOS):
 - **`prefs.ts` imports the database**, so the account page's component must
   import from `prefs-schema.ts` (pure) — a value import from `prefs.ts` would
   drag `db.server.ts` toward the client bundle.
+- **`VAPID_SUBJECT` must be `https:` or `mailto:`** — `web-push` throws
+  "Vapid subject is not an https: or mailto: URL" for `http://localhost`. Found
+  by the e2e test. The site address is the default only when it is https;
+  otherwise push is off and the startup log says why.
+- **`Browser.setPermission` (CDP) needs the page's `browserContextId`** (from
+  `Target.getTargetInfo`), or it changes the default context and the page
+  sees nothing. And Playwright's `grantPermissions` doesn't undo a CDP
+  "denied"; set "granted" through CDP too.
+- **A fresh headless browser reports `"prompt"`** through the Permissions API,
+  so the "Turn on" button shows without granting anything.
+- **The VAPID public key is derived from the private key** (`vapidKeys()` in
+  `src/config.server.ts`), so a deployment generates one secret: 43 base64url
+  characters decode to exactly 32 bytes. A deployment whose tooling can
+  generate and keep a random secret needs nothing else.
+- **An existing `describeUserAgent`** (`src/user-agent.ts`) labels sessions
+  and passkeys; device labels use it rather than a second guesser.
 - **The other session runs the full e2e suite on the same fixed ports
   (3140–3144) without a compute-budget claim.** Don't start a run while
   theirs is up: "port already used" at best, false timeouts at worst. Wait for
@@ -166,12 +181,15 @@ From the notification itself (platforms that show buttons — not iOS):
 - [x] Routes + account page UI (`app/notifications/NotificationSettings.tsx`,
       `app/notifications.server.ts`, `api/notifications/action`).
 - [x] Service worker buttons (snooze, day off) through the token endpoint.
-- [ ] ⬅️ e2e with a fake HTTPS push service: spec written; first test fixed
-      (permission quirk); waiting for the other session's e2e run to free the
-      ports before re-running.
-- [x] README, `.env.example`. App plan (`plans/time-tracker.md`) not touched:
-      the other session has it modified; add a pointer after rebasing.
-- [ ] Rebase onto the other session's work; deploy.
+- [x] e2e: 7 tests through a pretend HTTPS push service (real web-push,
+      decrypted with `http_ece`); screenshots at desktop and phone width
+      behind `E2E_SCREENSHOTS`, checked.
+- [x] README, `.env.example`.
+- [x] Rebased onto `578e8fe`; typecheck, 424 unit, 77 e2e (3 screenshot-only
+      skipped) pass. Pushed `dfa5450`, `d734397`, `ccc49a9` to `master`.
+- [x] Repo side done. What remains is per deployment: set the key, deploy,
+      and each person turns notifications on from Account → Notifications
+      (iPhone: from the Home Screen app).
 
 ## Open questions for the user
 

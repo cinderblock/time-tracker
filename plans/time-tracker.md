@@ -986,6 +986,13 @@ own phase; they are properties of the entry UI, not separate features.
       whatever its note says — before, one whose note had been edited in the
       accounting system lost its `[ref …]`, read as "gone", and was added a
       second time after an edit-sequence conflict. 345 unit, 69 e2e.
+- [x] 2026-10-02 — **Notifications** (Web Push), each person's own, per device
+      — see `plans/notifications.md`. End-of-day reminders (nothing entered,
+      notes not hours, a timer left going, days not submitted) and alerts
+      (time held or refused, a very long timer, admins: anything waiting on
+      an admin), every one switchable and tunable. Migration
+      `009_notifications`. One secret, `VAPID_PRIVATE_KEY`; the public key is
+      derived. 424 unit, 77 e2e.
 
 ## Open questions for the user
 
