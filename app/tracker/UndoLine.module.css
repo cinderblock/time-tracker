@@ -1,0 +1,9 @@
+/*
+ * One line, always the same height — Mantine's `compact-sm` button height,
+ * written out for the same reason DayHeader.module.css writes it out — so
+ * the undo control appearing and going doesn't move the day's body.
+ */
+.line {
+  min-height: calc(1.625rem * var(--mantine-scale));
+  min-width: 0;
+}

@@ -171,7 +171,8 @@ test("link a person, pick default items, and send submitted time", async () => {
       item: "I-LABOR",
       payrollItem: "W-HOURLY",
       duration: "PT2H0M0S",
-      notes: expect.stringMatching(/^\[ref [0-9a-f]{12}\]$/),
+      // Nothing of this app's in the note: QuickBooks copies it onto the invoice.
+      notes: "",
       billable: "Billable",
     },
   ]);
@@ -305,8 +306,15 @@ test("time QuickBooks already has is held until someone says which it is", async
   await notice.getByRole("link").first().click();
   await expect(compare).toBeVisible();
 
+  // Pointing at a choice says what it keeps and what it lets go, on the records themselves.
+  const comparison = compare.locator("[data-side]").first().locator("..");
+  await compare.getByRole("button", { name: "Keep QuickBooks'" }).hover();
+  await expect(comparison).toHaveAttribute("data-keep", "theirs");
+  await compare.getByRole("button", { name: "Keep mine" }).hover();
+  await expect(comparison).toHaveAttribute("data-keep", "mine");
   // It's the same work: this entry takes that record over, rather than adding a second.
-  await compare.getByRole("button", { name: "Same work — keep mine, replace QuickBooks' record" }).click();
+  await compare.getByRole("button", { name: "Keep mine" }).click();
+  await expect(comparison).toHaveAttribute("data-chosen", "mine");
   await expect(toast("QuickBooks' record will be changed to match this entry.")).toBeVisible();
   await expect(compare).toHaveCount(0);
   await expect(row.getByText("submitted")).toBeVisible();
@@ -319,7 +327,7 @@ test("time QuickBooks already has is held until someone says which it is", async
     customer: site.id,
     duration: "PT1H0M0S",
     item: "I-LABOR",
-    notes: expect.stringMatching(/^\[ref [0-9a-f]{12}\]$/),
+    notes: "",
   });
 });
 
@@ -335,7 +343,7 @@ test("or QuickBooks' record is the right one, and the entry here is let go", asy
   await page.goto("/");
   const compare = page.getByRole("group", { name: "Acme › Brand New Site: QuickBooks already has time" });
   await expect(compare.getByText("No note")).toHaveCount(2); // neither side has one
-  await compare.getByRole("button", { name: "Same work — keep QuickBooks', delete mine" }).click();
+  await compare.getByRole("button", { name: "Keep QuickBooks'" }).click();
   await expect(toast("Deleted here. QuickBooks keeps its record.")).toBeVisible();
   await expect(compare).toHaveCount(0);
   await expect(page.locator("[data-entry-id]", { hasText: "40m" })).toHaveCount(0);

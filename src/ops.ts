@@ -4,6 +4,7 @@ import {
   createManualEntry,
   deleteEntry,
   pauseTimer,
+  reopenTimer,
   restoreEntry,
   resumeTimer,
   startTimer,
@@ -56,6 +57,7 @@ const handlers: { [T in OpType]: Handler<T> } = {
   "timer.pause": (c, p) => void pauseTimer({ userId: c.userId, now: c.now, ...p }),
   "timer.resume": (c, p) => void resumeTimer({ userId: c.userId, now: c.now, ...p }),
   "timer.stop": (c, p) => void stopTimer({ userId: c.userId, now: c.now, ...p }),
+  "timer.reopen": (c, p) => void reopenTimer({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, entryId: p.entryId }),
 
   "entry.create": (c, p) => {
     createManualEntry({ ...c, ...p });

@@ -219,7 +219,7 @@ export function EntryEditor({
     setBusy(false);
     if (!result.ok) return;
     onClose();
-    undoToast(`Deleted ${jobLabel(entry.jobName)}.`, () => dispatch("entry.restore", { entryId: entry.id, at: Date.now() }));
+    undoToast(`Deleted ${jobLabel(entry.jobName)}.`);
   }
 
   const title = !entry ? "Add time" : isOpenTimer ? "Edit running timer" : "Edit entry";

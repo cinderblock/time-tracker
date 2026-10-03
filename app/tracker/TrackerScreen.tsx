@@ -5,7 +5,7 @@ import { jobLabel } from "../../src/job-names.ts";
 import { formatDurationHuman } from "../../src/time.ts";
 import { type ActingFor, TrackerProvider, useNow, useTracker } from "./context.tsx";
 import { DayHeader } from "./DayHeader.tsx";
-import { markDayMove, towards } from "./day-move.ts";
+import { markDayMove, moveBetween } from "./day-move.ts";
 import { EntryList } from "./EntryList.tsx";
 import { FlightProvider } from "./flight.tsx";
 import { HeldDaysNotice, HeldEntries } from "./HeldEntries.tsx";
@@ -14,6 +14,7 @@ import { NotesPanel } from "./NotesPanel.tsx";
 import classes from "./screen.module.css";
 import { SubmitDay } from "./SubmitDay.tsx";
 import { TimerPanel } from "./TimerCard.tsx";
+import { UndoLine } from "./UndoLine.tsx";
 
 // Days slide sideways and weeks vertically as you move between them; the
 // arrows and the app's chrome stay where they are. See day-move.ts.
@@ -35,6 +36,7 @@ export function TrackerScreen({ model, actingFor }: { model: DayModel; actingFor
         <Stack gap="lg" maw={1100}>
           <ActingForNotice />
           <DayHeader />
+          <UndoLine />
           <OfflineNotice />
           <HeldDaysNotice />
           {/* Named so it travels on its own when the day changes, rather than
@@ -164,7 +166,7 @@ function OpenTimerElsewhere() {
         component={Link}
         to={hrefFor(model.today)}
         viewTransition
-        onClick={() => markDayMove(towards(model.workDate, model.today))}
+        onClick={() => markDayMove(moveBetween(model.workDate, model.today, model.week[0]?.date ?? model.workDate))}
       >
         Go to today
       </Anchor>

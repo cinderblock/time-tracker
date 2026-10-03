@@ -1,21 +1,30 @@
+import { addDays } from "../../src/time.ts";
 import { MOTION } from "../motion.ts";
 
 /**
  * Which way a navigation moves the day, written where CSS can see it.
  *
- * Moving between days is a move sideways and moving between weeks is a move
- * up or down, so the animation in `day-move.css` needs to know which of the
- * four it is. React Router starts the view transition as it commits the
- * navigation, and a link's `onClick` runs before that — so this is set from
- * the click, and the attribute is already on `<html>` by the time the old
- * frame is captured.
+ * Moving within the week shown is a move of the day — the highlight slides
+ * along the strip to the new date — and moving to a day outside it is a move
+ * of the week, where the whole strip slides out and the new one in. The
+ * animation in `day-move.css` needs to know which of the four it is. React
+ * Router starts the view transition as it commits the navigation, and a
+ * link's `onClick` runs before that — so this is set from the click, and the
+ * attribute is already on `<html>` by the time the old frame is captured.
  */
 
 export type DayMove = "day-later" | "day-earlier" | "week-later" | "week-earlier";
 
-/** Which way a day-at-a-time move goes. */
-export function towards(from: string, to: string): DayMove {
-  return to > from ? "day-later" : "day-earlier";
+/**
+ * The move from `from` to `to`, given the first day of the week on screen.
+ * A step of one day off the end of the strip is a week move too: the strip
+ * has to change, and a highlight sliding from one edge to the other would
+ * say the opposite of what happened.
+ */
+export function moveBetween(from: string, to: string, weekStart: string): DayMove {
+  const later = to > from;
+  const inWeek = to >= weekStart && to <= addDays(weekStart, 6);
+  return `${inWeek ? "day" : "week"}-${later ? "later" : "earlier"}`;
 }
 
 let clearing = 0;
@@ -27,7 +36,15 @@ let clearing = 0;
 export function markDayMove(move: DayMove): void {
   document.documentElement.dataset.dayMove = move;
   window.clearTimeout(clearing);
-  clearing = window.setTimeout(() => {
-    delete document.documentElement.dataset.dayMove;
-  }, MOTION.slow + 200);
+  // The stylesheet's duration rather than the constant's, so a page that has
+  // slowed the motion down (a probe, say) keeps the attribute for the whole
+  // of the slide — the animations hang off it, and lose it mid-flight if it
+  // goes early.
+  const base = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--motion-base")) || MOTION.base;
+  clearing = window.setTimeout(
+    () => {
+      delete document.documentElement.dataset.dayMove;
+    },
+    Math.max(MOTION.slow, base) + 200,
+  );
 }

@@ -49,7 +49,10 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   const location = useLocation();
   useSyncLifecycle(user);
 
-  // Close the phone drawer after navigating.
+  // Close the phone drawer after navigating — and on the tap itself (below),
+  // because tapping the item for the page already shown changes no path, and
+  // a drawer that stays open over the same page reads as a tap that did
+  // nothing.
   useEffect(close, [location.pathname, close]);
 
   const links = [
@@ -74,7 +77,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
       ? location.pathname === "/" || location.pathname.startsWith("/day/")
       : location.pathname === to || location.pathname.startsWith(`${to}/`);
   const renderLink = (link: { to: string; label: string }) => (
-    <NavLink key={link.to} component={Link} to={link.to} label={link.label} active={isActive(link.to)} />
+    <NavLink key={link.to} component={Link} to={link.to} label={link.label} active={isActive(link.to)} onClick={close} />
   );
 
   return (

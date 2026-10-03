@@ -490,6 +490,23 @@ const migrations: Migration[] = [
         ALTER TABLE time_entries ADD COLUMN duplicate_check TEXT;
     `,
   },
+  {
+    name: "008_clean_notes",
+    sql: `
+        -- The record there is known to differ from what this app would send
+        -- now, and is amended at the next pass whatever the entry's status.
+        -- Set by migrations that change what is sent; cleared when the
+        -- amendment lands. See src/sync.ts.
+        ALTER TABLE time_entries ADD COLUMN remote_stale_at INTEGER;
+
+        -- Until now every note sent ended with an app reference ("[ref …]"),
+        -- and QuickBooks copies a time record's note onto the invoice line,
+        -- so it reached customers. Nothing but the note is sent any more;
+        -- every record already there is amended clean.
+        UPDATE time_entries SET remote_stale_at = (unixepoch() * 1000)
+         WHERE remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL AND deleted_at IS NULL AND status = 'synced';
+    `,
+  },
 ];
 
 /**

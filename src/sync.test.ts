@@ -20,7 +20,7 @@ import {
   setPersonPayrollItem,
 } from "./remote-lists.ts";
 import { setDefaultPayrollItemId, setDefaultServiceItemId, setRequireApproval, syncState } from "./settings.ts";
-import { PULL_EVERY_MS, entryRef, heldEntries, listWork, recheckDuplicates, resolveDuplicate, retryFailedNow, syncOverview } from "./sync.ts";
+import { PULL_EVERY_MS, heldEntries, listWork, recheckDuplicates, resolveDuplicate, retryFailedNow, syncOverview } from "./sync.ts";
 import { runSync } from "./sync-worker.ts";
 import { fakeBridgeFetch } from "./testing/fake-bridge.ts";
 import { type FakeQuickBooks, sampleCompany } from "./testing/fake-quickbooks.ts";
@@ -192,7 +192,7 @@ describe("sending time", () => {
         item: "I-LABOR",
         payrollItem: "W-HOURLY",
         duration: "PT1H35M0S",
-        notes: `Framing & <trim> ${entryRef(id)}`,
+        notes: "Framing & <trim>",
         billable: "Billable",
       },
     ]);
@@ -226,16 +226,17 @@ describe("sending time", () => {
     approveEntries({ userId: alice, from: DAY, to: DAY, actorUserId: admin });
     approveEntries({ userId: bob, from: DAY, to: DAY, actorUserId: admin });
     await sync();
-    const byNote = (ref: string) => qb.summary().find((r) => r.notes.endsWith(ref))!;
-    expect(byNote(entryRef(a))).toMatchObject({ item: "I-DESIGN", payrollItem: "W-FIELD", notes: entryRef(a) });
-    expect(byNote(entryRef(b))).toMatchObject({ entity: "V-SUB", item: "I-LABOR", payrollItem: null });
+    const byMinutes = (minutes: number) => qb.summary().find((r) => r.duration === `PT${Math.floor(minutes / 60)}H${minutes % 60}M0S`)!;
+    // No note here means no note there: nothing of this app's is written into the note.
+    expect(byMinutes(30)).toMatchObject({ item: "I-DESIGN", payrollItem: "W-FIELD", notes: "" });
+    expect(byMinutes(60)).toMatchObject({ entity: "V-SUB", item: "I-LABOR", payrollItem: null, notes: "Sub work" });
 
     // A person's own payroll item beats their category's.
     setPersonPayrollItem({ userId: alice, itemId: "W-HOURLY", actorUserId: admin });
     const c = work(alice, jobByRemote("C-ACME-2").id, 15);
     approveEntries({ userId: alice, entryIds: [c], actorUserId: admin });
     await sync();
-    expect(byNote(entryRef(c)).payrollItem).toBe("W-HOURLY");
+    expect(byMinutes(15).payrollItem).toBe("W-HOURLY");
   });
 
   test("with no service item anywhere, time goes as not billable", async () => {
@@ -266,10 +267,10 @@ describe("sending time", () => {
     const forPay = work(alice, jobByRemote("C-ACME-3").id, 30, "Drawings", NINE + 2 * 60 * MIN);
     approveEntries({ userId: alice, from: DAY, to: DAY, actorUserId: admin });
     await sync();
-    const byNote = (ref: string) => qb.summary().find((r) => r.notes.endsWith(ref))!;
+    const byNote = (note: string) => qb.summary().find((r) => r.notes === note)!;
     // Still carries its service item: what the work was doesn't change, only whether it's billed.
-    expect(byNote(entryRef(internal))).toMatchObject({ item: "I-LABOR", billable: "NotBillable" });
-    expect(byNote(entryRef(forPay))).toMatchObject({ item: "I-LABOR", billable: "Billable" });
+    expect(byNote("Tidying")).toMatchObject({ item: "I-LABOR", billable: "NotBillable" });
+    expect(byNote("Drawings")).toMatchObject({ item: "I-LABOR", billable: "Billable" });
 
     // Back to following the customer.
     updateJob({ id: jobByRemote("C-ACME-3").id, billable: null, actorUserId: admin });
@@ -405,7 +406,7 @@ describe("time the accounting system already has", () => {
     expect(qb.records[0]).toMatchObject({
       txnId: record.txnId,
       duration: "PT4H0M0S",
-      notes: `Framing all morning ${entryRef(id)}`,
+      notes: "Framing all morning",
       item: "I-LABOR",
       billable: "Billable",
       editSequence: "2",
@@ -432,7 +433,7 @@ describe("time the accounting system already has", () => {
     );
     resolveDuplicate({ entryId: afternoon, action: "separate", actorUserId: admin });
     await sync();
-    expect(qb.records.map((r) => r.notes).sort()).toEqual([`Framing ${entryRef(morning)}`, `Trim ${entryRef(afternoon)}`].sort());
+    expect(qb.records.map((r) => r.notes).sort()).toEqual(["Framing", "Trim"]);
     expect([morning, afternoon].map((e) => getEntry(e)!.status)).toEqual(["synced", "synced"]);
   });
 
@@ -513,7 +514,7 @@ describe("time the accounting system already has", () => {
     ok(send(alice, "duplicate.resolve", { entryId: different, action: "separate" }));
     expect(heldEntries(alice).size).toBe(0);
     await sync();
-    expect(qb.records.map((r) => [r.duration, r.notes.split(" [ref")[0]]).sort()).toEqual([
+    expect(qb.records.map((r) => [r.duration, r.notes]).sort()).toEqual([
       ["PT0H15M0S", "Punch list"],
       ["PT1H0M0S", "Framing"],
     ]);
@@ -567,7 +568,7 @@ describe("time the accounting system already has", () => {
     resolveDuplicate({ entryId: id, action: "replace", txnId: record.txnId, actorUserId: admin });
     await sync();
     expect(qb.records).toHaveLength(1);
-    expect(qb.records[0]).toMatchObject({ txnId: record.txnId, duration: "PT1H30M0S", notes: `Framing ${entryRef(id)}` });
+    expect(qb.records[0]).toMatchObject({ txnId: record.txnId, duration: "PT1H30M0S", notes: "Framing" });
     expect(getEntry(id)!.status).toBe("synced");
   });
 });
@@ -679,7 +680,7 @@ describe("corrections and failures", () => {
     expect(listWork(now).map((w) => w.kind)).toEqual(["entry.mod"]);
     await sync();
     expect(qb.records).toHaveLength(1);
-    expect(qb.records[0]).toMatchObject({ txnId, duration: "PT1H30M0S", notes: `Longer ${entryRef(id)}`, editSequence: "2" });
+    expect(qb.records[0]).toMatchObject({ txnId, duration: "PT1H30M0S", notes: "Longer", editSequence: "2" });
     expect(getEntry(id)!.status).toBe("synced");
   });
 
@@ -720,6 +721,51 @@ describe("corrections and failures", () => {
     expect(qb.requests.filter((r) => r.includes("TimeTrackingAddRq"))).toHaveLength(1);
   });
 
+  test("a lost answer is recognised by what was sent, and not by someone else's identical record", async () => {
+    await connected();
+    const acme2 = jobByRemote("C-ACME-2").id;
+    // The other tracker has an hour of "Framing" on the same job already, and
+    // Bob's hour of it stands for a record of this app's own.
+    const foreign = qb.addForeign({ txnDate: DAY, entity: "E-ALICE", customer: "C-ACME-2", duration: "PT1H0M0S", notes: "Framing" });
+    const id = work(alice, acme2, 60, "Framing");
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    // The check finds the other tracker's record and holds the entry; it's different work.
+    await sync();
+    resolveDuplicate({ entryId: id, action: "separate", actorUserId: admin });
+    qb.loseNextAnswer("TimeTrackingAddRq");
+    expect(await sync()).toMatchObject({ reached: false });
+    expect(qb.records).toHaveLength(2); // it did arrive
+    expect(listWork(now).map((w) => w.kind)).toEqual(["entry.find"]);
+
+    // Two identical records there now; the one nobody here stands for yet is the lost send.
+    await sync();
+    expect(qb.records).toHaveLength(2);
+    expect(getEntry(id)!.status).toBe("synced");
+    const mine = db().query<{ remote_txn_id: string }, [string]>("SELECT remote_txn_id FROM time_entries WHERE id = ?").get(id)!.remote_txn_id;
+    expect(mine).not.toBe(foreign.txnId);
+    expect(qb.requests.filter((r) => r.includes("TimeTrackingAddRq"))).toHaveLength(1);
+  });
+
+  test("a record still carrying the old reference is amended clean, without being taken back", async () => {
+    await connected();
+    const id = work(alice, jobByRemote("C-ACME-2").id, 60, "Framing");
+    approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
+    await sync();
+    expect(qb.records[0]!.notes).toBe("Framing");
+    // As every record sent before 2026-10-02 was: the note, then the app's reference.
+    qb.records[0]!.notes = "Framing [ref 0123456789ab]";
+    // Migration 008 marks every sent entry this way on an existing database.
+    db().query("UPDATE time_entries SET remote_stale_at = ? WHERE id = ?").run(now, id);
+    expect(getEntry(id)!.status).toBe("synced");
+    expect(listWork(now).map((w) => w.kind)).toEqual(["entry.mod"]);
+    expect(syncOverview(now)).toMatchObject({ ready: 1 });
+    await sync();
+    expect(qb.records).toHaveLength(1);
+    expect(qb.records[0]!.notes).toBe("Framing");
+    expect(getEntry(id)!.status).toBe("synced");
+    expect(listWork(now)).toEqual([]);
+  });
+
   test("unreachable before anything was sent: found missing, then sent once", async () => {
     await connected();
     const id = work(alice, jobByRemote("C-ACME-2").id, 60);
@@ -748,7 +794,7 @@ describe("corrections and failures", () => {
     approveEntries({ userId: alice, entryIds: [id], actorUserId: admin });
     await sync();
     expect(qb.records).toHaveLength(1);
-    expect(qb.records[0]!.notes).toBe(`Edited ${entryRef(id)}`);
+    expect(qb.records[0]!.notes).toBe("Edited");
     expect(getEntry(id)!.status).toBe("synced");
   });
 

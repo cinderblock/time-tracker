@@ -85,7 +85,7 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
   async function remove() {
     const result = await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
     if (result.ok) {
-      undoToast(`Deleted ${jobLabel(entry.jobName)}.`, () => dispatch("entry.restore", { entryId: entry.id, at: Date.now() }));
+      undoToast(`Deleted ${jobLabel(entry.jobName)}.`);
     }
   }
 

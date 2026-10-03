@@ -135,10 +135,8 @@ function RunningTimer({ entry }: { entry: EntryView }) {
   }
 
   async function discard() {
-    await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
-    undoToast(`Discarded the ${jobLabel(entry.jobName)} timer.`, () =>
-      dispatch("entry.restore", { entryId: entry.id, at: Date.now() }),
-    );
+    const result = await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
+    if (result.ok) undoToast(`Discarded the ${jobLabel(entry.jobName)} timer.`);
   }
 
   return (

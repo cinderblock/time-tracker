@@ -58,7 +58,7 @@ export interface TimeRecord {
   serviceItemRemoteId: string | null;
   payrollItemRemoteId: string | null;
   minutes: number;
-  /** Ends with the entry's reference (sync.ts `entryRef`), so the record can be found again. */
+  /** The entry's note, exactly: QuickBooks copies it onto the invoice line. Empty when there is none. */
   notes: string;
   billable: boolean;
 }

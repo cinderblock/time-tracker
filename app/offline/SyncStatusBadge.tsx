@@ -52,6 +52,8 @@ function describe(op: Op): string {
       return "Resuming a timer";
     case "timer.stop":
       return "Stopping a timer";
+    case "timer.reopen":
+      return "Restarting a timer";
     case "entry.create":
       return "Adding time";
     case "entry.update":

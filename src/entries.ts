@@ -491,7 +491,10 @@ export function updateEntry(args: {
     // As everywhere else, a span's work date follows its start, and
     // recomputeDuration below takes the duration from the segment.
     db().query("UPDATE time_entries SET work_date = ? WHERE id = ?").run(workDateOf(args.startedAt), entry.id);
-  } else if (hasTimes) {
+  } else if (hasTimes && (args.startedAt !== undefined || args.endedAt !== undefined)) {
+    // Only a change to the times is held to these: a note or job edit leaves
+    // them as they are, however they are — an undo can leave a pause with
+    // nothing in it, and the note must still be editable.
     const first = entry.segments[0]!;
     const last = entry.segments.at(-1)!;
     const newStart = args.startedAt ?? first.startedAt;
@@ -517,7 +520,7 @@ export function updateEntry(args: {
     if (args.endedAt !== undefined) {
       db().query("UPDATE time_segments SET ended_at = ? WHERE id = ?").run(newEnd, last.id);
     }
-  } else {
+  } else if (!hasTimes) {
     if (args.workDate !== undefined) {
       db().query("UPDATE time_entries SET work_date = ? WHERE id = ?").run(args.workDate, entry.id);
     }
@@ -568,6 +571,37 @@ export function deleteEntry(args: { userId: number; actorUserId: number; entryId
     before: snapshot(entry),
     at: args.now,
   });
+}
+
+/**
+ * Undo a stop or a pause: the timer runs again from the moment it last
+ * stopped, so the time since counts as if it had never been stopped. It is
+ * a new segment from that moment rather than the old one reopened — the
+ * record is the same either way, and a device's copy can then show it from
+ * what it already holds (the last end) without knowing the segments.
+ */
+export function reopenTimer(args: { userId: number; actorUserId: number; entryId: string; now: number }): Entry {
+  const entry = ownLiveEntry(args.userId, args.entryId);
+  if (entry.status !== "open" && entry.status !== "draft") {
+    throw new OpError("conflict", lockedReason(entry.status, entry.approvedBy == null));
+  }
+  if (entry.segments.some((s) => s.endedAt == null)) throw new OpError("conflict", "That timer is already running.");
+  const lastEnd = Math.max(0, ...entry.segments.map((s) => s.endedAt ?? 0));
+  if (!lastEnd) throw new OpError("conflict", "That time was typed in as a duration; it has no timer to restart.");
+  const open = getOpenEntry(args.userId);
+  if (open && open.id !== entry.id) throw new OpError("conflict", "Another timer is running. Stop it first.");
+  db().query("INSERT INTO time_segments (entry_id, started_at) VALUES (?, ?)").run(entry.id, lastEnd);
+  db().query("UPDATE time_entries SET status = 'open', updated_at = ? WHERE id = ?").run(args.now, entry.id);
+  recomputeDuration(entry.id, args.now);
+  audit({
+    actorUserId: args.actorUserId,
+    entity: "entry",
+    entityId: entry.id,
+    action: "reopen_timer",
+    before: snapshot(entry),
+    at: args.now,
+  });
+  return getEntry(entry.id)!;
 }
 
 /**

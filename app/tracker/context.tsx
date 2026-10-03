@@ -12,6 +12,7 @@ import { type Fix, recentFix, refreshLocation } from "./location.ts";
 import type { DayModel } from "./model.ts";
 import { makeOp, sendOps } from "./ops-client.ts";
 import { useDayRollover } from "./rollover.ts";
+import { type Undoable, inverseOfAll } from "./undo.ts";
 
 /**
  * The tracking screen's data and its one way of changing it.
@@ -59,10 +60,23 @@ export interface Tracker {
   hrefFor(date: string): string;
   /** A recent location fix to attach to a change, if the person allows it. */
   location(): Fix | null;
+  /**
+   * The last change that can be put back, or null. Every change made through
+   * `dispatch` that has an inverse (undo.ts) goes on a stack; `undo` dispatches
+   * the inverse of the latest, or of the one given — a toast's Undo button
+   * puts back the delete it announced, whatever has happened since.
+   */
+  undoable: Undoable | null;
+  undo(which?: Undoable): Promise<void>;
+  /** The top of the stack as it is this instant, for a toast shown right after a dispatch resolves. */
+  latestUndoable(): Undoable | null;
 }
 
 /** How long a change waits for the server before being treated as queued. */
 const ANSWER_WAIT_MS = 8_000;
+
+/** How far back undo reaches. Enough for a wrong turn, not a day's history. */
+const UNDO_DEPTH = 20;
 
 const TrackerContext = createContext<Tracker | null>(null);
 
@@ -90,6 +104,11 @@ export function TrackerProvider({
   const direct = useDirectOps(base, actingFor);
   const ops = actingFor ? direct.ops : queued;
   const [inFlight, setInFlight] = useState(0);
+  // The stack lives in a ref — pushed to before a dispatch resolves, so a
+  // toast shown right after can name the change — with a state copy of the
+  // top for rendering.
+  const undoStack = useRef<Undoable[]>([]);
+  const [undoable, setUndoable] = useState<Undoable | null>(null);
 
   useEffect(() => {
     if (!actingFor) refreshLocation();
@@ -120,17 +139,32 @@ export function TrackerProvider({
   useDayRollover(base.today, base.timezone, askAgain);
 
   const model = useMemo(() => (ops.length ? applyPending(base, ops) : base), [base, ops]);
+  // The day as it is right now, for working out what a change undoes —
+  // read at dispatch time rather than captured, so `dispatch` stays stable.
+  const current = useRef(model);
+  current.current = model;
 
   const sendDirect = direct.send;
   const submit = useCallback(
-    async (list: Op[], wait: boolean): Promise<DispatchResult[]> => {
+    async (list: Op[], wait: boolean, opts: { undoable?: boolean } = {}): Promise<DispatchResult[]> => {
+      // Worked out before the change, against the day it changes.
+      const inverse = opts.undoable === false ? null : inverseOfAll(current.current, list, Date.now());
       if (wait) setInFlight((n) => n + 1);
       try {
-        if (actingFor) return await sendDirect(list);
-        const engine = getEngine();
-        if (!engine) throw new Error("Changes can only be made in the browser");
-        const answers = await Promise.all(list.map((op) => engine.enqueue(op, wait ? ANSWER_WAIT_MS : 0)));
-        return answers.map((a, i): DispatchResult => a ?? { opId: list[i]!.opId, ok: true, queued: true });
+        let results: DispatchResult[];
+        if (actingFor) results = await sendDirect(list);
+        else {
+          const engine = getEngine();
+          if (!engine) throw new Error("Changes can only be made in the browser");
+          const answers = await Promise.all(list.map((op) => engine.enqueue(op, wait ? ANSWER_WAIT_MS : 0)));
+          results = answers.map((a, i): DispatchResult => a ?? { opId: list[i]!.opId, ok: true, queued: true });
+        }
+        // A refused change did nothing, so there is nothing to put back.
+        if (inverse && results.every((r) => r.ok)) {
+          undoStack.current = [...undoStack.current.slice(-(UNDO_DEPTH - 1)), inverse];
+          setUndoable(inverse);
+        }
+        return results;
       } finally {
         if (wait) setInFlight((n) => n - 1);
       }
@@ -160,6 +194,41 @@ export function TrackerProvider({
     [submit],
   );
 
+  const undo = useCallback(
+    async (which?: Undoable) => {
+      const entry = which ?? undoStack.current.at(-1);
+      if (!entry) return;
+      // Off the stack first: whatever the server says, this one has been
+      // tried, and a refusal is reported like any other.
+      undoStack.current = undoStack.current.filter((u) => u !== entry);
+      setUndoable(undoStack.current.at(-1) ?? null);
+      const results = await submit(
+        entry.ops.map((o) => makeOp(o.type, o.payload as never)),
+        true,
+        { undoable: false },
+      );
+      const firstFailure = results.find((r) => !r.ok);
+      if (firstFailure) reportFailure(firstFailure);
+    },
+    [submit],
+  );
+  const latestUndoable = useCallback(() => undoStack.current.at(-1) ?? null, []);
+
+  // Ctrl/Cmd+Z anywhere on the screen that isn't a field with its own undo.
+  const undoRef = useRef(undo);
+  undoRef.current = undo;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "z" || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      event.preventDefault();
+      void undoRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const value = useMemo<Tracker>(
     () => ({
       model,
@@ -174,8 +243,11 @@ export function TrackerProvider({
             : `${actingFor.basePath}/${date}`
           : dayHref(date, model.today),
       location: () => (actingFor ? null : recentFix()),
+      undoable,
+      undo,
+      latestUndoable,
     }),
-    [model, dispatch, dispatchAll, inFlight, actingFor],
+    [model, dispatch, dispatchAll, inFlight, actingFor, undoable, undo, latestUndoable],
   );
   return <TrackerContext.Provider value={value}>{children}</TrackerContext.Provider>;
 }
@@ -247,35 +319,46 @@ export function useNow(intervalMs = 1000): number | undefined {
 
 /**
  * A confirmation with an Undo button. Deleting never asks "are you sure?";
- * this is the safety net instead.
+ * this is the safety net instead. The button puts back the change that was
+ * just made — the one on top of the undo stack when the toast is shown —
+ * and that one in particular, whatever has happened since.
  */
 export function useUndoToast() {
+  const { undo, latestUndoable } = useTracker();
   const busy = useRef(false);
-  return useCallback((message: string, undo: () => Promise<unknown>) => {
-    const id = notifications.show({
-      autoClose: 10_000,
-      withCloseButton: true,
-      message: (
-        <Group justify="space-between" wrap="nowrap" gap="sm">
-          <Text size="sm">{message}</Text>
-          <Button
-            size="compact-sm"
-            variant="light"
-            onClick={async () => {
-              if (busy.current) return;
-              busy.current = true;
-              notifications.hide(id);
-              try {
-                await undo();
-              } finally {
-                busy.current = false;
-              }
-            }}
-          >
-            Undo
-          </Button>
-        </Group>
-      ),
-    });
-  }, []);
+  return useCallback(
+    (message: string) => {
+      // The stack is pushed to before the dispatch resolves, and the toast is
+      // shown right after, so the top is the change being announced.
+      const which = latestUndoable();
+      const id = notifications.show({
+        autoClose: 10_000,
+        withCloseButton: true,
+        message: (
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Text size="sm">{message}</Text>
+            {which && (
+              <Button
+                size="compact-sm"
+                variant="light"
+                onClick={async () => {
+                  if (busy.current) return;
+                  busy.current = true;
+                  notifications.hide(id);
+                  try {
+                    await undo(which);
+                  } finally {
+                    busy.current = false;
+                  }
+                }}
+              >
+                Undo
+              </Button>
+            )}
+          </Group>
+        ),
+      });
+    },
+    [undo, latestUndoable],
+  );
 }

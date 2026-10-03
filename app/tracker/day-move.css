@@ -1,17 +1,22 @@
 /*
  * Moving between days, seen.
  *
- * A day at a time is a move sideways and a week at a time is a move up or
- * down, which is the one thing a week strip and a pair of arrows can't say on
- * their own. The direction is on `<html data-day-move>` before the transition
- * starts (see day-move.ts); everything else is here.
+ * Two kinds of move, which the arrows alone can't tell apart. Within the week
+ * on screen, the day changes and the strip doesn't: the highlight slides
+ * along the strip to the new date, and the day's name and body slide
+ * sideways under it. To a day outside it, the week changes: the whole strip
+ * slides out the way you're going and the new week slides in behind it,
+ * quickly, while the name and body slide as they always do. The direction is
+ * on `<html data-day-move>` before the transition starts (see day-move.ts).
  *
- * Three parts are named, which is what keeps them out of the root snapshot
+ * Four parts are named, which is what keeps them out of the root snapshot
  * and lets them be animated apart from it:
  *
  *   - the day's name and the day's body always travel;
- *   - the week strip travels only when the week itself changes, so stepping
- *     between days leaves it sitting still under the moving day.
+ *   - the week strip travels only when the week itself changes;
+ *   - the selected day's highlight is its own part only on a day move, so it
+ *     is seen to slide from the old date to the new one; on a week move it
+ *     is part of the strip and leaves with it.
  *
  * Everything unnamed — the arrows, the app's chrome — cross-fades as `root`,
  * and since none of it changes, that looks like nothing happening. Which is
@@ -24,8 +29,9 @@
  */
 
 :root {
-  /* How far the old frame travels as it leaves, and the new one before it
-     arrives. Far enough to read as a direction, not so far it's a journey. */
+  /* How far the day's name and body travel as they leave, and the new ones
+     before they arrive. Far enough to read as a direction, not so far it's a
+     journey. The strip, on a week move, travels its whole width. */
   --day-move-shift: 32px;
 }
 
@@ -41,67 +47,120 @@
   view-transition-name: tt-day-body;
 }
 
+/* Named only while a day move is under way: on a week move it stays in the
+   strip's snapshot and slides out with the rest of the week. */
+html[data-day-move^="day-"] [data-day-part="selected"] {
+  view-transition-name: tt-day-selected;
+}
+
 @keyframes tt-day-move-out {
   to {
     opacity: 0;
-    transform: translate3d(var(--tt-dx, 0px), var(--tt-dy, 0px), 0);
+    transform: translate3d(var(--tt-dx, 0px), 0, 0);
   }
 }
 
 @keyframes tt-day-move-in {
   from {
     opacity: 0;
-    transform: translate3d(var(--tt-dx, 0px), var(--tt-dy, 0px), 0);
+    transform: translate3d(var(--tt-dx, 0px), 0, 0);
+  }
+}
+
+/* The strip on a week move: the old week leaves whole, the new arrives whole,
+   and neither fades — they are one strip of weeks pulled past the window, so
+   both keep their opacity (named here, over the browser's own fade) and both
+   move on the same curve, the old one exactly a width ahead of the new. */
+@keyframes tt-week-move-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(var(--tt-week-dx, 0), 0, 0);
+  }
+}
+
+@keyframes tt-week-move-in {
+  from {
+    opacity: 1;
+    transform: translate3d(var(--tt-week-dx, 0), 0, 0);
+  }
+  to {
+    opacity: 1;
   }
 }
 
 html[data-day-move]::view-transition-old(tt-day-title),
-html[data-day-move]::view-transition-old(tt-day-body),
-html[data-day-move^="week-"]::view-transition-old(tt-week-strip) {
+html[data-day-move]::view-transition-old(tt-day-body) {
   animation: tt-day-move-out var(--motion-base) var(--ease-exit) both;
 }
 
 html[data-day-move]::view-transition-new(tt-day-title),
-html[data-day-move]::view-transition-new(tt-day-body),
-html[data-day-move^="week-"]::view-transition-new(tt-week-strip) {
+html[data-day-move]::view-transition-new(tt-day-body) {
   animation: tt-day-move-in var(--motion-base) var(--ease-entrance) both;
+}
+
+html[data-day-move^="week-"]::view-transition-old(tt-week-strip) {
+  animation: tt-week-move-out var(--motion-base) var(--ease-entrance) both;
+}
+
+html[data-day-move^="week-"]::view-transition-new(tt-week-strip) {
+  animation: tt-week-move-in var(--motion-base) var(--ease-entrance) both;
+}
+
+/* The two weeks pass inside the strip's own box, not across the page: the
+   image pair is clipped to it, so a week leaves by its edge rather than
+   crossing the arrows. */
+html[data-day-move^="week-"]::view-transition-image-pair(tt-week-strip) {
+  overflow: clip;
+}
+
+/* The highlight is the same drawing before and after, only somewhere else:
+   the browser moves its group from the old place to the new, and this is
+   just the speed of that.
+
+   In the page it sits under the day's number; in the transition every named
+   part is its own layer, drawn in the order it was found, which put the
+   highlight over the strip and hid the number it was sliding to. So the
+   layers are ordered by hand: the page's own snapshot at the bottom, the
+   highlight on it, the strip's text on that. */
+html[data-day-move^="day-"]::view-transition-group(tt-day-selected) {
+  animation-duration: var(--motion-base);
+  animation-timing-function: var(--ease-entrance);
+  z-index: -1;
+}
+
+html[data-day-move^="day-"]::view-transition-group(root) {
+  z-index: -2;
 }
 
 /* The old frame leaves the way you're going; the new one comes from the other
    side. Both move the same way, which is what makes it read as one sheet
    sliding rather than two things passing. */
-html[data-day-move="day-later"]::view-transition-old(*) {
+html[data-day-move$="-later"]::view-transition-old(*) {
   --tt-dx: calc(0px - var(--day-move-shift));
+  --tt-week-dx: -100%;
 }
-html[data-day-move="day-later"]::view-transition-new(*) {
+html[data-day-move$="-later"]::view-transition-new(*) {
   --tt-dx: var(--day-move-shift);
+  --tt-week-dx: 100%;
 }
 
-html[data-day-move="day-earlier"]::view-transition-old(*) {
+html[data-day-move$="-earlier"]::view-transition-old(*) {
   --tt-dx: var(--day-move-shift);
+  --tt-week-dx: 100%;
 }
-html[data-day-move="day-earlier"]::view-transition-new(*) {
+html[data-day-move$="-earlier"]::view-transition-new(*) {
   --tt-dx: calc(0px - var(--day-move-shift));
-}
-
-html[data-day-move="week-later"]::view-transition-old(*) {
-  --tt-dy: calc(0px - var(--day-move-shift));
-}
-html[data-day-move="week-later"]::view-transition-new(*) {
-  --tt-dy: var(--day-move-shift);
-}
-
-html[data-day-move="week-earlier"]::view-transition-old(*) {
-  --tt-dy: var(--day-move-shift);
-}
-html[data-day-move="week-earlier"]::view-transition-new(*) {
-  --tt-dy: calc(0px - var(--day-move-shift));
+  --tt-week-dx: -100%;
 }
 
 /*
  * `--motion-base` is already zero under reduced motion, which stops the slide
- * — but not the cross-fade the browser gives `root` for free. Somebody who
- * asked for no motion gets the new day, immediately.
+ * — but not the cross-fade the browser gives `root` for free, nor the move it
+ * gives the highlight's group. Somebody who asked for no motion gets the new
+ * day, immediately.
  */
 @media (prefers-reduced-motion: reduce) {
   html[data-day-move]::view-transition-group(*),

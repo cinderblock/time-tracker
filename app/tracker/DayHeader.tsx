@@ -5,7 +5,7 @@ import { formatDurationHuman, formatWorkDate, weekdayOf } from "../../src/time.t
 import { Chevron } from "../components/chevron.tsx";
 import { useNow, useTracker } from "./context.tsx";
 import classes from "./DayHeader.module.css";
-import { type DayMove, markDayMove, towards } from "./day-move.ts";
+import { type DayMove, markDayMove, moveBetween } from "./day-move.ts";
 import { daySteps } from "./day-steps.ts";
 import { liveSeconds } from "./model.ts";
 
@@ -22,15 +22,17 @@ const WEEKDAY = ["S", "M", "T", "W", "T", "F", "S"];
 function ArrowButton({
   to,
   label,
+  facing,
   move,
   double = false,
 }: {
   to: string | null;
   label: string;
+  facing: "left" | "right";
+  /** How the screen moves when pressed; a day's step off the end of the strip is a week move. */
   move: DayMove;
   double?: boolean;
 }) {
-  const facing = move.endsWith("-earlier") ? "left" : "right";
   const icon = <Chevron towards={facing} double={double} />;
   if (!to) {
     return (
@@ -61,7 +63,9 @@ export function DayHeader() {
   const isToday = workDate === today;
   // In notes mode a day's notes have to become time before moving on from it.
   const heldHere = model.mode === "notes" && model.notes.some((n) => !n.rolledIntoEntryId);
-  const steps = daySteps({ workDate, today, weekStart: model.week[0]?.date ?? workDate, heldHere });
+  const weekStart = model.week[0]?.date ?? workDate;
+  const steps = daySteps({ workDate, today, weekStart, heldHere });
+  const moveTo = (date: string) => moveBetween(workDate, date, weekStart);
   // Totals come from the server; add the running timer's live time to its day
   // so the strip agrees with the list below it.
   const now = useNow(30_000);
@@ -73,8 +77,8 @@ export function DayHeader() {
     <Stack gap="sm">
       <Group justify="space-between" wrap="nowrap" gap="xs">
         <Group gap={6} wrap="nowrap">
-          <ArrowButton to={hrefFor(steps.previousWeek)} label="Previous week" move="week-earlier" double />
-          <ArrowButton to={hrefFor(steps.previousDay)} label="Previous day" move="day-earlier" />
+          <ArrowButton to={hrefFor(steps.previousWeek)} label="Previous week" facing="left" move={moveTo(steps.previousWeek)} double />
+          <ArrowButton to={hrefFor(steps.previousDay)} label="Previous day" facing="left" move={moveTo(steps.previousDay)} />
         </Group>
         <Stack gap={0} align="center" data-day-part="title">
           <Title order={2} ta="center">
@@ -90,7 +94,7 @@ export function DayHeader() {
                 component={Link}
                 to={hrefFor(today)}
                 viewTransition
-                onClick={() => markDayMove(towards(workDate, today))}
+                onClick={() => markDayMove(moveTo(today))}
                 variant="subtle"
                 size="compact-sm"
               >
@@ -100,8 +104,19 @@ export function DayHeader() {
           </div>
         </Stack>
         <Group gap={6} wrap="nowrap">
-          <ArrowButton to={steps.nextDay && hrefFor(steps.nextDay)} label="Next day" move="day-later" />
-          <ArrowButton to={steps.nextWeek && hrefFor(steps.nextWeek)} label="Next week" move="week-later" double />
+          <ArrowButton
+            to={steps.nextDay && hrefFor(steps.nextDay)}
+            label="Next day"
+            facing="right"
+            move={steps.nextDay ? moveTo(steps.nextDay) : "day-later"}
+          />
+          <ArrowButton
+            to={steps.nextWeek && hrefFor(steps.nextWeek)}
+            label="Next week"
+            facing="right"
+            move={steps.nextWeek ? moveTo(steps.nextWeek) : "week-later"}
+            double
+          />
         </Group>
       </Group>
       {heldHere && workDate < today && (
@@ -114,17 +129,15 @@ export function DayHeader() {
         {week.map((d) => {
           const selected = d.date === workDate;
           const future = d.date > today;
-          const style: React.CSSProperties = {
-            display: "block",
-            borderRadius: "var(--mantine-radius-sm)",
-            padding: "4px 0",
-            textAlign: "center",
-            opacity: future ? 0.4 : 1,
-            background: selected ? "var(--mantine-color-brand-light)" : undefined,
-            border: d.date === today ? "1px solid var(--mantine-color-brand-filled)" : "1px solid transparent",
+          const cell = {
+            className: classes.cell,
+            "data-today": d.date === today ? "" : undefined,
+            "data-future": future ? "" : undefined,
           };
           const label = (
             <>
+              {/* The highlight, as a layer that can travel: see day-move.css. */}
+              {selected && <span className={classes.selected} data-day-part="selected" aria-hidden />}
               <Text size="xs" c="dimmed">
                 {WEEKDAY[weekdayOf(d.date)]}
               </Text>
@@ -138,7 +151,7 @@ export function DayHeader() {
           );
           // Days that haven't happened aren't links.
           return future ? (
-            <div key={d.date} style={style} aria-hidden>
+            <div key={d.date} {...cell} aria-hidden>
               {label}
             </div>
           ) : (
@@ -147,10 +160,10 @@ export function DayHeader() {
               component={Link}
               to={hrefFor(d.date)}
               viewTransition
-              onClick={() => markDayMove(towards(workDate, d.date))}
+              onClick={() => markDayMove(moveTo(d.date))}
               aria-label={`${formatWorkDate(d.date)}: ${formatDurationHuman(d.seconds)}`}
               aria-current={selected ? "date" : undefined}
-              style={style}
+              {...cell}
             >
               {label}
             </UnstyledButton>

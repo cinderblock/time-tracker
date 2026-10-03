@@ -277,6 +277,49 @@ describe("the reducer mirrors the server", () => {
     ]);
   });
 
+  test("a stopped timer reopened runs on from the moment it stopped; so does a paused one", () => {
+    const id = uuidv7();
+    const m = mirror([
+      op("timer.start", { entryId: id, jobId: jobA, at: NINE }),
+      op("timer.stop", { entryId: id, at: NINE + 30 * MIN }),
+      op("timer.reopen", { entryId: id }),
+      op("timer.pause", { entryId: id, at: NINE + 50 * MIN }),
+      op("timer.reopen", { entryId: id }),
+      op("timer.stop", { entryId: id, at: NINE + 60 * MIN }),
+    ]);
+    expect(m.entries[0]!.durationSeconds).toBe(60 * 60);
+  });
+
+  test("reopening is refused while another timer runs, and for time typed in as a duration", () => {
+    const [a, b, typed] = [uuidv7(), uuidv7(), uuidv7()];
+    mirror(
+      [
+        op("timer.start", { entryId: a, jobId: jobA, at: NINE }),
+        op("timer.stop", { entryId: a, at: NINE + 30 * MIN }),
+        op("timer.start", { entryId: b, jobId: jobB, at: NINE + 31 * MIN }),
+        op("timer.reopen", { entryId: a }),
+        op("entry.create", { entryId: typed, jobId: jobA, workDate: DAY, durationSeconds: 600 }),
+        op("timer.reopen", { entryId: typed }),
+      ],
+      { expectRejected: 2 },
+    );
+  });
+
+  test("deleting hours made from notes frees the notes; restoring takes them back", () => {
+    const [n1, n2, e] = [uuidv7(), uuidv7(), uuidv7()];
+    mirror([
+      op("note.create", { noteId: n1, at: NINE, text: "one", jobId: jobA }),
+      op("note.create", { noteId: n2, at: NINE + HOUR, text: "two", jobId: jobA }),
+      op("rollup.commit", {
+        workDate: DAY,
+        lines: [{ entryId: e, jobId: jobA, startedAt: NINE, endedAt: NINE + 2 * HOUR, note: "one; two", noteIds: [n1, n2] }],
+      }),
+      op("entry.delete", { entryId: e, at: NINE + 3 * HOUR }),
+      op("entry.restore", { entryId: e, at: NINE + 3 * HOUR }),
+      op("entry.delete", { entryId: e, at: NINE + 3 * HOUR }),
+    ]);
+  });
+
   test("a discarded timer restored after another started comes back stopped", () => {
     const [a, b] = [uuidv7(), uuidv7()];
     mirror([

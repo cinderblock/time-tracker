@@ -266,7 +266,7 @@ test("an admin fixes someone's day on their tracking screen", async () => {
   await expect(stopped()).toHaveCount(1);
   await stopped().getByRole("button", { name: "Delete" }).click();
   await expect(stopped()).toHaveCount(0);
-  await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(stopped()).toHaveCount(1);
   await page.reload();
   await expect(stopped()).toHaveCount(1);

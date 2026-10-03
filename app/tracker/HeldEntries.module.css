@@ -1,0 +1,127 @@
+/*
+ * Two records side by side, and what choosing does to each.
+ *
+ * The question is "which of these is the work?", so the answer is shown on
+ * the records themselves rather than explained under a button: point at a
+ * choice (hover, or focus from the keyboard) and the half that would be
+ * kept is lifted while the half that would go is dimmed and struck. Choose
+ * it, and the two play that out — the leaving half folds away, the kept
+ * half settles — before the change is made, because the change takes the
+ * card off the screen the moment it is queued.
+ *
+ * `data-keep` on the comparison names what the pointed-at choice keeps:
+ * "mine", "theirs", "both", or nothing. `data-chosen` is the same, once
+ * chosen, and runs the animations. Durations and easings come from
+ * app/motion.ts, so this moves with the rest of the app and stops under
+ * reduced motion.
+ */
+
+.compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--mantine-spacing-md);
+  align-items: stretch;
+}
+
+@media (max-width: 36em) {
+  .compare {
+    grid-template-columns: 1fr;
+  }
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-sm);
+  min-width: 0;
+  padding: var(--mantine-spacing-sm);
+  border-radius: var(--mantine-radius-md);
+  border: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-body);
+  transition:
+    opacity var(--motion-base) var(--ease-entrance),
+    transform var(--motion-base) var(--ease-entrance),
+    border-color var(--motion-base) var(--ease-entrance),
+    box-shadow var(--motion-base) var(--ease-entrance),
+    background-color var(--motion-base) var(--ease-entrance);
+}
+
+.record {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  transition: text-decoration-color var(--motion-base) var(--ease-entrance);
+  text-decoration: line-through;
+  text-decoration-color: transparent;
+}
+
+/* ---- pointing at a choice: a preview ------------------------------------- */
+
+.compare[data-keep="mine"] .side[data-side="mine"],
+.compare[data-keep="theirs"] .side[data-side="theirs"],
+.compare[data-keep="both"] .side {
+  border-color: var(--mantine-color-brand-filled);
+  box-shadow: 0 0 0 1px var(--mantine-color-brand-filled);
+  transform: translateY(-2px);
+}
+
+.compare[data-keep="mine"] .side[data-side="theirs"],
+.compare[data-keep="theirs"] .side[data-side="mine"] {
+  opacity: 0.45;
+  transform: scale(0.98);
+}
+
+.compare[data-keep="mine"] .side[data-side="theirs"] .record,
+.compare[data-keep="theirs"] .side[data-side="mine"] .record {
+  text-decoration-color: currentColor;
+}
+
+/* ---- chosen: played out ---------------------------------------------------- */
+
+@keyframes tt-held-leave {
+  to {
+    opacity: 0;
+    transform: scale(0.94) translateY(8px);
+  }
+}
+
+@keyframes tt-held-keep {
+  40% {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 0 0 3px var(--mantine-color-brand-light);
+  }
+  to {
+    transform: translateY(-2px) scale(1);
+    box-shadow: 0 0 0 1px var(--mantine-color-brand-filled);
+  }
+}
+
+.compare[data-chosen="mine"] .side[data-side="theirs"],
+.compare[data-chosen="theirs"] .side[data-side="mine"] {
+  animation: tt-held-leave var(--motion-slow) var(--ease-exit) both;
+}
+
+.compare[data-chosen="mine"] .side[data-side="mine"],
+.compare[data-chosen="theirs"] .side[data-side="theirs"],
+.compare[data-chosen="both"] .side {
+  border-color: var(--mantine-color-brand-filled);
+  animation: tt-held-keep var(--motion-slow) var(--ease-entrance) both;
+}
+
+/* While it plays, nothing else on the card is for pressing. */
+.compare[data-chosen] {
+  pointer-events: none;
+}
+
+.one {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The second and later records in QuickBooks' column, when it holds several. */
+.one + .one {
+  padding-top: var(--mantine-spacing-xs);
+  border-top: 1px dashed var(--mantine-color-default-border);
+}

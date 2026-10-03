@@ -131,7 +131,7 @@ describe("the Web Connector", () => {
     // One question about what's already there for that person and day, then the three.
     expect(percents).toEqual([25, 50, 75, 100]);
     expect(call("closeConnection", { ticket: ticket! }).result).toBe("Done: 4 requests.");
-    expect(qb.records.map((r) => r.notes.split(" [ref")[0])).toEqual(["Part 0", "Part 1", "Part 2"]);
+    expect(qb.records.map((r) => r.notes)).toEqual(["Part 0", "Part 1", "Part 2"]);
     expect(ids.map((id) => getEntry(id)!.status)).toEqual(["synced", "synced", "synced"]);
     expect(syncState()).toMatchObject({ lastContactOk: true, lastContactAt: now });
   });

@@ -46,8 +46,14 @@ deployer, not here.
    rather than using the bare `react-dom/server`. See the Bun/Windows finding below;
    the rationale is also written into the file itself.
 7. **Report costs are bill rates** (2026-09-16): a job's rate beats a person's.
-8. **Every note sent to QuickBooks ends with `[ref …]`** (2026-09-16), so a record
-   whose answer was lost is found again rather than sent twice.
+8. ~~**Every note sent to QuickBooks ends with `[ref …]`** (2026-09-16), so a record
+   whose answer was lost is found again rather than sent twice.~~ **Reversed
+   2026-10-02:** QuickBooks copies a time record's note onto the invoice line,
+   and the reference reached customers. Nothing but the note is sent; a lost
+   answer is recognised by what was sent (job, minutes, note) among records no
+   entry here stands for, and records already carrying the reference are
+   amended clean by migration `008_clean_notes`. See
+   `plans/move-undo-conflicts-and-clean-notes.md`.
 9. **Hosting shape:** the app runs where it can reach the bridge over the LAN (plain
    HTTP to the bridge machine's IPv4 address) and is itself served over HTTPS (the
    Web Connector refuses anything else).
@@ -443,11 +449,12 @@ As built:
   `TimeTrackingMod` with the stored `EditSequence`, or a `TxnDel`), and needs no
   bookkeeping of which entries make up which remote record. (Changes the
   earlier aggregate-per-day sketch.)
-- **Duplicates are impossible to rule out without a key**, because a send can
-  succeed in QuickBooks while the answer is lost. Each pushed note ends with a
-  short reference (`[ref 1a2b3c4d5e6f]`, the random tail of the entry id); a
-  retry after an uncertain outcome first queries that person's records for the
-  date and adopts a match instead of adding again.
+- **Duplicates can't be ruled out without looking**, because a send can
+  succeed in QuickBooks while the answer is lost. A retry after an uncertain
+  outcome first queries that person's records for the date and adopts the one
+  that says what was sent (job, minutes, note) and that no entry here already
+  stands for, instead of adding again. (Until 2026-10-02 a `[ref …]` suffix
+  on the note did this; it showed up on invoices — decision 8.)
 - **Pull** (hourly while reachable, and on demand): Customers (jobs are
   customers with a parent), Employees, Vendors, Other Names, service items,
   wage payroll items. Customers become `jobs` rows keyed by `remote_id`;
@@ -1024,8 +1031,9 @@ to import history — belong to that deployment's notes.
   whoever is signed in and is replayed as them.
 - **Don't import a constant from a server module into a page** even when the
   module "looks" pure — move it to a dependency-free module (see Phase 4 traps).
-- **Don't send time without its `[ref …]` suffix**, and don't add a record
-  after an uncertain send without looking for it first (`sync_uncertain`).
+- **Don't put anything but the note in a time record's note** — it is copied
+  onto invoices (decision 8) — and don't add a record after an uncertain send
+  without looking for it first (`sync_uncertain`).
 - **Don't let a bridge or connection failure count against the time being
   sent.** Only QuickBooks' own answer about a record may mark it refused.
 - **Don't give the bridge key more than `docs/qb-bridge.md` lists** — read all,

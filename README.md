@@ -59,8 +59,12 @@ repository. All of that is deployment configuration or an admin setting.
   paid — admins can still submit for someone who hasn't got to it, and reopen a
   week that needs fixing.
 
-- **No "are you sure?".** Discarding an accidental timer or deleting an entry is
-  one tap, with an Undo. Nothing is ever really deleted.
+- **No "are you sure?", and undo for everything.** Discarding an accidental
+  timer or deleting an entry is one tap, with an Undo. Any change on the day
+  screen can be put back — a stop, a switch, an edit, a note, hours made from
+  notes, a day submitted — from the "Undo …" line under the day's name, or with
+  Ctrl/Cmd+Z. Undo is the change that puts things back, sent like any other, so
+  it works offline too. Nothing is ever really deleted.
 - **Jobs belong to customers, and jobs can hold sub-jobs.** Time is booked to a
   job, never to a customer itself, and a job that holds sub-jobs takes no hours
   of its own unless an admin says it does. The picker lists the jobs used most
@@ -237,6 +241,13 @@ attempt, with the full request and answer, is kept for 90 days.
 everything about time.** Start and stop times, pauses, locations, notes and
 approval state have no representation in QuickBooks — which stores only a date
 plus a duration — so they live here and are never read back out.
+
+**A record's note is the entry's note, and nothing else.** QuickBooks copies it
+onto the invoice line, so no reference or marker of this app's goes in it. A
+send whose answer was lost is recognised afterwards by what was sent (job,
+minutes, note) among records no entry here stands for. Records sent by versions
+before October 2026 carried a `[ref …]` suffix; migration `008_clean_notes`
+has them amended clean at the next passes, with no one taking anything back.
 
 ## Deployment
 

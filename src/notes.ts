@@ -38,7 +38,15 @@ interface NoteRow {
   deleted_at: number | null;
 }
 
-const COLUMNS = "id, user_id, at, work_date, kind, text, job_id, rolled_into_entry_id, deleted_at";
+/**
+ * A note is part of an entry only while that entry is live: delete the entry
+ * — undoing a rollup — and its notes are free to become hours again; restore
+ * it and they are its once more. The link itself is left in place for that.
+ */
+const COLUMNS = `n.id, n.user_id, n.at, n.work_date, n.kind, n.text, n.job_id,
+       CASE WHEN e.id IS NOT NULL AND e.deleted_at IS NULL THEN n.rolled_into_entry_id END AS rolled_into_entry_id,
+       n.deleted_at`;
+const FROM = "day_notes n LEFT JOIN time_entries e ON e.id = n.rolled_into_entry_id";
 
 const toNote = (r: NoteRow): DayNote => ({
   id: r.id,
@@ -52,7 +60,7 @@ const toNote = (r: NoteRow): DayNote => ({
 });
 
 function getRow(id: string): NoteRow | null {
-  return db().query<NoteRow, [string]>(`SELECT ${COLUMNS} FROM day_notes WHERE id = ?`).get(id);
+  return db().query<NoteRow, [string]>(`SELECT ${COLUMNS} FROM ${FROM} WHERE n.id = ?`).get(id);
 }
 
 function ownLiveNote(userId: number, noteId: string): NoteRow {
@@ -72,9 +80,9 @@ function assertNotRolled(row: NoteRow): void {
 export function listNotesForDate(userId: number, workDate: string): DayNote[] {
   return db()
     .query<NoteRow, [number, string]>(
-      `SELECT ${COLUMNS} FROM day_notes
-        WHERE user_id = ? AND work_date = ? AND deleted_at IS NULL
-        ORDER BY at, id`,
+      `SELECT ${COLUMNS} FROM ${FROM}
+        WHERE n.user_id = ? AND n.work_date = ? AND n.deleted_at IS NULL
+        ORDER BY n.at, n.id`,
     )
     .all(userId, workDate)
     .map(toNote);
@@ -88,10 +96,11 @@ export function listNotesForDate(userId: number, workDate: string): DayNote[] {
 export function pendingNotesBefore(userId: number, before: string): { date: string; count: number } | null {
   const row = db()
     .query<{ work_date: string; n: number }, [number, string]>(
-      `SELECT work_date, COUNT(*) AS n FROM day_notes
-        WHERE user_id = ? AND work_date < ? AND deleted_at IS NULL AND rolled_into_entry_id IS NULL
-        GROUP BY work_date
-        ORDER BY work_date DESC
+      `SELECT n.work_date, COUNT(*) AS n FROM ${FROM}
+        WHERE n.user_id = ? AND n.work_date < ? AND n.deleted_at IS NULL
+          AND (n.rolled_into_entry_id IS NULL OR e.id IS NULL OR e.deleted_at IS NOT NULL)
+        GROUP BY n.work_date
+        ORDER BY n.work_date DESC
         LIMIT 1`,
     )
     .get(userId, before);

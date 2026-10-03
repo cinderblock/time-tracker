@@ -253,8 +253,28 @@ test("a job's sub-jobs nest under it, instead of lines repeating its name", asyn
 test("an accidental timer is discarded without a question, and undo brings it back", async () => {
   await timerCard().getByRole("button", { name: "Discard this timer" }).click();
   await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();
-  await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(timerCard().getByRole("heading", { name: "Alpha Site" })).toBeVisible();
+  await expect(timerCard().getByText("running", { exact: true })).toBeVisible();
+});
+
+test("stopping a timer can be undone, from the header and from the keyboard", async () => {
+  const card = timerCard();
+  await expect(card.getByRole("heading", { name: "Alpha Site" })).toBeVisible();
+  await card.getByRole("button", { name: "Stop" }).click();
+  await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();
+  // The way back names what it undoes, and brings the timer back running.
+  await page.getByRole("button", { name: "Undo stopping the timer" }).click();
+  await expect(timerCard().getByRole("heading", { name: "Alpha Site" })).toBeVisible();
+  await expect(timerCard().getByText("running", { exact: true })).toBeVisible();
+  // An undo is not itself undoable — Ctrl+Z walks back through changes rather
+  // than ping-ponging between the last two — so the line is empty again.
+  await expect(page.getByRole("button", { name: /^Undo / })).toHaveCount(0);
+  // Stopped again, and undone from the keyboard, from anywhere that isn't a text field.
+  await timerCard().getByRole("button", { name: "Stop" }).click();
+  await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("ControlOrMeta+z");
   await expect(timerCard().getByText("running", { exact: true })).toBeVisible();
 });
 
@@ -283,7 +303,7 @@ test("delete an entry from the list, then undo", async () => {
   const bravo = entryRows().filter({ hasText: "Bravo Site" });
   await bravo.getByRole("button", { name: "Delete" }).click();
   await expect(entryRows().filter({ hasText: "Bravo Site" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(entryRows().filter({ hasText: "Bravo Site" })).toHaveCount(1);
 });
 
@@ -444,10 +464,12 @@ test("the header is the same height on today as on any other day", async () => {
   await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
 });
 
-test("a day slides sideways, a week slides vertically, and the arrows stay put", async () => {
+test("a day slides its highlight along the strip, a week slides the whole strip, and the arrows stay put", async () => {
   // Which of the named parts the browser animated, and with what. The slide
-  // is `tt-day-move-*`; anything the transition left alone gets the browser's
-  // own cross-fade, which is what an unchanged week strip should get.
+  // is `tt-day-move-*` / `tt-week-move-*`; the highlight's travel is the
+  // browser's own group animation, which only exists when it has somewhere
+  // to go; anything the transition left alone gets the browser's own
+  // cross-fade, which is what an unchanged week strip should get.
   const slidWhile = async (act: () => Promise<void>) => {
     await page.evaluate(() => {
       const seen = new Set<string>();
@@ -455,7 +477,9 @@ test("a day slides sideways, a week slides vertically, and the arrows stay put",
       const tick = () => {
         for (const a of document.getAnimations()) {
           const pseudo = (a.effect as KeyframeEffect | null)?.pseudoElement;
-          if (pseudo?.startsWith("::view-transition-new")) seen.add(`${pseudo} ${(a as CSSAnimation).animationName}`);
+          if (pseudo?.startsWith("::view-transition-new") || pseudo === "::view-transition-group(tt-day-selected)") {
+            seen.add(`${pseudo} ${(a as CSSAnimation).animationName}`);
+          }
         }
         requestAnimationFrame(tick);
       };
@@ -472,13 +496,18 @@ test("a day slides sideways, a week slides vertically, and the arrows stay put",
   });
   expect(day).toContain("::view-transition-new(tt-day-title) tt-day-move-in");
   expect(day).toContain("::view-transition-new(tt-day-body) tt-day-move-in");
-  // The week didn't change, so the strip sits still under the moving day.
-  expect(day).not.toContain("::view-transition-new(tt-week-strip) tt-day-move-in");
+  // The week didn't change, so the strip sits still under the moving day —
+  // and the highlight travels along it on its own.
+  expect(day).not.toContain("::view-transition-new(tt-week-strip) tt-week-move-in");
+  expect(day.some((a) => a.startsWith("::view-transition-group(tt-day-selected) "))).toBe(true);
 
   const week = await slidWhile(async () => {
     await page.getByRole("link", { name: "Previous week" }).click();
   });
-  expect(week).toContain("::view-transition-new(tt-week-strip) tt-day-move-in");
+  expect(week).toContain("::view-transition-new(tt-week-strip) tt-week-move-in");
+  expect(week).toContain("::view-transition-new(tt-day-body) tt-day-move-in");
+  // The highlight left with its week rather than flying across to the new one.
+  expect(week.some((a) => a.startsWith("::view-transition-group(tt-day-selected) "))).toBe(false);
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
@@ -577,7 +606,7 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   await expect(row.getByText("Duration only")).toBeVisible();
   await expect(row.getByText("1h 15m")).toBeVisible();
   await expect(bravo.getByText("added to time")).toHaveCount(3);
-  await expect(bravo.getByRole("button", { name: /into hours/ })).toHaveCount(0);
+  await expect(bravo.getByRole("button", { name: /^Turn .*into hours/ })).toHaveCount(0);
 
   // Alpha runs to the end of the day, so it asks when that was.
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
@@ -587,7 +616,8 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   await alphaDialog.getByRole("button", { name: "Add 45m to Alpha Site" }).click();
   await expect(alphaDialog).toBeHidden();
   await expect(entryRows().filter({ hasText: "Site walk" }).getByText("45m")).toBeVisible();
-  await expect(page.getByRole("button", { name: /into hours/ })).toHaveCount(0);
+  // Nothing left to turn into hours (the undo line offers to undo the last turning, which is not that).
+  await expect(page.getByRole("button", { name: /^Turn .*into hours/ })).toHaveCount(0);
 });
 
 test("in notes mode, yesterday's notes have to become hours before today's can start", async () => {

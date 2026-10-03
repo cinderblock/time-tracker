@@ -59,13 +59,19 @@ export interface Work {
 }
 
 /**
- * The reference appended to every note sent, so a record whose send had an
- * unknown outcome can be found again rather than sent twice. The random tail
- * of the entry's UUID v7 (the head is a timestamp, shared by entries created
- * in the same millisecond).
+ * Whether a record found there is the one this entry would send: same job,
+ * same minutes, same note. This is how a record whose send had an unknown
+ * outcome is found again rather than sent twice. It used to be a reference
+ * appended to the note; that reference turned up on customers' invoices,
+ * because QuickBooks copies a time record's note onto the invoice line, so
+ * now nothing but the note itself is sent, and the record is recognised by
+ * what was sent. Only consulted for an entry that was in the middle of a
+ * send (`sync_uncertain`), and only among records no entry here already
+ * stands for, so the worst a wrong match can do is adopt an identical record
+ * and amend it to the same values.
  */
-export function entryRef(entryId: string): string {
-  return `[ref ${entryId.replace(/-/g, "").slice(-12)}]`;
+function sameAsSent(found: FoundTime, record: Pick<TimeRecord, "jobRemoteId" | "minutes" | "notes">): boolean {
+  return found.jobRemoteId === record.jobRemoteId && found.minutes === record.minutes && found.notes.trim() === record.notes.trim();
 }
 
 export function backoff(failures: number): number {
@@ -91,10 +97,19 @@ interface EntryRow {
   sync_next_at: number | null;
   deleted_at: number | null;
   duplicate_check: string | null;
+  remote_stale_at: number | null;
 }
 
 const ENTRY_COLUMNS =
-  "id, user_id, job_id, work_date, duration_seconds, note, billable, status, service_item_id, remote_txn_id, remote_edit_sequence, remote_deleted_at, sync_uncertain, sync_next_at, deleted_at, duplicate_check";
+  "id, user_id, job_id, work_date, duration_seconds, note, billable, status, service_item_id, remote_txn_id, remote_edit_sequence, remote_deleted_at, sync_uncertain, sync_next_at, deleted_at, duplicate_check, remote_stale_at";
+
+/**
+ * `WHERE` for time already recorded there whose record is known to differ
+ * from what this app would send now (`remote_stale_at`, set by a migration
+ * that changed what is sent): amended at the next pass, without anyone
+ * taking it back and signing it off again.
+ */
+const STALE_SQL = "status = 'synced' AND remote_stale_at IS NOT NULL AND remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL";
 
 /**
  * `status IN (…)` for time the sync may send as the organisation is set up
@@ -237,8 +252,6 @@ function recordFor(e: EntryRow, l: Lookups): { record: TimeRecord } | NotReady {
   // The nearest answer up the tree; with none given, time is billable.
   const jobBillable = chain.find((j) => j.billable != null)?.billable ?? true;
 
-  const ref = entryRef(e.id);
-  const note = e.note?.trim() ?? "";
   return {
     record: {
       txnDate: e.work_date,
@@ -247,9 +260,32 @@ function recordFor(e: EntryRow, l: Lookups): { record: TimeRecord } | NotReady {
       serviceItemRemoteId: serviceItemId,
       payrollItemRemoteId: payrollItemId,
       minutes,
-      notes: note ? `${note} ${ref}` : ref,
+      // The note, and nothing else: QuickBooks copies it onto the invoice
+      // line, so it is the customer's to read. (An app reference used to be
+      // appended here; see `sameAsSent` for how a lost answer is found now.)
+      notes: e.note?.trim() ?? "",
       billable: e.billable === 1 && jobBillable && Boolean(job) && Boolean(serviceItemId),
     },
+  };
+}
+
+/**
+ * What an entry's record there says — job, minutes, note — read off the row
+ * without the readiness checks, so a send can be recognised even if the
+ * entry couldn't be sent again as things stand (its person unlinked since,
+ * say). With it, the records already known not to be this entry's: the ones
+ * the person was asked about and said were different work, which can look
+ * exactly like what was sent. Null only if the entry is gone.
+ */
+function sentShape(entryId: string): { shape: Pick<TimeRecord, "jobRemoteId" | "minutes" | "notes">; notMine: Set<string> } | null {
+  const row = db().query<EntryRow, [string]>(`SELECT ${ENTRY_COLUMNS} FROM time_entries WHERE id = ?`).get(entryId);
+  if (!row) return null;
+  const job = jobChain(lookups(), row.job_id)[0];
+  const check = duplicateCheckOf(row);
+  const notMine = new Set(check && "found" in check ? check.found.map((f) => f.txnId) : []);
+  return {
+    shape: { jobRemoteId: job?.remoteId ?? null, minutes: Math.round(row.duration_seconds / 60), notes: row.note?.trim() ?? "" },
+    notMine,
   };
 }
 
@@ -275,7 +311,7 @@ export interface DuplicateFound {
 type DuplicateCheck =
   | { state: "clear"; key: string; at: number }
   | { state: "held"; key: string; at: number; found: DuplicateFound[] }
-  | { state: "separate"; key: string; at: number; by: number }
+  | { state: "separate"; key: string; at: number; by: number; found: DuplicateFound[] }
   | { state: "replaced"; key: string; at: number; by: number; txnId: string };
 
 function duplicateCheckOf(row: { duplicate_check: string | null }): DuplicateCheck | null {
@@ -291,8 +327,14 @@ function currentCheck(row: { duplicate_check: string | null }, record: TimeRecor
   return check && check.key === checkKey(record) ? check : null;
 }
 
-/** Whether a note carries one of this app's references (`entryRef`): such a record was sent from here. */
-const sentFromHere = (notes: string) => notes.includes("[ref ");
+/**
+ * How many entries here stand for a record there. A record is this app's if
+ * an entry holds its id — deleted entries included, since their record is
+ * removed there in its own time and is still ours until then.
+ */
+function standsFor(txnId: string): number {
+  return db().query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM time_entries WHERE remote_txn_id = ?").get(txnId)!.n;
+}
 
 function setDuplicateCheck(entryId: string, check: DuplicateCheck | null): void {
   db()
@@ -314,24 +356,16 @@ function applyCheck(askedFor: string, asked: NonNullable<Work["check"]>, records
           AND (remote_txn_id IS NULL OR remote_deleted_at IS NOT NULL) AND sync_uncertain IS NULL`,
     )
     .all(asked.userId, asked.txnDate);
-  const standsFor = db().query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM time_entries WHERE remote_txn_id = ?");
   for (const row of rows) {
     const built = recordFor(row, l);
     if (!("record" in built) || built.record.personRemoteId !== asked.personRemoteId || built.record.txnDate !== asked.txnDate) continue;
     if (row.id !== askedFor && currentCheck(row, built.record)) continue; // already answered
     const key = checkKey(built.record);
-    const mine = records.find((r) => r.notes.includes(entryRef(row.id)));
-    if (mine) {
-      // It's there already, from a send whose outcome was never recorded. Adopt it.
-      db()
-        .query("UPDATE time_entries SET remote_txn_id = ?, remote_edit_sequence = ?, remote_deleted_at = NULL WHERE id = ?")
-        .run(mine.txnId, mine.editSequence, row.id);
-      setDuplicateCheck(row.id, { state: "clear", key, at: now });
-      continue;
-    }
-    const found = records.filter(
-      (r) => r.jobRemoteId === built.record.jobRemoteId && !sentFromHere(r.notes) && standsFor.get(r.txnId)!.n === 0,
-    );
+    // Anything on the same job that no entry here stands for. A record this
+    // app sent is always claimed by its entry — an add whose answer was lost
+    // is found and claimed (`entry.find`) before the entry ever gets here —
+    // so what's left is the other tracker's, and the person is asked.
+    const found = records.filter((r) => r.jobRemoteId === built.record.jobRemoteId && standsFor(r.txnId) === 0);
     setDuplicateCheck(
       row.id,
       found.length
@@ -412,7 +446,9 @@ export function resolveDuplicate(args: {
 
     switch (args.action) {
       case "separate":
-        setDuplicateCheck(args.entryId, { state: "separate", key: check.key, at: now, by: args.actorUserId });
+        // What was found is kept: it is known not to be this entry's, which a
+        // lost answer's search (`sentShape`) has to be told.
+        setDuplicateCheck(args.entryId, { state: "separate", key: check.key, at: now, by: args.actorUserId, found: check.found });
         event("duplicate_separate", { before: { found: check.found } });
         return;
 
@@ -513,7 +549,7 @@ export function listWork(now: number = Date.now()): Work[] {
       `SELECT ${ENTRY_COLUMNS} FROM time_entries
         WHERE (deleted_at IS NOT NULL
                 AND ((remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL) OR sync_uncertain IS NOT NULL))
-           OR (deleted_at IS NULL AND ${sendableSql()})
+           OR (deleted_at IS NULL AND (${sendableSql()} OR (${STALE_SQL})))
         ORDER BY work_date, id`,
     )
     .all();
@@ -679,13 +715,18 @@ export function finishWork(backend: string, work: Work, performed: Performed, no
           return;
         }
         if (result.type !== "time.found") return;
-        const ref = entryRef(work.id);
         const askedId = work.request.type === "time.find" && "txnId" in work.request.by ? work.request.by.txnId : null;
         const byId = askedId != null;
-        // Asked for by id, the record is the one whatever its note says: it
-        // may have been edited there, or taken over from another tracker and
-        // not amended yet. Asked for by day, only our reference identifies it.
-        const match = result.records.find((r) => (byId ? r.txnId === askedId : r.notes.includes(ref)));
+        // Asked for by id, the record is the one whatever it says: it may have
+        // been edited there, or taken over from another tracker and not
+        // amended yet. Asked for by day — an add whose answer was lost — it is
+        // the record that says what this entry sent, if nobody else's.
+        const sent = byId ? null : sentShape(work.id);
+        const match = result.records.find((r) =>
+          byId
+            ? r.txnId === askedId
+            : sent != null && sameAsSent(r, sent.shape) && !sent.notMine.has(r.txnId) && standsFor(r.txnId) === 0,
+        );
         if (match) {
           // Adopt it; the next pass amends it to match exactly.
           db()
@@ -724,7 +765,7 @@ export function finishWork(backend: string, work: Work, performed: Performed, no
             .query(
               `UPDATE time_entries SET status = 'synced', remote_txn_id = ?, remote_edit_sequence = ?, synced_at = ?,
                       remote_deleted_at = NULL, sync_uncertain = NULL, sync_error = NULL, sync_failures = 0,
-                      sync_next_at = NULL
+                      sync_next_at = NULL, remote_stale_at = NULL
                 WHERE id = ?`,
             )
             .run(result.txnId, result.editSequence, now, work.id);
@@ -805,7 +846,7 @@ export function syncOverview(now: number = Date.now()): SyncOverview {
   const rows = db()
     .query<EntryRow & { sync_error: string | null }, []>(
       `SELECT ${ENTRY_COLUMNS}, sync_error FROM time_entries
-        WHERE deleted_at IS NULL AND (${sendableSql()} OR (status IN ('draft','open') AND remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL))
+        WHERE deleted_at IS NULL AND (${sendableSql()} OR (${STALE_SQL}) OR (status IN ('draft','open') AND remote_txn_id IS NOT NULL AND remote_deleted_at IS NULL))
         ORDER BY work_date, id`,
     )
     .all();

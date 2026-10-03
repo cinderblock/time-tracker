@@ -340,9 +340,7 @@ function NoteRow({ note }: { note: NoteView }) {
   async function remove() {
     const result = await dispatch("note.delete", { noteId: note.id, at: Date.now() });
     if (result.ok) {
-      undoToast(start ? "Start removed." : "Note deleted.", () =>
-        dispatch("note.restore", { noteId: note.id, at: Date.now() }),
-      );
+      undoToast(start ? "Start removed." : "Note deleted.");
     }
   }
 

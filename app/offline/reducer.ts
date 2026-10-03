@@ -30,6 +30,7 @@ export function applyPending(base: DayModel, ops: readonly Op[]): DayModel {
     },
     deletedEntries: new Map(),
     deletedNotes: new Map(),
+    closedInRun: new Set(),
   };
   for (const op of ops) applyOne(state, op);
   state.m.entries.sort(compareEntries);
@@ -39,9 +40,19 @@ export function applyPending(base: DayModel, ops: readonly Op[]): DayModel {
 
 interface State {
   m: DayModel;
-  /** Entries deleted by an op in this same run, so a later restore can bring them back. */
-  deletedEntries: Map<string, { entry: EntryView; at: number }>;
+  /**
+   * Entries deleted by an op in this same run, so a later restore can bring
+   * them back — with the notes that were part of each, which it frees.
+   */
+  deletedEntries: Map<string, { entry: EntryView; at: number; noteIds: string[] }>;
   deletedNotes: Map<string, NoteView>;
+  /**
+   * Timers stopped or paused by an op in this same run. A reopen undoes one
+   * of those and nothing else: told apart from a timer the server had already
+   * stopped, it can't reopen it twice when the ops are applied again on top
+   * of a copy that already shows the stop.
+   */
+  closedInRun: Set<string>;
 }
 
 function jobOf(m: DayModel, id: string | null | undefined): JobView | undefined {
@@ -90,7 +101,8 @@ function noteRequired(m: DayModel, jobId: string | null): boolean {
   return m.requireNoteOnStop || (jobOf(m, jobId)?.requiresNote ?? false);
 }
 
-function stopEntry(m: DayModel, entry: EntryView, at: number, note: string | null | undefined): void {
+function stopEntry(s: State, entry: EntryView, at: number, note: string | null | undefined): void {
+  const { m } = s;
   const running = entry.runningSince != null ? Math.max(0, Math.round((at - entry.runningSince) / 1000)) : 0;
   const stopped: EntryView = {
     ...entry,
@@ -105,6 +117,7 @@ function stopEntry(m: DayModel, entry: EntryView, at: number, note: string | nul
   addToWeek(m, entry.workDate, running);
   putEntry(m, stopped);
   m.open = null;
+  s.closedInRun.add(entry.id);
 }
 
 const cleanNote = (n: string | null | undefined) => (n === undefined ? undefined : n?.trim() ? n.trim() : null);
@@ -139,7 +152,7 @@ function applyOne(s: State, op: Op): void {
     case "timer.start": {
       const p = op.payload;
       if (findEntry(m, p.entryId)) return;
-      if (m.open) stopEntry(m, m.open, p.at, undefined);
+      if (m.open) stopEntry(s, m.open, p.at, undefined);
       const entry: EntryView = {
         id: p.entryId,
         jobId: p.jobId,
@@ -171,6 +184,7 @@ function applyOne(s: State, op: Op): void {
       const ran = Math.max(0, Math.round((p.at - open.runningSince) / 1000));
       addToWeek(m, open.workDate, ran);
       putEntry(m, { ...open, durationSeconds: open.durationSeconds + ran, runningSince: null, lastEndedAt: p.at });
+      s.closedInRun.add(open.id);
       return;
     }
 
@@ -185,7 +199,30 @@ function applyOne(s: State, op: Op): void {
     case "timer.stop": {
       const p = op.payload;
       if (m.open?.id !== p.entryId) return;
-      stopEntry(m, m.open, p.at, cleanNote(p.note));
+      stopEntry(s, m.open, p.at, cleanNote(p.note));
+      return;
+    }
+
+    case "timer.reopen": {
+      // Running again from the moment it last stopped or paused: a new
+      // segment from there, as the server makes it, so the closed time and
+      // the last end stay what they were.
+      const e = findEntry(m, op.payload.entryId);
+      // Stopped before this copy was fetched: nothing local to reopen until it syncs.
+      if (!s.closedInRun.has(op.payload.entryId)) return;
+      if (!e || (e.status !== "draft" && e.status !== "open") || e.runningSince != null || e.lastEndedAt == null) return;
+      if (m.open && m.open.id !== e.id) return;
+      s.closedInRun.delete(e.id);
+      const reopened: EntryView = {
+        ...e,
+        status: "open",
+        runningSince: e.lastEndedAt,
+        endedAt: null,
+        segmentCount: e.segmentCount + 1,
+        noteRequired: noteRequired(m, e.jobId),
+      };
+      m.open = reopened;
+      putEntry(m, reopened);
       return;
     }
 
@@ -286,7 +323,11 @@ function applyOne(s: State, op: Op): void {
       const p = op.payload;
       const e = findEntry(m, p.entryId);
       if (!e || !isEditable(e.status)) return;
-      s.deletedEntries.set(e.id, { entry: e, at: p.at });
+      // Notes that had become this entry are notes again (the server's rule: a
+      // note is part of an entry only while the entry is live).
+      const noteIds = m.notes.filter((n) => n.rolledIntoEntryId === e.id).map((n) => n.id);
+      m.notes = m.notes.map((n) => (n.rolledIntoEntryId === e.id ? { ...n, rolledIntoEntryId: null } : n));
+      s.deletedEntries.set(e.id, { entry: e, at: p.at, noteIds });
       m.entries = m.entries.filter((x) => x.id !== e.id);
       if (m.open?.id === e.id) m.open = null;
       addToWeek(m, e.workDate, -e.durationSeconds);
@@ -320,6 +361,7 @@ function applyOne(s: State, op: Op): void {
       }
       addToWeek(m, restored.workDate, restored.durationSeconds);
       putEntry(m, restored);
+      m.notes = m.notes.map((n) => (deleted.noteIds.includes(n.id) ? { ...n, rolledIntoEntryId: e.id } : n));
       return;
     }
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { daySteps } from "./day-steps.ts";
+import { moveBetween } from "./day-move.ts";
 import { rolloverCheck } from "./rollover.ts";
 
 /** Wednesday 23 September 2026, in a week that began on Sunday the 20th. */
@@ -130,5 +131,18 @@ describe("rolloverCheck", () => {
     expect(rolloverCheck(now, "2026-03-07", PT, 0).nextCheckIn).toBe(
       Date.parse("2026-03-08T08:00:00Z") + SETTLE - now,
     );
+  });
+});
+
+describe("moveBetween", () => {
+  test("within the week on screen it is the day that moves", () => {
+    expect(moveBetween("2026-09-23", "2026-09-22", SUNDAY_WEEK)).toBe("day-earlier");
+    expect(moveBetween("2026-09-23", "2026-09-26", SUNDAY_WEEK)).toBe("day-later");
+  });
+
+  test("to a day outside it, the week moves — a single step off either end included", () => {
+    expect(moveBetween("2026-09-23", "2026-09-16", SUNDAY_WEEK)).toBe("week-earlier");
+    expect(moveBetween("2026-09-20", "2026-09-19", SUNDAY_WEEK)).toBe("week-earlier");
+    expect(moveBetween("2026-09-26", "2026-09-27", SUNDAY_WEEK)).toBe("week-later");
   });
 });

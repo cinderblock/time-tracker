@@ -367,6 +367,65 @@ describe("delete and undo", () => {
     expect(getOpenEntry(userId)?.id).toBe(second);
   });
 
+  test("a stop is undone by reopening: the timer runs on from where it stopped, with no gap", () => {
+    const id = uuidv7();
+    ok(send("timer.start", { entryId: id, jobId: jobA, at: NINE }));
+    ok(send("timer.stop", { entryId: id, at: NINE + 30 * MIN }));
+    ok(send("timer.reopen", { entryId: id }));
+    const running = getOpenEntry(userId)!;
+    expect(running.id).toBe(id);
+    expect(running.segments.map((s) => [s.startedAt, s.endedAt])).toEqual([
+      [NINE, NINE + 30 * MIN],
+      [NINE + 30 * MIN, null],
+    ]);
+    ok(send("timer.stop", { entryId: id, at: NINE + 45 * MIN }));
+    expect(getEntry(id)!.durationSeconds).toBe(45 * 60);
+  });
+
+  test("a pause is undone the same way", () => {
+    const id = uuidv7();
+    ok(send("timer.start", { entryId: id, jobId: jobA, at: NINE }));
+    ok(send("timer.pause", { entryId: id, at: NINE + 10 * MIN }));
+    ok(send("timer.reopen", { entryId: id }));
+    expect(getOpenEntry(userId)!.segments.at(-1)).toMatchObject({ startedAt: NINE + 10 * MIN, endedAt: null });
+    expect(rejected(send("timer.reopen", { entryId: id }), "conflict")).toContain("already running");
+  });
+
+  test("reopening needs the field clear, a timer to reopen, and time that is still the person's to change", () => {
+    const [a, b, typed] = [uuidv7(), uuidv7(), uuidv7()];
+    ok(send("timer.start", { entryId: a, jobId: jobA, at: NINE }));
+    ok(send("timer.stop", { entryId: a, at: NINE + 30 * MIN }));
+    ok(send("timer.start", { entryId: b, jobId: jobB, at: NINE + 31 * MIN }));
+    expect(rejected(send("timer.reopen", { entryId: a }), "conflict")).toContain("Another timer is running");
+    ok(send("entry.create", { entryId: typed, jobId: jobA, workDate: TODAY, durationSeconds: 600 }));
+    expect(rejected(send("timer.reopen", { entryId: typed }), "conflict")).toContain("typed in as a duration");
+    ok(send("timer.stop", { entryId: b, at: NINE + 40 * MIN }));
+    ok(send("day.submit", { workDate: TODAY }));
+    expect(rejected(send("timer.reopen", { entryId: a }), "conflict")).toContain("submitted");
+    rejected(send("timer.reopen", { entryId: uuidv7() }), "not_found");
+  });
+
+  test("deleting hours made from notes frees the notes, and restoring takes them back", () => {
+    const [n1, e] = [uuidv7(), uuidv7()];
+    ok(send("note.create", { noteId: n1, at: NINE, text: "one", jobId: jobA }));
+    ok(
+      send("rollup.commit", {
+        workDate: TODAY,
+        lines: [{ entryId: e, jobId: jobA, startedAt: NINE, endedAt: NINE + HOUR, noteIds: [n1] }],
+      }),
+    );
+    expect(listNotesForDate(userId, TODAY)[0]!.rolledIntoEntryId).toBe(e);
+    rejected(send("note.update", { noteId: n1, text: "changed" }), "conflict");
+
+    ok(send("entry.delete", { entryId: e, at: NINE + 2 * HOUR }));
+    expect(listNotesForDate(userId, TODAY)[0]!.rolledIntoEntryId).toBeNull();
+    expect(pendingNotesBefore(userId, "2026-09-17")).toEqual({ date: TODAY, count: 1 });
+
+    ok(send("entry.restore", { entryId: e, at: NINE + 2 * HOUR }));
+    expect(listNotesForDate(userId, TODAY)[0]!.rolledIntoEntryId).toBe(e);
+    expect(pendingNotesBefore(userId, "2026-09-17")).toBeNull();
+  });
+
   test("deletes are soft: the row and its history remain", () => {
     const id = uuidv7();
     ok(send("entry.create", { entryId: id, jobId: jobA, workDate: TODAY, durationSeconds: 60 }));

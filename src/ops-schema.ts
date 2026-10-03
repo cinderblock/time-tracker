@@ -55,6 +55,8 @@ export const opPayloads = {
   "timer.pause": z.object({ entryId: id, at: instant }),
   "timer.resume": z.object({ entryId: id, at: instant }),
   "timer.stop": z.object({ entryId: id, at: instant, note, location }),
+  /** Undo a stop or a pause: running again from the moment it last stopped, no gap. */
+  "timer.reopen": z.object({ entryId: id }),
 
   "entry.create": z
     .object({
