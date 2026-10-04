@@ -343,6 +343,8 @@ test("or QuickBooks' record is the right one, and the entry here is let go", asy
   await acme.getByRole("button", { name: "Add a job" }).click();
   await acme.getByLabel("New job for Acme").fill("Second Site");
   await acme.getByRole("button", { name: "Add job", exact: true }).click();
+  // Saved before moving on: leaving the page first can beat the save.
+  await expect(page.getByRole("group", { name: "Acme › Second Site" })).toBeVisible();
   await page.goto("/admin/accounting");
   await page.locator(".mantine-Card-root", { hasText: "Second Site" }).getByRole("button", { name: "Create in QuickBooks" }).click();
   await expect(toast("It will be created at the next contact. Sent 1 request.")).toBeVisible();
