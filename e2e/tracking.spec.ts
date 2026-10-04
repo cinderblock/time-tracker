@@ -513,6 +513,15 @@ test("a day slides its highlight along the strip, a week slides the whole strip,
     return page.evaluate(() => [...(window as unknown as { __slid: Set<string> }).__slid].sort());
   };
 
+  // Start midweek, so a day back stays in its week whatever day today is:
+  // once a week today is the first day of its week, and forward stops at
+  // today, so from today there is then no day within the week to step to.
+  await page.getByRole("link", { name: "Previous week" }).click();
+  await expect(page.getByRole("link", { name: "Back to today" })).toBeVisible();
+  const midweek = page.locator("[data-day-part='week'] a").nth(3);
+  await midweek.click();
+  await expect(midweek).toHaveAttribute("aria-current", "date");
+
   const day = await slidWhile(async () => {
     await page.getByRole("link", { name: "Previous day" }).click();
     await expect(page.getByRole("link", { name: "Back to today" })).toBeVisible();
