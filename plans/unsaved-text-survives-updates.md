@@ -93,6 +93,13 @@ server is unreachable).
 ## Progress log
 
 - [x] 2026-10-03 — Asked for; design written.
+- [x] 2026-10-03 — **Deployed** at `b68032f` (image `sha256:5f720ec8…`,
+      revision label checked against the commit from the registry). A
+      database snapshot was taken first; migrations `010` and `011` applied
+      on the first start; the container came up healthy and serves the new
+      service-worker build. On the live data every typed-in entry's time
+      became untimed time with nothing mismatched, and no person had two
+      lines for one job and day.
 - [x] 2026-10-03 — Built: drafts, watcher, waiting updater, `UpdateReady`;
       typecheck; 471 unit; full e2e 81 passed (quiet machine).
 

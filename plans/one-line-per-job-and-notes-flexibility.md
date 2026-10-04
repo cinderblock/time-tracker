@@ -197,6 +197,13 @@ Phase 2 — one line per job per day:
 ## Progress log
 
 - [x] 2026-10-03 — Asks recorded; scope chosen by the user; plan written.
+- [x] 2026-10-03 — **Deployed** at `b68032f` (image `sha256:5f720ec8…`,
+      revision label checked against the commit from the registry). A
+      database snapshot was taken first; migrations `010` and `011` applied
+      on the first start; the container came up healthy and serves the new
+      service-worker build. On the live data every typed-in entry's time
+      became untimed time with nothing mismatched, and no person had two
+      lines for one job and day.
 - [x] 2026-10-03 — **Phase 2 built** (one line per job per day). Commit
       `2d5ccc5` (rule, mirror, undo) plus the UI commit. 458 unit tests;
       e2e green apart from load-induced timing failures, being re-run.
