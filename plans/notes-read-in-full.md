@@ -51,7 +51,12 @@ shown), and nothing else expands it.
       the held comparison, checked by eye (`submitted-note-*.png`,
       `day-held.png`).
 - [x] Committed.
-- [ ] Deployed.
+- [x] Deployed 2026-10-04: `ea507aa`, image
+      `sha256:9b205cee…` (its revision label checked against the commit in
+      the registry before pinning), CI run 37239993052 green. No migrations.
+      Container healthy; the deployment's `/sw.js` serves build
+      `8d2c92a23bb8a717`, and its tracker bundle carries "Show all" / "Show
+      less".
 
 ## Findings / gotchas
 
