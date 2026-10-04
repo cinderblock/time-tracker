@@ -156,7 +156,8 @@ Phase 2 — one line per job per day:
    the admin calendar lists a mixed line's untimed part.
 9. ✅ Sync: duration is the line's total, so `recordFor` needed nothing;
    amendments verified against the pretend QuickBooks in e2e.
-10. ⬅️ Full e2e on a quiet machine, commit, push; deploy waits for the user.
+10. ✅ Full e2e on a quiet machine (81 passed, with the unsaved-text work),
+    committed, pushed; deploy waits for the user.
 
 ## Findings / gotchas
 

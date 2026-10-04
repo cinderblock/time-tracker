@@ -9,6 +9,7 @@ import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { EntryEditor } from "./EntryEditor.tsx";
 import { landingClass, useFlight } from "./flight.tsx";
 import { type EntryView, liveSeconds } from "./model.ts";
+import { useTrackerDraft } from "./tracker-draft.ts";
 
 /**
  * The day's record: the hours it holds, and where they came from. Tap one to
@@ -17,8 +18,16 @@ import { type EntryView, liveSeconds } from "./model.ts";
 export function EntryList() {
   const { model } = useTracker();
   const now = useNow(30_000);
-  const [editing, setEditing] = useState<EntryView | null>(null);
-  const [adding, setAdding] = useState(false);
+  // Which editor is open — an entry's, or "add time" — kept on the device, so
+  // an update or a crash reopens it with what was typed (EntryEditor keeps
+  // the fields).
+  const [open, setOpen] = useTrackerDraft<{ entryId: string | null } | null>("entry-editor-open", null);
+  const editing = open?.entryId
+    ? (model.entries.find((e) => e.id === open.entryId) ?? (model.open?.id === open.entryId ? model.open : null))
+    : null;
+  const adding = open != null && open.entryId == null;
+  const setEditing = (e: EntryView | null) => setOpen(e ? { entryId: e.id } : null);
+  const setAdding = (on: boolean) => setOpen(on ? { entryId: null } : null);
   const total = model.entries.reduce((sum, e) => sum + (now === undefined ? e.durationSeconds : liveSeconds(e, now)), 0);
   const duplicates = duplicateLines(model.entries);
 

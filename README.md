@@ -219,9 +219,18 @@ app's files (the list is stamped into it at build time by
 An installed app also replaces itself ([`app/pwa/`](app/pwa/)). It asks whether a
 newer release exists when it is resumed, when it reconnects, and on a slow timer
 while open — a single page never navigates, so nothing else would ask — and
-reloads the moment the new worker takes over. Without that last step the app
-looks perfectly alive on old code, because data is never cached and only the
-bundle is stale.
+reloads once the new worker takes over. Without that last step the app looks
+perfectly alive on old code, because data is never cached and only the bundle is
+stale.
+
+The reload never costs anyone what they've typed. Text being typed on the
+tracking screen — a note, a timer's note, an entry being edited, notes being
+turned into hours — is kept on the device as it's typed and put back after any
+reload, open dialog and all ([`app/drafts/`](app/drafts/)); it's cleared once
+saved or cancelled, and on signing out. The update itself waits while someone is
+typing, or while a form elsewhere holds unsaved text
+([`app/pwa/unsaved.ts`](app/pwa/unsaved.ts)), and says a new version is ready
+with a way to load it now.
 
 ## Configuration
 

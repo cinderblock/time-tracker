@@ -33,6 +33,7 @@ import { config } from "../src/config.server.ts";
 import { authMiddleware } from "./auth.server.ts";
 import { MOTION, motionCss } from "./motion.ts";
 import { startAutoUpdate } from "./pwa/auto-update.ts";
+import { UpdateReady } from "./pwa/UpdateReady.tsx";
 import { initMiddleware } from "./server-init.ts";
 
 // Order matters: the database must be open before the session is resolved.
@@ -181,6 +182,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
     <MantineProvider theme={theme} defaultColorScheme="auto">
       <Notifications position="bottom-center" />
       <Outlet />
+      <UpdateReady />
     </MantineProvider>
   );
 }

@@ -1,3 +1,5 @@
+import { watchUnsavedText } from "./unsaved.ts";
+
 /**
  * Keeping an installed copy of the app current.
  *
@@ -18,9 +20,13 @@
  *              a release behind — which is exactly how this was found. The
  *              handover is the signal to reload.
  *
- * The reload is silent and immediate, so unsaved text in an open dialog is
- * lost if a deploy lands mid-edit. That is the deliberate trade for never
- * showing a stale app; tracked time itself reaches the IndexedDB outbox long
+ * The reload waits for a moment that loses nothing (app/pwa/unsaved.ts):
+ * not while someone is typing, and not while a form holds typed text that
+ * hasn't been saved and wouldn't come back. Fields on the tracking screen
+ * keep their drafts on the device (app/drafts/), so once nobody is typing —
+ * or the app goes to the background — reloading over them is safe: they're
+ * put back. While it waits, a line says a new version is ready, with a way
+ * to load it now. Tracked time itself reaches the IndexedDB outbox long
  * before any of this.
  */
 
@@ -40,6 +46,13 @@ export type UpdaterDeps = {
   readMark: () => number | null;
   writeMark: (at: number) => void;
   warn: (message: string) => void;
+  /**
+   * Whether reloading now loses nothing. Absent, it always does (and the
+   * reload is immediate, as it was before there was anything to wait for).
+   */
+  safeToReload?: () => boolean;
+  /** An update arrived and is waiting for a safe moment (true), or went (false). */
+  onWaiting?: (waiting: boolean) => void;
 };
 
 export type Updater = ReturnType<typeof createUpdater>;
@@ -65,14 +78,32 @@ export function createUpdater(deps: UpdaterDeps) {
   let controlled = false;
   let lastCheck: number | null = null;
   let settled = false;
+  let waiting = false;
 
-  /**
-   * Go and get the new build. Once, and not if a reload moments ago says the
-   * worker rather than the release is what's wrong — a page that reloads in a
-   * loop is worse than a page that is out of date.
-   */
+  /** Go and get the new build — now if that loses nothing, else when it won't. */
   function applyUpdate(): void {
     if (settled) return;
+    if (deps.safeToReload && !deps.safeToReload()) {
+      if (!waiting) {
+        waiting = true;
+        deps.onWaiting?.(true);
+      }
+      return;
+    }
+    reloadNow();
+  }
+
+  /**
+   * Reload. Once, and not if a reload moments ago says the worker rather than
+   * the release is what's wrong — a page that reloads in a loop is worse than
+   * a page that is out of date.
+   */
+  function reloadNow(): void {
+    if (settled) return;
+    if (waiting) {
+      waiting = false;
+      deps.onWaiting?.(false);
+    }
     const at = deps.now();
     const mark = deps.readMark();
     if (mark !== null && at - mark < RELOAD_LOOP_WINDOW_MS) {
@@ -122,6 +153,21 @@ export function createUpdater(deps: UpdaterDeps) {
     strandedBehindActiveWorker(): void {
       applyUpdate();
     },
+
+    /** Something changed (typing stopped, a form was saved, the app went to the background): try again. */
+    retry(): void {
+      if (waiting) applyUpdate();
+    },
+
+    /** The person asked for it: reload now, whatever is in the fields. */
+    loadNow(): void {
+      if (waiting) reloadNow();
+    },
+
+    /** An update is waiting for a safe moment. */
+    isWaiting(): boolean {
+      return waiting;
+    },
   };
 }
 
@@ -151,18 +197,55 @@ function sessionMark(): Pick<UpdaterDeps, "readMark" | "writeMark"> {
   };
 }
 
+/** Whether an update is waiting, for the line that says so (UpdateReady). */
+const waitingListeners = new Set<(waiting: boolean) => void>();
+let currentUpdater: Updater | null = null;
+
+export function onUpdateWaiting(listener: (waiting: boolean) => void): () => void {
+  waitingListeners.add(listener);
+  listener(currentUpdater?.isWaiting() ?? false);
+  return () => waitingListeners.delete(listener);
+}
+
+/** "Load it now". */
+export function loadUpdateNow(): void {
+  currentUpdater?.loadNow();
+}
+
 /** Register the worker and keep the page on the newest build. */
 export function startAutoUpdate(): void {
   if (typeof window === "undefined") return;
   const workers = navigator.serviceWorker;
   if (!workers) return;
 
+  const unsaved = watchUnsavedText(document);
   const updater = createUpdater({
     now: () => Date.now(),
     reload: () => window.location.reload(),
     warn: (message) => console.warn(message),
     ...sessionMark(),
+    // In the background nobody is typing; only text that wouldn't come back
+    // holds it. In front of someone, typing holds it too.
+    safeToReload: () =>
+      document.visibilityState === "hidden" ? !unsaved.textAtRisk() : !unsaved.textAtRisk() && !unsaved.typing(),
+    onWaiting: (waiting) => {
+      for (const l of waitingListeners) l(waiting);
+    },
   });
+  currentUpdater = updater;
+
+  // The moments a waiting update may have become safe.
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  const retrySoon = () => {
+    if (!updater.isWaiting()) return;
+    clearTimeout(idle);
+    idle = setTimeout(() => updater.retry(), 1500);
+  };
+  document.addEventListener("focusout", retrySoon, true);
+  document.addEventListener("input", retrySoon, true);
+  document.addEventListener("submit", retrySoon, true);
+  document.addEventListener("visibilitychange", () => updater.retry());
+  window.setInterval(() => updater.retry(), 15_000);
 
   // Both of these before registering rather than after it resolves, so a
   // handover during the registration itself is still heard. One from before

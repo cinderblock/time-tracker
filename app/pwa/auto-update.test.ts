@@ -170,3 +170,72 @@ describe("throttling the update checks", () => {
     expect(updater.dueForCheck()).toBe(true);
   });
 });
+
+describe("waiting for a moment that loses nothing", () => {
+  function waitingWorld() {
+    let safe = false;
+    const reloads: number[] = [];
+    const waits: boolean[] = [];
+    let mark: number | null = null;
+    const updater = createUpdater({
+      now: () => 5_000,
+      reload: () => reloads.push(1),
+      readMark: () => mark,
+      writeMark: (at) => {
+        mark = at;
+      },
+      warn: () => {},
+      safeToReload: () => safe,
+      onWaiting: (w) => waits.push(w),
+    });
+    updater.pageIsControlled();
+    return {
+      updater,
+      reloads,
+      waits,
+      setSafe: (s: boolean) => {
+        safe = s;
+      },
+    };
+  }
+
+  test("while it would lose typed text, the update waits, and says so once", () => {
+    const w = waitingWorld();
+    w.updater.controllerChanged();
+    w.updater.strandedBehindActiveWorker();
+    expect(w.reloads).toEqual([]);
+    expect(w.updater.isWaiting()).toBe(true);
+    expect(w.waits).toEqual([true]);
+  });
+
+  test("it goes at the first retry that's safe", () => {
+    const w = waitingWorld();
+    w.updater.controllerChanged();
+    w.updater.retry();
+    expect(w.reloads).toEqual([]);
+    w.setSafe(true);
+    w.updater.retry();
+    expect(w.reloads).toEqual([1]);
+    expect(w.waits).toEqual([true, false]);
+    // Once.
+    w.updater.retry();
+    expect(w.reloads).toEqual([1]);
+  });
+
+  test("'Load it now' goes whatever is in the fields; with nothing waiting it does nothing", () => {
+    const w = waitingWorld();
+    w.updater.loadNow();
+    expect(w.reloads).toEqual([]);
+    w.updater.controllerChanged();
+    w.updater.loadNow();
+    expect(w.reloads).toEqual([1]);
+  });
+
+  test("safe at once: no waiting at all", () => {
+    const w = waitingWorld();
+    w.setSafe(true);
+    w.updater.controllerChanged();
+    expect(w.reloads).toEqual([1]);
+    expect(w.waits).toEqual([]);
+  });
+});

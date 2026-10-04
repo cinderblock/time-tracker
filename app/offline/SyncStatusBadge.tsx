@@ -3,6 +3,7 @@ import { notifications } from "@mantine/notifications";
 import { useEffect, useRef, useState } from "react";
 import { Link, useRevalidator, useSubmit } from "react-router";
 
+import { clearDrafts } from "../drafts/drafts.ts";
 import type { Op } from "../../src/ops-schema.ts";
 import { getEngine, useSyncStatus } from "./client.ts";
 import { clearSnapshots, shellCopy } from "./storage.ts";
@@ -137,6 +138,7 @@ export function SignOutButton({ userId, children }: { userId: number; children: 
     setWarning(false);
     getEngine()?.stop();
     shellCopy.clear();
+    clearDrafts();
     await clearSnapshots(userId).catch(() => {});
     // Pages the service worker kept for offline use hold this person's data.
     await globalThis.caches?.delete("tt-pages").catch(() => {});

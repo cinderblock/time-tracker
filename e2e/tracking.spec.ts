@@ -782,6 +782,29 @@ test("a second line for one job, from before one line per job, is flagged and co
   await expect(bravo()).toHaveCount(1);
 });
 
+test("half-typed text comes back after a reload — an update, a crash — and goes once it's saved", async () => {
+  await page.goto("/");
+  // A note box, typed into and not added.
+  const bravo = page.getByRole("group", { name: "Riverside › Bravo Site" });
+  await bravo.getByPlaceholder("What did you do?").fill("Half a thought about the gutters");
+  // An open dialog with things typed into it.
+  await page.getByRole("button", { name: "Add time manually" }).click();
+  const add = page.getByRole("dialog", { name: "Add time" });
+  await add.getByLabel("Note").fill("Unsaved typing");
+
+  await page.reload();
+  await expect(page.getByRole("dialog", { name: "Add time" }).getByLabel("Note")).toHaveValue("Unsaved typing");
+  await page.getByRole("dialog", { name: "Add time" }).getByRole("button", { name: "Cancel" }).click();
+  await expect(bravo.getByPlaceholder("What did you do?")).toHaveValue("Half a thought about the gutters");
+
+  // Saved, or cancelled: nothing comes back.
+  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(bravo.getByText("Half a thought about the gutters")).toBeVisible();
+  await page.reload();
+  await expect(bravo.getByPlaceholder("What did you do?")).toHaveValue("");
+  await expect(page.getByRole("dialog", { name: "Add time" })).toHaveCount(0);
+});
+
 /**
  * Last, because it replaces the browser's clock and never puts it back.
  *

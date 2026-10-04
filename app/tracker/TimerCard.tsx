@@ -10,6 +10,8 @@ import appear from "../components/appear.module.css";
 import { useHeldOpen } from "../components/use-held-open.ts";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
+import { removeDraft } from "../drafts/drafts.ts";
+import { useTrackerDraft, useTrackerDraftKey } from "./tracker-draft.ts";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import { type EntryView, type JobView, liveSeconds } from "./model.ts";
 
@@ -57,7 +59,12 @@ function RunningTimer({ entry }: { entry: EntryView }) {
   const undoToast = useUndoToast();
   // Where the time flies from when the timer ends and this card goes away.
   const card = useRef<HTMLDivElement>(null);
-  const [note, setNote] = useState(entry.note ?? "");
+  // Kept on the device until it's saved — on leaving the field, or with the
+  // stop — so an update or a crash brings it back.
+  const [note, setNote] = useTrackerDraft(`timer-note:${entry.id}`, entry.note ?? "");
+  // This timer's draft key, as it is in this render: once the timer stops or
+  // switches, the card may already show another timer when the answer comes.
+  const noteKey = useTrackerDraftKey(`timer-note:${entry.id}`);
   const [noteError, setNoteError] = useState<string | null>(null);
   const [switchTo, setSwitchTo] = useState<JobView | null>(null);
   const [otherJob, setOtherJob] = useState<string | null>(null);
@@ -65,8 +72,15 @@ function RunningTimer({ entry }: { entry: EntryView }) {
   const tz = model.timezone;
   const { name: jobTitle, above: jobPlace } = jobPath(entry.jobName);
 
-  // Keep the field in step when the entry changes underneath (another device).
-  useEffect(() => setNote(entry.note ?? ""), [entry.id, entry.note]);
+  // Keep the field in step when the entry changes underneath (another device,
+  // or this one saving it) — but not on first showing, which would drop a
+  // draft just put back.
+  const shownNote = useRef(entry.note);
+  useEffect(() => {
+    if (shownNote.current === entry.note) return;
+    shownNote.current = entry.note;
+    setNote(entry.note ?? "");
+  }, [entry.id, entry.note, setNote]);
 
   const noteDirty = note.trim() !== (entry.note ?? "");
   const needsNote = entry.noteRequired && !note.trim();
@@ -101,7 +115,10 @@ function RunningTimer({ entry }: { entry: EntryView }) {
     });
     if (!result.ok && result.code === "note_required") setNoteError(result.error);
     // This card is about to be replaced by "Start a timer": say where its time went.
-    else if (result.ok) flyToEntry(entry.id, settled(at), from);
+    else if (result.ok) {
+      if (noteKey) removeDraft(noteKey);
+      flyToEntry(entry.id, settled(at), from);
+    }
   }
 
   async function doSwitch(job: JobView, closingNote?: string) {
@@ -122,6 +139,8 @@ function RunningTimer({ entry }: { entry: EntryView }) {
     if (blocked) setSwitchTo(job);
     else {
       setSwitchTo(null);
+      // The note went with the stop.
+      if (noteKey) removeDraft(noteKey);
       // The card stays, but it is the new job's now — the old job's time has
       // gone to the record, so it travels there too.
       flyToEntry(entry.id, settled(at), from);
@@ -191,6 +210,7 @@ function RunningTimer({ entry }: { entry: EntryView }) {
             setNoteError(null);
           }}
           onBlur={() => void saveNote()}
+          data-draft
           maxLength={NOTE_MAX_LENGTH}
           autosize
           minRows={1}

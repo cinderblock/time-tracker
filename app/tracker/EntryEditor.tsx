@@ -17,11 +17,25 @@ import {
 import { uuidv7 } from "../../src/uuid.ts";
 import { DurationInput, durationProblem } from "../components/duration-input.tsx";
 import { useHeldOpen } from "../components/use-held-open.ts";
+import { readDraft, removeDraft, writeDraft } from "../drafts/drafts.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { JobSelect } from "./JobPicker.tsx";
 import type { EntryView } from "./model.ts";
+import { useTrackerDraftKey } from "./tracker-draft.ts";
 
 type Mode = "times" | "duration";
+
+/** What the editor's fields hold, as kept on the device while it's open. */
+interface EditorFields {
+  mode: Mode;
+  jobId: string | null;
+  date: string;
+  start: string;
+  end: string;
+  duration: string;
+  untimed: string;
+  note: string;
+}
 
 /**
  * What else goes when a timer's times do. A paused timer recorded real gaps,
@@ -73,6 +87,11 @@ export function EntryEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Everything typed is kept on the device while the dialog is open, so an
+  // update or a crash reopens it as it was (EntryList keeps which one).
+  const fieldsKey = useTrackerDraftKey(opened ? `entry-editor:${subject?.id ?? "new"}` : null);
+  const fieldsReady = useRef(false);
+
   // Reset the form when it opens — and only then. Defaults are read through a
   // ref: the model is rebuilt on every data refresh (creating a job from
   // inside this dialog causes one), which must not wipe what's been typed.
@@ -83,7 +102,18 @@ export function EntryEditor({
     if (!opened) return;
     setError(null);
     setBusy(false);
-    if (entry) {
+    fieldsReady.current = true;
+    const kept = fieldsKey ? readDraft<EditorFields>(fieldsKey) : undefined;
+    if (kept) {
+      setMode(kept.mode);
+      setJobId(kept.jobId);
+      setDate(kept.date);
+      setStart(kept.start);
+      setEnd(kept.end);
+      setDuration(kept.duration);
+      setUntimed(kept.untimed);
+      setNote(kept.note);
+    } else if (entry) {
       setMode(entry.startedAt != null ? "times" : "duration");
       setJobId(entry.jobId);
       setDate(entry.startedAt != null ? workDateOf(entry.startedAt, tz) : entry.workDate);
@@ -103,6 +133,18 @@ export function EntryEditor({
       setNote("");
     }
   }, [opened, entry]);
+
+  useEffect(() => {
+    if (!opened || !fieldsKey || !fieldsReady.current) return;
+    writeDraft<EditorFields>(fieldsKey, { mode, jobId, date, start, end, duration, untimed, note });
+  }, [opened, fieldsKey, mode, jobId, date, start, end, duration, untimed, note]);
+
+  /** Closed: saved, cancelled, or deleted — the typing is done with. */
+  const done = () => {
+    if (fieldsKey) removeDraft(fieldsKey);
+    fieldsReady.current = false;
+    onClose();
+  };
 
   // Derived span for "times" mode.
   const startAt = start ? zonedTimeToInstant(date, start, tz) : null;
@@ -220,7 +262,7 @@ export function EntryEditor({
       );
     }
     setBusy(false);
-    if (result.ok) onClose();
+    if (result.ok) done();
     else setError(result.error);
   }
 
@@ -230,15 +272,16 @@ export function EntryEditor({
     const result = await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
     setBusy(false);
     if (!result.ok) return;
-    onClose();
+    done();
     undoToast(`Deleted ${jobLabel(entry.jobName)}.`);
   }
 
   const title = !entry ? "Add time" : isOpenTimer ? "Edit running timer" : "Edit entry";
 
   return (
-    <Modal opened={opened} onClose={onClose} title={title} centered fullScreen={narrow}>
-      <form onSubmit={save}>
+    <Modal opened={opened} onClose={done} title={title} centered fullScreen={narrow}>
+      {/* Every field in here keeps its draft (above). */}
+      <form onSubmit={save} data-draft>
         <Stack gap="md">
           <JobSelect label="Job" value={jobId} onChange={setJobId} required />
 
@@ -338,7 +381,7 @@ export function EntryEditor({
               <span />
             )}
             <Group gap="xs">
-              <Button variant="default" onClick={onClose}>
+              <Button variant="default" onClick={done}>
                 Cancel
               </Button>
               <Button type="submit" loading={busy}>

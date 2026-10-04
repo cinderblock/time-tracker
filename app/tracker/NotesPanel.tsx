@@ -34,6 +34,7 @@ import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
+import { useTrackerDraft } from "./tracker-draft.ts";
 import appear from "../components/appear.module.css";
 import classes from "./notes.module.css";
 
@@ -226,7 +227,8 @@ function JobSection({
   onFocused: () => void;
 }) {
   const { model } = useTracker();
-  const [hours, setHours] = useState(false);
+  // Open or not survives a reload, with what was typed in it (HoursDialog).
+  const [hours, setHours] = useTrackerDraft(section.jobId ? `hours-open:${model.workDate}:${section.jobId}` : null, false);
   // Where this job's hours fly from when its notes become time.
   const card = useRef<HTMLDivElement>(null);
   const name = section.jobId ? (section.jobName ?? "Unknown job") : null;
@@ -303,8 +305,9 @@ function NoteBox({
   autoFocus: boolean;
   onFocused: () => void;
 }) {
-  const { dispatch, location } = useTracker();
-  const [text, setText] = useState("");
+  const { model, dispatch, location } = useTracker();
+  // Kept on the device as it's typed: an update or a crash puts it back.
+  const [text, setText] = useTrackerDraft(`note-box:${model.workDate}:${jobId}`, "");
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -345,6 +348,7 @@ function NoteBox({
           ref={ref}
           placeholder="What did you do?"
           aria-label={`Note for ${jobLabel(jobName)}`}
+          data-draft
           value={text}
           onChange={(e) => setText(e.currentTarget.value)}
           maxLength={NOTE_MAX_LENGTH}
@@ -368,10 +372,19 @@ function NoteBox({
 function NoteRow({ note }: { note: NoteView }) {
   const { model, dispatch, pending } = useTracker();
   const undoToast = useUndoToast();
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(note.text);
-  const [jobId, setJobId] = useState(note.jobId);
   const rolled = note.rolledIntoEntryId != null;
+  // An edit under way is kept on the device — open, with what's been typed —
+  // so an update or a crash brings it back as it was.
+  const [edit, setEdit, discardEdit] = useTrackerDraft<{ text: string; jobId: string | null } | null>(
+    rolled ? null : `note-edit:${note.id}`,
+    null,
+  );
+  const editing = edit != null;
+  const text = edit ? edit.text : note.text;
+  const jobId = edit ? edit.jobId : note.jobId;
+  const setEditing = (open: boolean) => (open ? setEdit({ text: note.text, jobId: note.jobId }) : discardEdit());
+  const setText = (value: string) => setEdit((e) => ({ text: value, jobId: e ? e.jobId : note.jobId }));
+  const setJobId = (value: string | null) => setEdit((e) => ({ text: e ? e.text : note.text, jobId: value }));
   const start = note.kind === "start";
 
   async function save() {
@@ -400,6 +413,7 @@ function NoteRow({ note }: { note: NoteView }) {
             maxLength={NOTE_MAX_LENGTH}
             autosize
             aria-label="Note text"
+            data-draft
           />
           <JobSelect value={jobId} onChange={setJobId} placeholder="Job" required />
           <Group justify="space-between">
@@ -544,9 +558,13 @@ function HoursDialog({
   const { name: title } = jobPath(jobName);
   // When the dialog opened: where today's last run is taken to end.
   const [openedAt, setOpenedAt] = useState(0);
-  const [duration, setDuration] = useState("");
-  const [touched, setTouched] = useState(false);
-  const [note, setNote] = useState("");
+  // What the person typed over the suggestions, kept on the device so an
+  // update or a crash brings the dialog back as it was. Untyped, each field
+  // follows its suggestion.
+  const [draft, setDraft, discardDraft] = useTrackerDraft<{ duration?: string; note?: string } | null>(
+    `hours:${date}:${jobId}`,
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -562,8 +580,6 @@ function HoursDialog({
   useEffect(() => {
     if (!opened) return;
     setOpenedAt(Date.now());
-    setNote(joinNotes(pendingRef.current.map((n) => n.text)));
-    setTouched(false);
     setError(null);
     setBusy(false);
   }, [opened]);
@@ -589,11 +605,14 @@ function HoursDialog({
   }, [model.notes, pending, jobId, endAt]);
   const suggested = spans.reduce((sum, s) => sum + Math.round((s.endedAt - s.startedAt) / 1000), 0);
 
-  useEffect(() => {
-    if (touched) return;
-    // The notes' own seconds are noise here — nobody means "2:07:43".
-    setDuration(formatDurationInput(Math.round(suggested / 60) * 60 + alreadyRef.current));
-  }, [suggested, touched, opened]);
+  // The notes' own seconds are noise here — nobody means "2:07:43".
+  const duration = draft?.duration ?? formatDurationInput(Math.round(suggested / 60) * 60 + alreadyRef.current);
+  const note = draft?.note ?? joinNotes(pending.map((n) => n.text));
+  /** Close, forgetting what was typed: cancelled, or saved. */
+  const close = () => {
+    discardDraft();
+    onClose();
+  };
 
   // The job's hours already on the day, which these join.
   const line = lineOf(model, jobId, date);
@@ -638,11 +657,11 @@ function HoursDialog({
     }
     // The row is already on the other side of the screen; show it getting there.
     flyToEntry(line?.id ?? entryId, seconds > 0 ? formatDurationHuman(seconds) : "notes", leaves);
-    onClose();
+    close();
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title={`Hours for ${jobLabel(jobName)}`} centered fullScreen={narrow}>
+    <Modal opened={opened} onClose={close} title={`Hours for ${jobLabel(jobName)}`} centered fullScreen={narrow}>
       <Stack gap="md">
         <Text size="sm" c="dimmed">
           From the notes, {title} ran{" "}
@@ -660,19 +679,24 @@ function HoursDialog({
             {locked && !lockedForGood ? " They're submitted, so they'll be taken back — submit the day again after." : ""}
           </Text>
         )}
-        <DurationInput
-          label={line ? "Total for the day" : "Time worked"}
-          value={duration}
-          onChange={(v) => {
-            setTouched(true);
-            setDuration(v);
-          }}
-        />
+        <div data-draft>
+          <DurationInput
+            label={line ? "Total for the day" : "Time worked"}
+            value={duration}
+            onChange={(v) => {
+              setDraft((t) => ({ ...t, duration: v }));
+            }}
+          />
+        </div>
         <Textarea
           label="Note"
           description="Goes with the hours, to accounting."
           value={note}
-          onChange={(e) => setNote(e.currentTarget.value)}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            setDraft((t) => ({ ...t, note: v }));
+          }}
+          data-draft
           maxLength={NOTE_MAX_LENGTH}
           autosize
           minRows={2}
@@ -689,7 +713,7 @@ function HoursDialog({
           </Alert>
         )}
         <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>
+          <Button variant="default" onClick={close}>
             Cancel
           </Button>
           <Button onClick={() => void commit()} loading={busy} disabled={problems.length > 0}>
