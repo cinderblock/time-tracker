@@ -27,6 +27,11 @@ let employee: { context: BrowserContext; page: Page };
 let employeeId = 0;
 const echo = uuidv7();
 const foxtrot = uuidv7();
+/** Too long for the two lines an entry's note is shown in, with a line break of its own. */
+const FRAMING =
+  "Framing along the east wall: three studs replaced where the leak had got in, the corner brace rebuilt " +
+  "from the old timber, new header over the doorway set and shimmed, and the door rehung so it " +
+  "swings clear of the sill.\nOffcuts stacked by the shed.";
 
 async function withPasskeys(browser: Browser, viewport?: { width: number; height: number }) {
   const context = await browser.newContext(viewport ? { viewport } : {});
@@ -112,7 +117,7 @@ test("set up: an admin, an employee, two jobs, and some time", async ({ browser 
     jobId: echo,
     startedAt: at("09:00"),
     endedAt: at("11:00"),
-    note: "Framing",
+    note: FRAMING,
   });
   await send(request, "entry.create", { entryId: uuidv7(), jobId: foxtrot, workDate: TODAY, durationSeconds: 5400, note: "Fencing" });
   // One line per job per day: the timer continues Fencing's line, so that
@@ -210,7 +215,22 @@ test("the employee sees submitted time locked, and takes the day back themselves
   await page.reload();
   const framing = page.locator(".mantine-Card-root", { hasText: "Framing" });
   await expect(framing.getByText("submitted", { exact: true })).toBeVisible();
-  await expect(framing.getByRole("button")).toHaveCount(0);
+  // Nothing to edit or delete; the one button is the long note's "Show all".
+  await expect(framing.getByRole("button")).toHaveCount(1);
+
+  // Locked time can't be opened, but a long note can still be read in full.
+  const note = framing.getByText(/^Framing along/);
+  const cutOff = () => note.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+  expect(await cutOff()).toBe(true);
+  await shot(page, "submitted-note-cut");
+  await framing.getByRole("button", { name: "Show all" }).click();
+  await expect(framing.getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
+  expect(await cutOff()).toBe(false);
+  await shot(page, "submitted-note-whole");
+  expect(await note.innerText()).toContain("sill.\nOffcuts stacked by the shed.");
+  await framing.getByRole("button", { name: "Show less" }).click();
+  await expect(framing.getByRole("button", { name: "Show all" })).toBeVisible();
+  expect(await cutOff()).toBe(true);
 
   // Their own submission is theirs to withdraw — no admin involved.
   await page.getByRole("button", { name: "Take it back" }).click();
@@ -304,7 +324,7 @@ test("reports: totals by customer, costs frozen at approval, and a CSV", async (
   expect(file.suggestedFilename()).toMatch(/^time-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/);
   const csv = readFileSync((await file.path())!, "utf8");
   expect(csv).toContain("Date,Person,Category,Customer,Job,Start,End,Hours,Status,Rate,Cost,Note,Entry ID");
-  expect(csv).toContain(`${TODAY},Eddie Employee,Field crew,Echo Co,Echo Co:Echo Works,9:00 AM,11:00 AM,2,Approved,40,80,Framing,`);
+  expect(csv).toContain(`${TODAY},Eddie Employee,Field crew,Echo Co,Echo Co:Echo Works,9:00 AM,11:00 AM,2,Approved,40,80,"${FRAMING}",`);
 });
 
 test("reopening a week unlocks it again", async () => {

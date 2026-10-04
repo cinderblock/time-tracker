@@ -7,6 +7,7 @@ import { isEditable } from "../../src/entry-status.ts";
 import { jobLabel } from "../../src/job-names.ts";
 import { formatClock, formatDurationHuman, formatWorkDate } from "../../src/time.ts";
 import appear from "../components/appear.module.css";
+import { ClampedText } from "../components/clamped-text.tsx";
 import { MOTION } from "../motion.ts";
 import { useTracker } from "./context.tsx";
 import classes from "./HeldEntries.module.css";
@@ -223,9 +224,9 @@ function Heading({ children }: { children: string }) {
 function Note({ text }: { text: string | null }) {
   const trimmed = text?.trim() ?? "";
   return trimmed ? (
-    <Text size="sm" lineClamp={4} style={{ overflowWrap: "anywhere" }}>
+    <ClampedText size="sm" lines={4}>
       {trimmed}
-    </Text>
+    </ClampedText>
   ) : (
     <Text size="sm" c="dimmed" fs="italic">
       No note

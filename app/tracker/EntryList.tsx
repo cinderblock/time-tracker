@@ -1,10 +1,11 @@
 import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from "@mantine/core";
-import { useState } from "react";
+import { type MouseEvent, useState } from "react";
 
 import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
 import { jobLabel, jobPath } from "../../src/job-names.ts";
 import { formatClock, formatDurationHuman } from "../../src/time.ts";
 import appear from "../components/appear.module.css";
+import { ClampedText } from "../components/clamped-text.tsx";
 import { useNow, useTracker, useUndoToast } from "./context.tsx";
 import { EntryEditor } from "./EntryEditor.tsx";
 import { landingClass, useFlight } from "./flight.tsx";
@@ -195,9 +196,14 @@ function EntryRow({
     }
   }
 
+  /** A tap on the note's words edits; one on its "Show all" only shows. */
+  function editFromNote(e: MouseEvent) {
+    if (!(e.target as Element).closest("button")) onEdit();
+  }
+
   // The job's own name is the line to read; where it sits goes under it.
   const { name: jobTitle, above: jobPlace } = jobPath(entry.jobName);
-  const details = (
+  const heading = (
     <Stack gap={2}>
       <Group gap="xs" wrap="wrap">
         <Text fw={500}>{jobTitle}</Text>
@@ -235,28 +241,6 @@ function EntryRow({
       <Text size="sm" c="dimmed">
         {span}
       </Text>
-      {entry.note && (
-        <Text size="sm" lineClamp={2}>
-          {entry.note}
-        </Text>
-      )}
-      {held ? (
-        <Text size="xs" c="orange">
-          QuickBooks already has time for this —{" "}
-          <Anchor href="#held" size="xs" c="orange" underline="always">
-            compare and choose
-          </Anchor>{" "}
-          below.
-        </Text>
-      ) : (
-        locked && (
-          <Text size="xs" c="dimmed">
-            {isOwnerReopenable(entry.status, entry.adminApproved)
-              ? "Locked — take the day back to change it."
-              : "Locked — an admin can reopen it for changes."}
-          </Text>
-        )
-      )}
     </Stack>
   );
 
@@ -268,25 +252,56 @@ function EntryRow({
       data-entry-id={entry.id}
       className={[appear.appear, landingClass(landed, entry.id)].filter(Boolean).join(" ")}
     >
-      <Group justify="space-between" wrap="nowrap" align="start" gap="sm">
-        {locked ? (
-          <div style={{ flex: 1, minWidth: 0 }}>{details}</div>
-        ) : (
-          <UnstyledButton onClick={onEdit} style={{ flex: 1, minWidth: 0 }} aria-label={`Edit ${jobLabel(entry.jobName)}`}>
-            {details}
-          </UnstyledButton>
-        )}
-        <Stack gap={4} align="end">
-          <Text fw={600} style={{ fontVariantNumeric: "tabular-nums" }}>
-            {formatDurationHuman(seconds)}
-          </Text>
-          {!locked && (
-            <Button size="compact-xs" variant="subtle" color="red" onClick={() => void remove()} disabled={pending}>
-              Delete
-            </Button>
+      <Stack gap={2}>
+        <Group justify="space-between" wrap="nowrap" align="start" gap="sm">
+          {locked ? (
+            <div style={{ flex: 1, minWidth: 0 }}>{heading}</div>
+          ) : (
+            <UnstyledButton onClick={onEdit} style={{ flex: 1, minWidth: 0 }} aria-label={`Edit ${jobLabel(entry.jobName)}`}>
+              {heading}
+            </UnstyledButton>
           )}
-        </Stack>
-      </Group>
+          <Stack gap={4} align="end">
+            <Text fw={600} style={{ fontVariantNumeric: "tabular-nums" }}>
+              {formatDurationHuman(seconds)}
+            </Text>
+            {!locked && (
+              <Button size="compact-xs" variant="subtle" color="red" onClick={() => void remove()} disabled={pending}>
+                Delete
+              </Button>
+            )}
+          </Stack>
+        </Group>
+        {/* The note sits outside the edit button so it can carry its own "Show
+            all" (a button can't hold a button), and so submitted time, which
+            can't be opened, can still be read in full. It takes the card's
+            whole width. A tap on its words still edits an open entry, as it
+            did when they were inside the button; the keyboard has the button. */}
+        {entry.note && (
+          <div onClick={locked ? undefined : editFromNote} style={locked ? undefined : { cursor: "pointer" }}>
+            <ClampedText size="sm" lines={2}>
+              {entry.note}
+            </ClampedText>
+          </div>
+        )}
+        {held ? (
+          <Text size="xs" c="orange">
+            QuickBooks already has time for this —{" "}
+            <Anchor href="#held" size="xs" c="orange" underline="always">
+              compare and choose
+            </Anchor>{" "}
+            below.
+          </Text>
+        ) : (
+          locked && (
+            <Text size="xs" c="dimmed">
+              {isOwnerReopenable(entry.status, entry.adminApproved)
+                ? "Locked — take the day back to change it."
+                : "Locked — an admin can reopen it for changes."}
+            </Text>
+          )
+        )}
+      </Stack>
     </Card>
   );
 }
