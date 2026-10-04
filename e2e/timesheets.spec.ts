@@ -115,6 +115,8 @@ test("set up: an admin, an employee, two jobs, and some time", async ({ browser 
     note: "Framing",
   });
   await send(request, "entry.create", { entryId: uuidv7(), jobId: foxtrot, workDate: TODAY, durationSeconds: 5400, note: "Fencing" });
+  // One line per job per day: the timer continues Fencing's line, so that
+  // line holds 1h 30m without times and a running timer.
   await send(request, "timer.start", { entryId: uuidv7(), jobId: foxtrot, at: Date.now() - 60_000 });
 
   await admin.page.goto("/admin/people");
@@ -183,7 +185,7 @@ test("timesheets: the week at a glance, filtered, and submitted for someone in o
   await expect(eddie).toBeVisible();
   await expect(eddie.getByText("running")).toBeVisible();
   await expect(
-    eddie.getByRole("link", { name: new RegExp(`^Eddie Employee, ${formatWorkDate(TODAY)}: 3h 3\\dm, 2 not submitted$`) }),
+    eddie.getByRole("link", { name: new RegExp(`^Eddie Employee, ${formatWorkDate(TODAY)}: 3h 3\\dm, 1 not submitted$`) }),
   ).toBeVisible();
   await expect(page.getByRole("group", { name: "Paula Payroll" })).toBeVisible();
 
@@ -196,7 +198,7 @@ test("timesheets: the week at a glance, filtered, and submitted for someone in o
   // safety net for a person who hasn't got to it.
   await eddie.getByRole("button", { name: "Submit Eddie Employee's week" }).click();
   await expect(
-    toast(page, "Eddie Employee: Submitted 2 entries. A running timer was left out; submit again once it stops."),
+    toast(page, "Eddie Employee: Submitted 1 entry. A running timer was left out; submit again once it stops."),
   ).toBeVisible();
   await expect(eddie.getByText("submitted", { exact: true })).toBeVisible();
   await expect(eddie.getByRole("button", { name: "Reopen Eddie Employee's week" })).toBeVisible();
@@ -213,7 +215,7 @@ test("the employee sees submitted time locked, and takes the day back themselves
   // Their own submission is theirs to withdraw — no admin involved.
   await page.getByRole("button", { name: "Take it back" }).click();
   await expect(framing.getByRole("button", { name: "Delete" })).toBeVisible();
-  await expect(page.getByText("2 entries not submitted")).toBeVisible();
+  await expect(page.getByText("1 entry not submitted")).toBeVisible();
 });
 
 test("approvals can be switched on, and then time waits for an admin", async () => {
@@ -226,7 +228,7 @@ test("approvals can be switched on, and then time waits for an admin", async () 
   const eddie = page.getByRole("group", { name: "Eddie Employee" });
   await eddie.getByRole("button", { name: "Approve Eddie Employee's week" }).click();
   await expect(
-    toast(page, "Eddie Employee: Approved 2 entries. A running timer was left out; approve again once it stops."),
+    toast(page, "Eddie Employee: Approved 1 entry. A running timer was left out; approve again once it stops."),
   ).toBeVisible();
   await expect(eddie.getByText("approved", { exact: true })).toBeVisible();
 
@@ -309,11 +311,12 @@ test("reopening a week unlocks it again", async () => {
   const { page } = admin;
   await page.getByRole("link", { name: "Timesheets" }).first().click();
   const eddie = page.getByRole("group", { name: "Eddie Employee" });
-  // Part approved: the stopped timer waits, the rest can be reopened.
+  // Part approved: the stopped timer's line (which holds Fencing too) waits;
+  // Framing can be reopened.
   await expect(eddie.getByRole("button", { name: "Approve Eddie Employee's week" })).toHaveText("Approve 1");
   await eddie.getByRole("button", { name: "Reopen Eddie Employee's week" }).click();
-  await expect(toast(page, "Eddie Employee: Reopened 2 entries.")).toBeVisible();
-  await expect(eddie.getByRole("button", { name: "Approve Eddie Employee's week" })).toHaveText("Approve 3");
+  await expect(toast(page, "Eddie Employee: Reopened 1 entry.")).toBeVisible();
+  await expect(eddie.getByRole("button", { name: "Approve Eddie Employee's week" })).toHaveText("Approve 2");
 
   await employee.page.reload();
   const framing = employee.page.locator(".mantine-Card-root", { hasText: "Framing" });

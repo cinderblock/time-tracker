@@ -150,6 +150,7 @@ export function inverseOf(m: DayModel, op: Op, now: number): Undoable | null {
         if (p.endedAt !== undefined && e.endedAt != null) back.endedAt = e.endedAt;
         // A line with both takes a duration as its total; put the total back.
         if (p.durationSeconds !== undefined && (e.untimedSeconds ?? 0) > 0) back.durationSeconds = e.durationSeconds;
+        if (p.untimedSeconds !== undefined) back.untimedSeconds = e.untimedSeconds ?? 0;
       } else {
         if (p.workDate !== undefined) back.workDate = e.workDate;
         if (p.durationSeconds !== undefined) back.durationSeconds = e.durationSeconds;

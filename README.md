@@ -48,6 +48,16 @@ repository. All of that is deployment configuration or an admin setting.
     times are wrong, it was just two hours" is the same toggle in Edit entry;
     it says what saving will replace before it does, including any pauses the
     timer recorded. A running timer has to be stopped first.
+- **One line of hours per person, job and day** — one record in QuickBooks, one
+  line on an invoice. Time added to a job that already has hours that day joins
+  them: a timer started on it continues that line (its start and stop times
+  kept), a typed-in duration adds to it, and a day's notes turned into hours
+  add to it — or are attached to hours already counted, with no time added. A
+  line can hold timed time and time without start and end together, and says
+  so ("9:00 AM – 12:00 PM, plus 30m without times"). Adding to hours already
+  submitted takes them back first, as any change to them would. Days from
+  before this rule that have two lines for one job are flagged, with a one-tap
+  "combine" the person chooses to press.
 - **People submit their own time.** A day is a draft until the person who worked
   it says it's done. Submitting freezes each entry's rate, locks it, and hands it
   to the accounting system. It's theirs to take back — fix the day and submit it

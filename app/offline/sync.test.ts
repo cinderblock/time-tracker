@@ -162,6 +162,28 @@ describe("SyncEngine", () => {
     expect(store.items).toHaveLength(0);
   });
 
+  test("what's waiting is counted from storage, before a new page's status has caught up", async () => {
+    const w = world();
+    await w.engine.start(7);
+    w.setNetwork("down");
+    await w.engine.enqueue(op());
+    await settle();
+
+    // A page that has only just loaded: its engine hasn't read the queue yet.
+    const fresh = new SyncEngine({
+      store: w.store,
+      now: () => 0,
+      setTimer: () => 0,
+      clearTimer: () => {},
+      send: async () => {
+        throw new TransportError("unreachable");
+      },
+    });
+    expect(fresh.getStatus().pending).toBe(0);
+    expect(await fresh.queuedFor(7)).toBe(1);
+    expect(await fresh.queuedFor(8)).toBe(0);
+  });
+
   test("a rejected op is dropped and reported, and doesn't block the rest", async () => {
     const w = world();
     await w.engine.start(7);

@@ -1,4 +1,4 @@
-import { Anchor, Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from "@mantine/core";
 import { useState } from "react";
 
 import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
@@ -20,6 +20,7 @@ export function EntryList() {
   const [editing, setEditing] = useState<EntryView | null>(null);
   const [adding, setAdding] = useState(false);
   const total = model.entries.reduce((sum, e) => sum + (now === undefined ? e.durationSeconds : liveSeconds(e, now)), 0);
+  const duplicates = duplicateLines(model.entries);
 
   return (
     <Stack gap="sm">
@@ -42,8 +43,14 @@ export function EntryList() {
             : "Nothing recorded for this day yet."}
         </Text>
       ) : (
-        model.entries.map((e) => <EntryRow key={e.id} entry={e} now={now} onEdit={() => setEditing(e)} />)
+        model.entries.map((e) => (
+          <EntryRow key={e.id} entry={e} now={now} onEdit={() => setEditing(e)} duplicated={duplicates.some((g) => g.includes(e))} />
+        ))
       )}
+
+      {duplicates.map((group) => (
+        <CombineLines key={group[0]!.id} lines={group} />
+      ))}
 
       <Group>
         <Button variant="light" onClick={() => setAdding(true)}>
@@ -64,7 +71,93 @@ export function EntryList() {
   );
 }
 
-function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | undefined; onEdit: () => void }) {
+/**
+ * A job's lines on the day, where it has more than one — only possible for
+ * days from before one line per job per day. First in the order the server
+ * picks its line by.
+ */
+function duplicateLines(entries: readonly EntryView[]): EntryView[][] {
+  const byJob = new Map<string, EntryView[]>();
+  for (const e of entries) {
+    if (!e.jobId) continue;
+    byJob.set(e.jobId, [...(byJob.get(e.jobId) ?? []), e]);
+  }
+  return [...byJob.values()]
+    .filter((g) => g.length > 1)
+    .map((g) => [...g].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)));
+}
+
+/**
+ * Hours for one job and day go on one line. Days from before that rule may
+ * have several; they're shown here for the person to fold together — their
+ * choice, one tap, not done behind their back.
+ */
+function CombineLines({ lines }: { lines: EntryView[] }) {
+  const { dispatch, pending } = useTracker();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const first = lines[0]!;
+  const running = lines.some((e) => e.status === "open");
+  const locked = lines.find((e) => !isEditable(e.status));
+  const blocked = running
+    ? "Stop the timer first."
+    : locked
+      ? isOwnerReopenable(locked.status, locked.adminApproved)
+        ? "Some of them are submitted: take the day back first."
+        : "Some of them are approved: an admin can reopen them."
+      : null;
+
+  async function combine() {
+    setBusy(true);
+    setError(null);
+    const result = await dispatch(
+      "entry.combine",
+      { intoEntryId: first.id, entryIds: lines.slice(1).map((e) => e.id) },
+      { quiet: true },
+    );
+    setBusy(false);
+    if (!result.ok) setError(result.error);
+  }
+
+  return (
+    <Alert color="yellow" title={`${jobLabel(first.jobName)} has ${lines.length} lines on this day`}>
+      <Stack gap="xs">
+        <Text size="sm">
+          Hours for one job and day go on one line now; these were made before that. Combining adds them up and joins
+          their notes. It can't be undone.
+        </Text>
+        <Group gap="xs">
+          <Button size="sm" variant="light" color="yellow" onClick={() => void combine()} loading={busy} disabled={!!blocked || pending}>
+            Combine into one line
+          </Button>
+          {blocked && (
+            <Text size="sm" c="dimmed">
+              {blocked}
+            </Text>
+          )}
+        </Group>
+        {error && (
+          <Text size="sm" c="red" role="alert">
+            {error}
+          </Text>
+        )}
+      </Stack>
+    </Alert>
+  );
+}
+
+function EntryRow({
+  entry,
+  now,
+  onEdit,
+  duplicated,
+}: {
+  entry: EntryView;
+  now: number | undefined;
+  onEdit: () => void;
+  /** Another line on the same job and day (from before one line per job). */
+  duplicated: boolean;
+}) {
   const { model, dispatch, pending } = useTracker();
   const { landed } = useFlight();
   const undoToast = useUndoToast();
@@ -75,12 +168,16 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
   const held = locked && entry.heldBy != null && entry.heldBy.length > 0;
   const seconds = now === undefined ? entry.durationSeconds : liveSeconds(entry, now);
 
-  const span =
+  const untimed = entry.untimedSeconds ?? 0;
+  const times =
     entry.startedAt == null
-      ? "Duration only"
+      ? null
       : running
         ? `${formatClock(entry.startedAt, tz)} – now`
         : `${formatClock(entry.startedAt, tz)} – ${entry.endedAt != null ? formatClock(entry.endedAt, tz) : "?"}`;
+  // A line can hold timed time and time with no start and end (typed in, or
+  // notes turned into hours) together.
+  const span = times == null ? "Duration only" : untimed > 0 ? `${times}, plus ${formatDurationHuman(untimed)} without times` : times;
 
   async function remove() {
     const result = await dispatch("entry.delete", { entryId: entry.id, at: Date.now() });
@@ -113,6 +210,11 @@ function EntryRow({ entry, now, onEdit }: { entry: EntryView; now: number | unde
         {held && (
           <Badge size="sm" variant="light" color="orange">
             already in QuickBooks
+          </Badge>
+        )}
+        {duplicated && (
+          <Badge size="sm" variant="light" color="yellow">
+            another line for this job
           </Badge>
         )}
       </Group>

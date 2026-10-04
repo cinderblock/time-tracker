@@ -452,6 +452,11 @@ function applyOne(s: State, op: Op): void {
           next.untimedSeconds = p.durationSeconds;
         }
       }
+      if (p.untimedSeconds !== undefined && convertTo === undefined) {
+        if (!hasTimes) return;
+        next.durationSeconds += p.untimedSeconds - (next.untimedSeconds ?? 0);
+        next.untimedSeconds = p.untimedSeconds;
+      }
       // Moved onto a job and day that already has a line: the server refuses.
       if (next.jobId && (next.jobId !== e.jobId || next.workDate !== e.workDate) && lineOf(m, next.jobId, next.workDate, e.id)) {
         return;

@@ -66,6 +66,9 @@ export function EntryEditor({
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [duration, setDuration] = useState("");
+  // A line with times can also hold time without them (typed in, or notes
+  // turned into hours, that joined it).
+  const [untimed, setUntimed] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,6 +90,7 @@ export function EntryEditor({
       setStart(entry.startedAt != null ? zonedTimeInput(entry.startedAt, tz) : "");
       setEnd(entry.endedAt != null ? zonedTimeInput(entry.endedAt, tz) : "");
       setDuration(formatDurationInput(entry.durationSeconds));
+      setUntimed(entry.untimedSeconds ? formatDurationInput(entry.untimedSeconds) : "");
       setNote(entry.note ?? "");
     } else {
       setMode("times");
@@ -95,6 +99,7 @@ export function EntryEditor({
       setStart("");
       setEnd("");
       setDuration("");
+      setUntimed("");
       setNote("");
     }
   }, [opened, entry]);
@@ -106,6 +111,8 @@ export function EntryEditor({
   if (overnight && endAt != null) endAt = zonedTimeToInstant(addDays(date, 1), end, tz);
   const durationFromTimes = startAt != null && endAt != null ? Math.round((endAt - startAt) / 1000) : null;
   const typedSeconds = parseDuration(duration) ?? 0;
+  const mixed = entry != null && entry.startedAt != null && (entry.untimedSeconds ?? 0) > 0;
+  const untimedSeconds = untimed.trim() === "" ? 0 : parseDuration(untimed);
 
   /**
    * The shape this entry is recorded in today, and whether the toggle is
@@ -178,6 +185,10 @@ export function EntryEditor({
         );
       }
     } else if (entry.startedAt != null) {
+      if (mixed && untimedSeconds == null) {
+        setBusy(false);
+        return setError("The time without start and end doesn't read as a duration.");
+      }
       result = await dispatch(
         "entry.update",
         {
@@ -186,6 +197,7 @@ export function EntryEditor({
           note: cleanNote !== entry.note ? cleanNote : undefined,
           startedAt: startAt != null && startAt !== entry.startedAt ? startAt : undefined,
           endedAt: !isOpenTimer && endAt != null && endAt !== entry.endedAt ? endAt : undefined,
+          untimedSeconds: mixed && untimedSeconds !== (entry.untimedSeconds ?? 0) ? untimedSeconds! : undefined,
         },
         { quiet: true },
       );
@@ -280,6 +292,14 @@ export function EntryEditor({
                 <Text size="sm" c="dimmed">
                   The timer is still running; stop it to set an end time.
                 </Text>
+              )}
+              {mixed && !converting && (
+                <Stack gap={2} mt="xs">
+                  <DurationInput label="Plus time without start and end" value={untimed} onChange={setUntimed} />
+                  <Text size="xs" c="dimmed">
+                    Typed in, or notes turned into hours, that joined this job's hours for the day.
+                  </Text>
+                </Stack>
               )}
             </Stack>
           ) : (

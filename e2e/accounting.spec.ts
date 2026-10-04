@@ -215,6 +215,8 @@ test("a job made here can be created in QuickBooks instead", async () => {
 });
 
 test("while QuickBooks is closed nothing is lost, and it goes once it's back", async () => {
+  // Phase 2 already has its 2h line today, sent: this joins it, and the
+  // record there is amended in place rather than a second one added.
   await addTime("Phase 2", "0:30");
   await signOffWeek();
   await bridgeControl("down", { down: true });
@@ -222,37 +224,39 @@ test("while QuickBooks is closed nothing is lost, and it goes once it's back", a
   await expect(page.getByText("not connected now")).toBeVisible();
   await sendNow(/The QB Bridge couldn't do it \(QBConnectionError: Could not open the company file\)/);
   await expect(stat("Refused")).toContainText("0"); // not the time's fault
-  expect((await bridge()).records).toHaveLength(2);
+  expect((await bridge()).records.map((r) => r.duration)).toEqual(["PT2H0M0S", "PT0H45M0S"]);
 
   await bridgeControl("down", { down: false });
   await sendNow(/Sent \d requests?\./);
-  expect((await bridge()).records).toHaveLength(3);
+  expect((await bridge()).records.map((r) => r.duration)).toEqual(["PT2H30M0S", "PT0H45M0S"]);
 });
 
 test("a refusal is shown, and can be retried", async () => {
+  // Joins Phase 2's line again: what's sent is the amendment, and that's what's refused.
   await addTime("Phase 2", "0.25");
   await signOffWeek();
   await page.goto("/admin/accounting");
   // After the page's own health check, so it's the time that's refused.
-  await bridgeControl("fail", { code: 3140, message: "There is an invalid reference to QuickBooks Customer.", of: "TimeTrackingAddRq" });
-  await sendNow("Sent 2 requests.");
+  await bridgeControl("fail", { code: 3140, message: "There is an invalid reference to QuickBooks Customer.", of: "TimeTrackingModRq" });
+  await sendNow("Sent 1 request.");
   const refused = page.getByRole("alert").filter({ hasText: "Refused by QuickBooks" });
   await expect(refused).toContainText(
-    /\(15m\): There is an invalid reference to QuickBooks Customer\. — tries again (in under a minute|in 1 minute)\./,
+    /\(2h 45m\): There is an invalid reference to QuickBooks Customer\. — tries again (in under a minute|in 1 minute)\./,
   );
   await expect(stat("Refused")).toContainText("1");
   await refused.getByRole("button", { name: "Try again now" }).click();
   await expect(toast("Retrying 1 entry. Sent 1 request.")).toBeVisible();
   await expect(page.getByRole("alert").filter({ hasText: "Refused by QuickBooks" })).toHaveCount(0);
-  expect((await bridge()).records).toHaveLength(4);
+  expect((await bridge()).records.map((r) => r.duration)).toEqual(["PT2H45M0S", "PT0H45M0S"]);
   await expect(page.getByText("Recent activity")).toBeVisible();
-  await expect(page.getByText(/Sent time · just now — 3140: There is an invalid reference/)).toBeVisible();
+  await expect(page.getByText(/Updated time · just now — 3140: There is an invalid reference/)).toBeVisible();
 });
 
 test("time taken back after it was sent is flagged, then amended in place", async () => {
   await page.goto("/admin/timesheets");
   await page.getByRole("group", { name: "Ivy Integrator" }).getByRole("button", { name: "Reopen Ivy Integrator's week" }).click();
-  await expect(toast("Ivy Integrator: Reopened 4 entries.")).toBeVisible();
+  // Two lines: Phase 2's own, and the one that came over with the linked job.
+  await expect(toast("Ivy Integrator: Reopened 2 entries.")).toBeVisible();
   await page.goto("/admin/accounting");
   await expect(page.getByRole("alert").filter({ hasText: "Taken back after being sent" })).toContainText(
     "QuickBooks still has the old version of these entries until they're signed off again",
@@ -260,8 +264,8 @@ test("time taken back after it was sent is flagged, then amended in place", asyn
 
   await signOffWeek();
   await page.goto("/admin/accounting");
-  await sendNow("Sent 4 requests.");
-  expect((await bridge()).records).toHaveLength(4); // amended, not added
+  await sendNow("Sent 2 requests.");
+  expect((await bridge()).records).toHaveLength(2); // amended, not added
   await expect(page.getByRole("alert").filter({ hasText: "Taken back after being sent" })).toHaveCount(0);
 });
 
@@ -281,7 +285,7 @@ test("time QuickBooks already has is held until someone says which it is", async
 
   await page.goto("/admin/accounting");
   await sendNow("Sent 1 request."); // asked, and stopped there
-  expect((await bridge()).records).toHaveLength(5);
+  expect((await bridge()).records).toHaveLength(3);
   await expect(stat("Waiting on a fix")).toContainText("1");
   const held = page.getByRole("alert").filter({ hasText: "QuickBooks already has time for these" });
   const entry = held.getByRole("group", { name: /^Ivy Integrator, .*Acme › Brand New Site$/ });
@@ -322,7 +326,7 @@ test("time QuickBooks already has is held until someone says which it is", async
   await expect(held).toHaveCount(0);
   await sendNow("Sent 1 request.");
   const records = (await bridge()).records;
-  expect(records).toHaveLength(5);
+  expect(records).toHaveLength(3);
   expect(records.at(-1)).toMatchObject({
     customer: site.id,
     duration: "PT1H0M0S",
@@ -332,16 +336,27 @@ test("time QuickBooks already has is held until someone says which it is", async
 });
 
 test("or QuickBooks' record is the right one, and the entry here is let go", async () => {
+  // A job with no hours yet today, so this is a first send and is checked:
+  // more time on Brand New Site would join its line and amend that record.
+  await page.goto("/admin/jobs");
+  const acme = page.getByRole("group", { name: "Acme", exact: true });
+  await acme.getByRole("button", { name: "Add a job" }).click();
+  await acme.getByLabel("New job for Acme").fill("Second Site");
+  await acme.getByRole("button", { name: "Add job", exact: true }).click();
+  await page.goto("/admin/accounting");
+  await page.locator(".mantine-Card-root", { hasText: "Second Site" }).getByRole("button", { name: "Create in QuickBooks" }).click();
+  await expect(toast("It will be created at the next contact. Sent 1 request.")).toBeVisible();
+
   const state = await bridge();
-  const site = state.customers.find((c) => c.fullName === "Acme:Brand New Site")!;
+  const site = state.customers.find((c) => c.fullName === "Acme:Second Site")!;
   await bridgeControl("foreign", { txnDate: state.records[0]!.date, entity: "E-ALICE", customer: site.id, duration: "PT0H45M0S" });
-  await addTime("Brand New Site", "40m");
+  await addTime("Second Site", "40m");
   await signOffWeek();
   await page.goto("/admin/accounting");
   await sendNow("Sent 1 request.");
 
   await page.goto("/");
-  const compare = page.getByRole("group", { name: "Acme › Brand New Site: QuickBooks already has time" });
+  const compare = page.getByRole("group", { name: "Acme › Second Site: QuickBooks already has time" });
   await expect(compare.getByText("No note")).toHaveCount(2); // neither side has one
   await compare.getByRole("button", { name: "Keep QuickBooks'" }).click();
   await expect(toast("Deleted here. QuickBooks keeps its record.")).toBeVisible();
@@ -349,7 +364,7 @@ test("or QuickBooks' record is the right one, and the entry here is let go", asy
   await expect(page.locator("[data-entry-id]", { hasText: "40m" })).toHaveCount(0);
   await page.goto("/admin/accounting");
   await sendNow("Nothing to send.");
-  expect((await bridge()).records).toHaveLength(6); // theirs stays; nothing of ours was added
+  expect((await bridge()).records).toHaveLength(4); // theirs stays; nothing of ours was added
 });
 
 test("a customer marked not billable sends its jobs' time as not billable", async () => {
@@ -358,12 +373,16 @@ test("a customer marked not billable sends its jobs' time as not billable", asyn
   await acme.getByRole("switch", { name: "Its jobs are billable" }).click({ force: true });
   await expect(toast("Time on “Acme” is sent as not billable.")).toBeVisible();
 
-  // Phase 2: the other job's day still has a record from elsewhere, which would hold this.
+  // Phase 2: joins its line, and the amended record goes as not billable.
   await addTime("Phase 2", "20m");
   await signOffWeek();
   await page.goto("/admin/accounting");
-  await sendNow("Sent 2 requests.");
-  expect((await bridge()).records.at(-1)).toMatchObject({ duration: "PT0H20M0S", item: "I-LABOR", billable: "NotBillable" });
+  await sendNow("Sent 1 request.");
+  expect((await bridge()).records.find((r) => r.duration === "PT3H5M0S")).toMatchObject({
+    customer: "C-ACME-2",
+    item: "I-LABOR",
+    billable: "NotBillable",
+  });
 
   // One job can differ from its customer, and says so.
   await page.goto("/admin/jobs");

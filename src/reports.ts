@@ -44,6 +44,8 @@ export interface ReportLine {
   endedAt: number | null;
   runningSince: number | null;
   seconds: number;
+  /** Of `seconds`, the part with no start and end (typed in, or notes turned into hours). */
+  untimedSeconds: number;
   note: string | null;
   status: EntryStatus;
   source: "timer" | "manual" | "note_rollup";
@@ -59,6 +61,7 @@ interface LineRow {
   job_id: string | null;
   work_date: string;
   duration_seconds: number;
+  untimed_seconds: number;
   note: string | null;
   status: EntryStatus;
   source: ReportLine["source"];
@@ -119,7 +122,7 @@ export function reportLines(filter: ReportFilter, now: number = Date.now()): Rep
   }
   const rows = db()
     .query<LineRow, (string | number)[]>(
-      `SELECT e.id, e.user_id, e.job_id, e.work_date, e.duration_seconds, e.note, e.status, e.source,
+      `SELECT e.id, e.user_id, e.job_id, e.work_date, e.duration_seconds, e.untimed_seconds, e.note, e.status, e.source,
               e.rate_snapshot,
               MIN(s.started_at) AS started_at,
               MAX(s.ended_at) AS ended_at,
@@ -165,6 +168,7 @@ export function reportLines(filter: ReportFilter, now: number = Date.now()): Rep
       endedAt: r.status === "open" ? null : r.ended_at,
       runningSince: running ? r.running_since : null,
       seconds,
+      untimedSeconds: r.untimed_seconds,
       note: r.note,
       status: r.status,
       source: r.source,
@@ -425,7 +429,10 @@ export interface CalendarWeek {
   people: { userId: number; name: string }[];
   /** Timed work, one block per segment — pauses show as gaps. */
   blocks: CalendarBlock[];
-  /** Typed-in durations, which have no place on a clock. */
+  /**
+   * Time with no place on a clock: typed-in durations, and the untimed part of
+   * a line that also has times (one line per job per day can hold both).
+   */
   untimed: { entryId: string; userId: number; jobName: string; workDate: string; seconds: number; status: EntryStatus }[];
 }
 
@@ -467,13 +474,13 @@ export function calendarWeek(weekStart: string, filter: Omit<ReportFilter, "from
     people: [...people].map(([userId, name]) => ({ userId, name })).sort((a, b) => a.name.localeCompare(b.name)),
     blocks,
     untimed: lines
-      .filter((l) => l.startedAt == null)
+      .filter((l) => l.startedAt == null || l.untimedSeconds > 0)
       .map((l) => ({
         entryId: l.entryId,
         userId: l.userId,
         jobName: l.jobName,
         workDate: l.workDate,
-        seconds: l.seconds,
+        seconds: l.startedAt == null ? l.seconds : l.untimedSeconds,
         status: l.status,
       })),
   };

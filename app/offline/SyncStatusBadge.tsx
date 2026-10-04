@@ -130,6 +130,8 @@ export function SignOutButton({ userId, children }: { userId: number; children: 
   const status = useSyncStatus();
   const submit = useSubmit();
   const [warning, setWarning] = useState(false);
+  // How many are waiting, counted when the button is pressed.
+  const [waiting, setWaiting] = useState(0);
 
   async function signOut() {
     setWarning(false);
@@ -141,10 +143,25 @@ export function SignOutButton({ userId, children }: { userId: number; children: 
     submit(null, { method: "post", action: "/signout" });
   }
 
-  const n = status.pending;
+  /**
+   * Count what's waiting from the device's storage, not the status: on a page
+   * that has only just loaded, the status may not have read the queue yet,
+   * and a sign-out then would skip the warning.
+   */
+  async function ask() {
+    const counted = await getEngine()
+      ?.queuedFor(userId)
+      .catch(() => status.pending);
+    const n = Math.max(counted ?? 0, status.pending);
+    setWaiting(n);
+    if (n > 0) setWarning(true);
+    else void signOut();
+  }
+
+  const n = waiting;
   return (
     <>
-      {children(() => (n > 0 ? setWarning(true) : void signOut()))}
+      {children(() => void ask())}
       <Modal opened={warning} onClose={() => setWarning(false)} title="Changes not saved yet" centered>
         <Stack>
           <Text>

@@ -85,6 +85,11 @@ export const opPayloads = {
       workDate: workDate.optional(),
       durationSeconds: z.number().int().positive().max(MAX_ENTRY_SECONDS).optional(),
       /**
+       * On a line with start and end times: the part of it that has none —
+       * typed-in time and notes turned into hours that joined it. 0 removes it.
+       */
+      untimedSeconds: z.number().int().nonnegative().max(MAX_ENTRY_SECONDS).optional(),
+      /**
        * Change how the entry is recorded: a stopped timer becomes a plain
        * duration, or a plain duration gets a start and an end. Without this,
        * an entry keeps the shape it was made in and the fields for the other

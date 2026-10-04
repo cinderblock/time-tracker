@@ -91,6 +91,32 @@ is undone by an op that puts the line's untimed time and description back
 and hands the notes back. One new op for that (`line.restore` or similar),
 carrying the previous values.
 
+**Refinements settled before building (2026-10-03):**
+
+- `rollup.commit` lines carry the seconds to **add** (0 allowed when the line
+  exists: "attach these notes to hours already counted"); the dialog shows
+  the line's current total and asks for the new one, sending the difference.
+  A new total below the current one is refused there ("edit the hours to
+  lower them") — a delta can't go below zero.
+- The undo of an add is one new op, `entry.unmerge { entryId,
+  removeSeconds?, removeSegment?: {startedAt, endedAt}, note, releaseNoteIds? }`:
+  take back exactly what was added and put the description back.
+- A continued timer's undo is `timer.stop` at the moment it was continued;
+  a segment stopped where it started (zero length) is deleted, not kept.
+- Starting a timer on the job that's already running is a no-op (alias only);
+  on the open-but-paused one, a resume.
+- Aliases: table `entry_aliases(alias_id → entry_id)`; the loader sends the
+  day's aliases in the model so the reducer resolves queued ops naming an id
+  the server already merged.
+- Editing an entry onto another job or date where a line exists: refused,
+  with the reason. Entries with no job never merge.
+- Mixed lines (times + untimed): the editor's duration edits the **total**
+  (untimed = total − timed, never below 0); "convert to duration" drops the
+  segments as today.
+- `entry.combine { intoEntryId, entryIds }` for old duplicates: only when all
+  are editable; not undoable (inverse null), so it's a clear, deliberate
+  button.
+
 **Flagging existing duplicates.** The day model marks entries that share a
 job with another live entry that day; the rows say so, and a "Combine" op
 folds them into the earliest (segments moved, untimed added, descriptions
@@ -113,16 +139,24 @@ Phase 1 — small, ships on its own:
 
 Phase 2 — one line per job per day:
 
-4. ⬅️ Migration: `time_entries.untimed_seconds`, `entry_aliases`.
-5. Server: line lookup; `startTimer`, `createManualEntry`, `commitRollup`
-   add to the line; alias resolution in `ownLiveEntry`; zero-length segment
-   drop; edit-into-another-line rule.
-6. Reducer mirror of all of it; `mirror()` tests.
-7. Undo inverses for the merging ops; the restoring op.
-8. UI: hours dialog asks for the new total; day rows flag duplicates;
-   Combine.
-9. Sync: an entry with untimed time sends its total (check `recordFor`).
-10. Tests, README, plan, commit, deploy (user's yes).
+4. ✅ Migration `011_one_line_per_job`: `time_entries.untimed_seconds`,
+   `entry_aliases`, a line index.
+5. ✅ Server (`src/entries.ts`): `lineFor`, `addToLine`, `continueLine`,
+   `unmergeEntry`, `combineEntries`; alias resolution in `ownLiveEntry`;
+   deleting by an alias refused; zero-length segment dropped on stop;
+   moving onto another line refused; `untimedSeconds` edit. `commitRollup`
+   joins lines. New ops `entry.unmerge`, `entry.combine`.
+6. ✅ Reducer mirror of all of it, with `mirror()` tests; aliases from the
+   server's copy (`DayModel.aliases`).
+7. ✅ Undo inverses: continued timer → stop at its own start; joined add →
+   `entry.unmerge`; combine → none.
+8. ✅ UI: hours dialog asks for the day's total (attach with no time; lower
+   refused with a reason); rows say "…, plus 30m without times"; duplicate
+   lines tagged, with a Combine alert; editor field for the untimed part;
+   the admin calendar lists a mixed line's untimed part.
+9. ✅ Sync: duration is the line's total, so `recordFor` needed nothing;
+   amendments verified against the pretend QuickBooks in e2e.
+10. ⬅️ Full e2e on a quiet machine, commit, push; deploy waits for the user.
 
 ## Findings / gotchas
 
@@ -130,6 +164,29 @@ Phase 2 — one line per job per day:
   `heldHere`), not just today's note boxes; the setting turns both off.
 - With the hold off, the loader still sends `notesToRollUp`, so the panel
   shows a quiet reminder linking to the unfinished day.
+
+- **Undo is offered only after the server takes a change** (`submit` in
+  `app/tracker/context.tsx` pushes the inverse once the answer is back). The
+  keyboard-undo e2e pressed Ctrl+Z as soon as the screen showed the stop, a
+  race that existed before and widened slightly with this work (2 of 5 runs
+  failed here; 3 of 3 passed on `727ac7b`). Fixed in the test: wait for
+  "Undo stopping the timer" first.
+- **Signing out right after a page load skipped the "changes not saved"
+  warning**: the status hadn't read the device queue yet, so it said 0. Now
+  the button counts from storage (`SyncEngine.queuedFor`). Exposed by the
+  offline e2e, deterministic once the timing shifted.
+- **Linking a made-up job to a real one can leave two lines for one job and
+  day** (the accounting e2e does exactly that). Left as is, per decision 2:
+  the day flags them and offers Combine; if both were sent, the person takes
+  the day back first.
+- **Only one real job in the pretend QuickBooks** (Phase 2), so the
+  accounting e2e now checks amendments in place (2h → 2h 30m → 2h 45m, a
+  refused amendment and its retry, not billable on an amendment), and the
+  "keep QuickBooks' record" test makes its own fresh job.
+- **e2e under load**: Defender and the search indexer can pin the CPU at
+  100% outside the compute broker; the suite then takes 4–8 minutes instead
+  of ~2 and animation-timing tests (the day-slide test) fail. Re-run on a
+  quiet machine before believing a failure.
 
 - The hold is UI-only today: the server never refuses a note for a held day
   (deliberately — a queued offline note would be dropped; see
@@ -139,6 +196,9 @@ Phase 2 — one line per job per day:
 ## Progress log
 
 - [x] 2026-10-03 — Asks recorded; scope chosen by the user; plan written.
+- [x] 2026-10-03 — **Phase 2 built** (one line per job per day). Commit
+      `2d5ccc5` (rule, mirror, undo) plus the UI commit. 458 unit tests;
+      e2e green apart from load-induced timing failures, being re-run.
 - [x] 2026-10-03 — **Phase 1 built.** Migration `010_notes_hold`
       (`users.notes_hold_next_day`, default 1); `setNotesHoldNextDay`
       (audited); `DayModel.notesHold`; the alert's "Start today anyway"

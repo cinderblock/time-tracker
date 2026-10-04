@@ -27,7 +27,9 @@ import {
   parseDuration,
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
+import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
 import { DurationInput } from "../components/duration-input.tsx";
+import { lineOf } from "../offline/reducer.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
@@ -513,7 +515,9 @@ function PencilIcon() {
  * Turn one job's pending notes into hours: the timeline over the whole day
  * suggests them (this job's runs, each until the next note of another job),
  * the person confirms or changes them, and one duration entry is made with
- * the notes as its description.
+ * the notes as its description. When the job already has hours that day the
+ * notes join them — one line per job per day — and what's asked is the new
+ * total; leaving it as it was attaches the notes to hours already counted.
  */
 function HoursDialog({
   opened,
@@ -552,6 +556,9 @@ function HoursDialog({
   // rebuilt on every data refresh, which must not wipe what's been typed.
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
+  // The job's hours already on the day, read when the suggestion is made.
+  const alreadyRef = useRef(0);
+  alreadyRef.current = lineOf(model, jobId, model.workDate)?.durationSeconds ?? 0;
   useEffect(() => {
     if (!opened) return;
     setOpenedAt(Date.now());
@@ -585,11 +592,23 @@ function HoursDialog({
   useEffect(() => {
     if (touched) return;
     // The notes' own seconds are noise here — nobody means "2:07:43".
-    setDuration(formatDurationInput(Math.round(suggested / 60) * 60));
-  }, [suggested, touched]);
+    setDuration(formatDurationInput(Math.round(suggested / 60) * 60 + alreadyRef.current));
+  }, [suggested, touched, opened]);
 
-  const seconds = parseDuration(duration) ?? 0;
-  const problems = rollupProblems([{ jobId, durationSeconds: seconds }]);
+  // The job's hours already on the day, which these join.
+  const line = lineOf(model, jobId, date);
+  const already = line?.durationSeconds ?? 0;
+  const typed = parseDuration(duration) ?? 0;
+  // With a line, the field is the day's total and what's added is the difference.
+  const seconds = line ? typed - already : typed;
+  const locked = line != null && !isEditable(line.status);
+  const lockedForGood = locked && !isOwnerReopenable(line.status, line.adminApproved);
+  const problems =
+    line && seconds < 0
+      ? ["That's less than the hours already there. To lower those, edit them."]
+      : lockedForGood
+        ? ["These hours are approved; an admin can reopen them to add more."]
+        : rollupProblems([{ jobId, durationSeconds: seconds, joinsLine: line != null }]);
 
   async function commit() {
     setBusy(true);
@@ -618,7 +637,7 @@ function HoursDialog({
       return;
     }
     // The row is already on the other side of the screen; show it getting there.
-    flyToEntry(entryId, formatDurationHuman(seconds), leaves);
+    flyToEntry(line?.id ?? entryId, seconds > 0 ? formatDurationHuman(seconds) : "notes", leaves);
     onClose();
   }
 
@@ -634,8 +653,15 @@ function HoursDialog({
                 .join(" and ")}
           {spans.length > 0 ? `: ${formatDurationHuman(suggested)}` : ""}. Change it if that's not right.
         </Text>
+        {line && (
+          <Text size="sm">
+            {title} already has {formatDurationHuman(already)} {isToday ? "today" : `on ${formatWorkDate(date)}`}; these
+            notes join those hours, as one line.
+            {locked && !lockedForGood ? " They're submitted, so they'll be taken back — submit the day again after." : ""}
+          </Text>
+        )}
         <DurationInput
-          label="Time worked"
+          label={line ? "Total for the day" : "Time worked"}
           value={duration}
           onChange={(v) => {
             setTouched(true);
@@ -652,6 +678,11 @@ function HoursDialog({
           minRows={2}
           maxRows={6}
         />
+        {line && problems.length > 0 && (
+          <Text size="sm" c="red">
+            {problems[0]}
+          </Text>
+        )}
         {error && (
           <Alert color="red" role="alert">
             {error}
@@ -662,7 +693,7 @@ function HoursDialog({
             Cancel
           </Button>
           <Button onClick={() => void commit()} loading={busy} disabled={problems.length > 0}>
-            Add {formatDurationHuman(seconds)} to {title}
+            {line && seconds === 0 ? `Attach the notes to ${title}` : `Add ${formatDurationHuman(Math.max(0, seconds))} to ${title}`}
           </Button>
         </Group>
       </Stack>

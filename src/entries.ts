@@ -750,6 +750,8 @@ export function updateEntry(args: {
   endedAt?: number;
   workDate?: string;
   durationSeconds?: number;
+  /** On a line with times: its untimed part. */
+  untimedSeconds?: number;
   convertTo?: "duration" | "times";
   now: number;
 }): Entry {
@@ -854,6 +856,11 @@ export function updateEntry(args: {
       );
     }
     db().query("UPDATE time_entries SET untimed_seconds = ? WHERE id = ?").run(args.durationSeconds - timed, entry.id);
+  }
+
+  if (args.untimedSeconds !== undefined && convertTo === undefined) {
+    if (!hasTimes) throw new OpError("invalid", "This entry is a plain duration; change the duration instead.");
+    db().query("UPDATE time_entries SET untimed_seconds = ? WHERE id = ?").run(args.untimedSeconds, entry.id);
   }
 
   // Still one line per job per day: moving these hours onto a job and day

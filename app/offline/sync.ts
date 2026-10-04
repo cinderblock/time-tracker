@@ -119,6 +119,15 @@ export class SyncEngine {
     return this.status;
   }
 
+  /**
+   * How many of this person's changes are waiting on the device, read from
+   * storage itself — right even on a page that loaded a moment ago, before
+   * the status has caught up with the queue.
+   */
+  async queuedFor(userId: number): Promise<number> {
+    return (await this.deps.store.list(userId)).length;
+  }
+
   /** Ops to apply on top of the server copy: confirmed-but-maybe-unreflected, then queued. */
   getOps(): Op[] {
     return this.opsCache;

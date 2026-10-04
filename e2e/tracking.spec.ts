@@ -273,6 +273,9 @@ test("stopping a timer can be undone, from the header and from the keyboard", as
   // Stopped again, and undone from the keyboard, from anywhere that isn't a text field.
   await timerCard().getByRole("button", { name: "Stop" }).click();
   await expect(page.getByRole("heading", { name: "Start a timer" })).toBeVisible();
+  // Undo is offered once the server has taken the stop (a refused change has
+  // nothing to undo); pressing it before then finds nothing to put back.
+  await expect(page.getByRole("button", { name: "Undo stopping the timer" })).toBeVisible();
   await page.locator("body").click({ position: { x: 5, y: 5 } });
   await page.keyboard.press("ControlOrMeta+z");
   await expect(timerCard().getByText("running", { exact: true })).toBeVisible();
@@ -307,10 +310,30 @@ test("delete an entry from the list, then undo", async () => {
   await expect(entryRows().filter({ hasText: "Bravo Site" })).toHaveCount(1);
 });
 
-test("add time by hand, as a plain duration", async () => {
+test("time for a job already worked today joins its line, and undoes back off it", async () => {
+  const bravo = () => entryRows().filter({ hasText: "Bravo Site" });
+  await expect(bravo()).toHaveCount(1);
   await page.getByRole("button", { name: "Add time manually" }).click();
   const dialog = page.getByRole("dialog", { name: "Add time" });
   await pickJob(dialog.getByRole("combobox", { name: /^Job/ }), "Bravo Site");
+  await dialog.getByText("Just a duration").click();
+  await dialog.getByLabel("Time worked").fill("30m");
+  await dialog.getByRole("button", { name: "Add time" }).click();
+  await expect(dialog).toBeHidden();
+
+  // Still one line for Bravo, holding both.
+  await expect(bravo()).toHaveCount(1);
+  await expect(bravo().getByText(/, plus 30m without times$/)).toBeVisible();
+  await page.getByRole("button", { name: "Undo adding time" }).click();
+  await expect(bravo().getByText(/plus 30m without times/)).toHaveCount(0);
+  await expect(bravo()).toHaveCount(1);
+});
+
+test("add time by hand, as a plain duration", async () => {
+  await page.getByRole("button", { name: "Add time manually" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add time" });
+  // A job with no hours yet today: this is its own line.
+  await pickJob(dialog.getByRole("combobox", { name: /^Job/ }), "Roof");
   await dialog.getByText("Just a duration").click();
   // One field, decimal hours; it says back what it understood.
   await dialog.getByLabel("Time worked").fill("1.5");
@@ -594,19 +617,46 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   await expect(alpha.getByText("Site walk")).toBeVisible();
 
   // Bravo's notes ran until Alpha started, moments later; the hours are set by hand.
+  // Bravo already has a line today (its timers, earlier): the notes join it,
+  // one line per job per day, and what's asked is the day's total.
   await bravo.getByRole("button", { name: "Turn 2 notes into hours" }).click();
   const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Bravo Site" });
   await expect(dialog.getByLabel("Note")).toHaveValue("Measuring the east wall; Cutting studs");
   await expect(dialog.getByLabel("Worked until")).toHaveCount(0);
-  await dialog.getByLabel("Time worked").fill("1:15");
-  await dialog.getByRole("button", { name: "Add 1h 15m to Bravo Site" }).click();
+  await expect(dialog.getByText(/^Bravo Site already has .* today; these notes join those hours, as one line\.$/)).toBeVisible();
+  await dialog.getByLabel("Total for the day").fill("1:15");
+  if (process.env.E2E_SCREENSHOTS) await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/notes-join-line.png` });
+  await dialog.getByRole("button", { name: /^Add .* to Bravo Site$/ }).click();
   await expect(dialog).toBeHidden();
+  const bravoRows = () => entryRows().filter({ hasText: "Bravo Site" });
+  await expect(bravoRows()).toHaveCount(1);
   const row = entryRows().filter({ hasText: "Measuring the east wall; Cutting studs" });
-  await expect(row.getByText("from notes")).toBeVisible();
-  await expect(row.getByText("Duration only")).toBeVisible();
-  await expect(row.getByText("1h 15m")).toBeVisible();
+  await expect(row.getByText("1h 15m", { exact: true })).toBeVisible();
+  await expect(row.getByText(/, plus .* without times$/)).toBeVisible();
+  if (process.env.E2E_SCREENSHOTS) await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/line-mixed.png`, fullPage: true });
   await expect(bravo.getByText("added to time")).toHaveCount(3);
   await expect(bravo.getByRole("button", { name: /^Turn .*into hours/ })).toHaveCount(0);
+
+  // A note about work already counted: attached to the line, with no time added.
+  await bravo.getByPlaceholder("What did you do?").fill("Swept up");
+  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  await bravo.getByRole("button", { name: "Turn 1 note into hours" }).click();
+  await dialog.getByLabel("Total for the day").fill("1:15");
+  await dialog.getByRole("button", { name: "Attach the notes to Bravo Site" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(bravoRows()).toHaveCount(1);
+  await expect(bravoRows().getByText("1h 15m", { exact: true })).toBeVisible();
+  await expect(bravoRows().getByText(/Cutting studs; Swept up/)).toBeVisible();
+  // Lowering the hours is the line's own editor's job, not this dialog's.
+  await bravo.getByPlaceholder("What did you do?").fill("Loaded the van");
+  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  await bravo.getByRole("button", { name: "Turn 1 note into hours" }).click();
+  await dialog.getByLabel("Total for the day").fill("30m");
+  await expect(dialog.getByText("That's less than the hours already there. To lower those, edit them.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /^Add .* to Bravo Site$/ })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await bravo.getByRole("button", { name: /^Edit Loaded the van/ }).click();
+  await bravo.getByRole("button", { name: "Delete" }).click();
 
   // Alpha runs to the end of the day: its last run is taken to end now, and
   // the time worked is the person's to correct — no "worked until" to ask.
@@ -614,10 +664,11 @@ test("switch to notes mode: add a job for the day, jot under it, and turn each j
   const alphaDialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
   await expect(alphaDialog.getByText(/Alpha Site ran .* – /)).toBeVisible();
   await expect(alphaDialog.getByLabel("Worked until")).toHaveCount(0);
-  await alphaDialog.getByLabel("Time worked").fill("45m");
-  await alphaDialog.getByRole("button", { name: "Add 45m to Alpha Site" }).click();
+  // Alpha has a line already too: the field is the day's total.
+  await alphaDialog.getByLabel("Total for the day").fill("45m");
+  await alphaDialog.getByRole("button", { name: /^Add .* to Alpha Site$/ }).click();
   await expect(alphaDialog).toBeHidden();
-  await expect(entryRows().filter({ hasText: "Site walk" }).getByText("45m")).toBeVisible();
+  await expect(entryRows().filter({ hasText: "Site walk" }).getByText("45m", { exact: true })).toBeVisible();
   // Nothing left to turn into hours (the undo line offers to undo the last turning, which is not that).
   await expect(page.getByRole("button", { name: /^Turn .*into hours/ })).toHaveCount(0);
 });
@@ -649,7 +700,9 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
   const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
   await expect(dialog.getByLabel("Worked until")).toHaveCount(0);
-  await dialog.getByLabel("Time worked").fill("1");
+  // That day's "Night pour" (3h 30m) is already Alpha's line: an hour more makes 4h 30m.
+  await expect(dialog.getByText(/^Alpha Site already has 3h 30m on \w{3}, \w{3} \d+; these notes join those hours, as one line\.$/)).toBeVisible();
+  await dialog.getByLabel("Total for the day").fill("4:30");
   await dialog.getByRole("button", { name: "Add 1h to Alpha Site" }).click();
   await expect(dialog).toBeHidden();
 
@@ -695,6 +748,38 @@ test("someone who'd rather finish old notes later can turn the hold off where it
 
   // Leave the day as it was for what follows.
   await send(ctx.request, "note.delete", { noteId: leftover, at: Date.now() });
+});
+
+test("a second line for one job, from before one line per job, is flagged and combined on request", async () => {
+  // No op can make one now, so it's written straight into the database, as
+  // days from before the rule hold them.
+  const script = `
+    import { Database } from "bun:sqlite";
+    const db = new Database(process.env.DATABASE_PATH);
+    db.exec("PRAGMA busy_timeout = 5000");
+    const user = db.query("SELECT id FROM users WHERE name = 'Tess Tracker'").get();
+    const job = db.query("SELECT id FROM jobs WHERE name = 'Bravo Site'").get();
+    const day = new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ });
+    const now = Date.now();
+    db.query(\`INSERT INTO time_entries (id, user_id, job_id, work_date, duration_seconds, untimed_seconds, note, source, status, device_id, client_created_at, created_at, updated_at)
+              VALUES (?, ?, ?, ?, 600, 600, 'From before', 'manual', 'draft', 'old', ?, ?, ?)\`)
+      .run(crypto.randomUUID(), user.id, job.id, day, now, now, now);
+  `;
+  execFileSync("bun", ["-e", script], { env: { ...process.env, ...e2eEnv }, stdio: "inherit" });
+
+  await page.goto("/");
+  const bravo = () => entryRows().filter({ hasText: "Bravo Site" });
+  await expect(bravo()).toHaveCount(2);
+  await expect(bravo().getByText("another line for this job")).toHaveCount(2);
+  const flag = page.getByRole("alert").filter({ hasText: "Riverside › Bravo Site has 2 lines on this day" });
+  await expect(flag).toContainText("It can't be undone.");
+  if (process.env.E2E_SCREENSHOTS) await page.screenshot({ path: `${process.env.E2E_SCREENSHOTS}/lines-combine.png`, fullPage: true });
+  await flag.getByRole("button", { name: "Combine into one line" }).click();
+  await expect(flag).toHaveCount(0);
+  await expect(bravo()).toHaveCount(1);
+  await expect(bravo().getByText(/From before/)).toBeVisible();
+  await page.reload();
+  await expect(bravo()).toHaveCount(1);
 });
 
 /**
