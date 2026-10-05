@@ -690,12 +690,12 @@ test("in notes mode, yesterday's notes have to become hours before today's can s
 
   await page.reload();
   const held = page.getByRole("alert").filter({ hasText: "isn't finished" });
-  await expect(held).toContainText("Turn its note into hours before today's notes start.");
+  await expect(held).toContainText("Turn its note into hours, or leave it out, before today's notes start.");
   await expect(page.getByPlaceholder("Add a job for today — type to search")).toHaveCount(0);
   await held.getByRole("link", { name: /^Go to / }).click();
   await expect(page).toHaveURL(new RegExp(`/day/${yesterday}$`));
   await expect(page.getByRole("button", { name: "Next day" })).toBeDisabled();
-  await expect(page.getByText("Turn this day's notes into hours to move on.")).toBeVisible();
+  await expect(page.getByText("Turn this day's notes into hours, or leave them out, to move on.")).toBeVisible();
 
   // Without a job it can't become hours: give it one.
   const orphan = page.getByRole("group", { name: "No job yet" });
@@ -738,12 +738,12 @@ test("someone who'd rather finish old notes later can turn the hold off where it
   // just not a wall.
   await expect(held.getByRole("button", { name: "Start today anyway" })).toHaveCount(0);
   await expect(page.getByPlaceholder("Add a job for today — type to search")).toBeVisible();
-  await expect(held).toContainText("It still has a note to turn into hours. Today's notes don't have to wait for it.");
+  await expect(held).toContainText("It still has a note to turn into hours or leave out. Today's notes don't have to wait for it.");
   if (shots) await page.screenshot({ path: `${shots}/notes-reminder.png`, fullPage: true });
   await held.getByRole("link", { name: /^Go to / }).click();
   await expect(page).toHaveURL(new RegExp(`/day/${yesterday}$`));
   // Moving on from it isn't held either.
-  await expect(page.getByText("Turn this day's notes into hours to move on.")).toHaveCount(0);
+  await expect(page.getByText("Turn this day's notes into hours, or leave them out, to move on.")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Next day" })).toBeVisible();
 
   // The Account page has the same switch, to turn the hold back on.
@@ -797,6 +797,53 @@ test("a past day can be written up afterwards, each note saying when, and a note
   await dialog.getByRole("button", { name: "Add 3h 30m to Alpha Site" }).click();
   await expect(dialog).toBeHidden();
   await expect(entryRows().filter({ hasText: "Formwork" }).getByText("3h 30m", { exact: true })).toBeVisible();
+});
+
+test("submitting with notes not yet hours asks first; a submitted day's leftover notes can be left out", async () => {
+  // The day written up just above: Alpha's hours, and now a note under Bravo
+  // whose time was billed some other way.
+  const day = new Date(Date.now() - 3 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+  await page.goto(`/day/${day}`);
+  await page.getByLabel("Started at").fill("13:00");
+  await pickJob(page.getByPlaceholder("Add a job you were on — type to search"), "Bravo Site");
+  const bravo = page.getByRole("group", { name: "Riverside › Bravo Site" });
+  await bravo.getByLabel("Time of the note for Riverside › Bravo Site").fill("14:00");
+  await bravo.getByPlaceholder("What did you do?").fill("Billed by hand");
+  await bravo.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(bravo.getByRole("button", { name: "Edit Billed by hand" })).toBeVisible();
+
+  // Submitting asks about the notes first; "not yet" changes nothing.
+  await page.getByRole("button", { name: "Submit this day" }).click();
+  const asking = page.getByRole("alert").filter({ hasText: "Some notes aren't hours yet" });
+  await expect(asking).toContainText("A job on this day still has notes not turned into hours.");
+  await asking.getByRole("button", { name: "Not yet" }).click();
+  await expect(asking).toHaveCount(0);
+  await page.getByRole("button", { name: "Submit this day" }).click();
+  await asking.getByRole("button", { name: "Submit anyway" }).click();
+  await expect(page.getByText("Submitted — 1 entry")).toBeVisible();
+
+  // Submitted, the day takes no new notes or hours until it's taken back...
+  await expect(page.getByText("This day is submitted. Take it back to add notes or turn them into hours.")).toBeVisible();
+  await expect(page.getByPlaceholder("Add a job you were on — type to search")).toHaveCount(0);
+  await expect(bravo.getByPlaceholder("What did you do?")).toHaveCount(0);
+  await expect(bravo.getByRole("button", { name: /into hours$/ })).toHaveCount(0);
+  const shots = process.env.E2E_SCREENSHOTS;
+  if (shots) await page.screenshot({ path: `${shots}/notes-submitted-leftover.png`, fullPage: true });
+
+  // ...but notes whose time went some other way can be left out: settled, kept as a record.
+  await bravo.getByRole("button", { name: "Leave out" }).click();
+  await expect(page.getByText("Notes left out.")).toBeVisible();
+  await expect(bravo.getByText("left out")).toHaveCount(2);
+  await expect(bravo.getByRole("button", { name: "Leave out" })).toHaveCount(0);
+  if (shots) await page.screenshot({ path: `${shots}/notes-left-out.png`, fullPage: true });
+
+  // Brought back, they wait again; left out again, the day is done.
+  await bravo.getByRole("button", { name: "Bring back" }).click();
+  await expect(bravo.getByRole("button", { name: "Leave out" })).toBeVisible();
+  await bravo.getByRole("button", { name: "Leave out" }).click();
+  await expect(bravo.getByRole("button", { name: "Bring back" })).toBeVisible();
+  await page.reload();
+  await expect(bravo.getByText("left out")).toHaveCount(2);
 });
 
 test("a second line for one job, from before one line per job, is flagged and combined on request", async () => {

@@ -1,4 +1,4 @@
-import type { NoteKind } from "../../src/ops-schema.ts";
+import type { NoteKind, NoteSettled } from "../../src/ops-schema.ts";
 import type { TrackingMode } from "../../src/tracking-mode.ts";
 
 /**
@@ -75,14 +75,15 @@ export interface NoteView {
   jobName: string | null;
   rolledIntoEntryId: string | null;
   /**
-   * Its entry was deleted because the accounting system already had the same
-   * time, and that record was kept: settled, though part of no entry here.
+   * Settled without being part of an entry here: the accounting system's
+   * record of the same time was kept in place of its hours, or the person
+   * left it out. Null otherwise.
    */
-  keptInAccounting: boolean;
+  settled: NoteSettled | null;
 }
 
-/** A note still to be turned into hours: part of no entry, and not settled in accounting. */
-export const isPendingNote = (n: NoteView): boolean => !n.rolledIntoEntryId && !n.keptInAccounting;
+/** A note still to be turned into hours: part of no entry, and not settled. */
+export const isPendingNote = (n: NoteView): boolean => !n.rolledIntoEntryId && !n.settled;
 
 export interface DayModel {
   userId: number;
@@ -130,6 +131,8 @@ export interface DayModel {
    * Nothing submits itself, so this is what stops a day being forgotten.
    */
   unsubmittedDays: string[];
+  /** Those of `unsubmittedDays` with notes not yet turned into hours: submitting them asks first. */
+  unsubmittedWithNotes: string[];
   /** Other days with signed-off time waiting on a duplicate answer (`heldBy`), most recent first. */
   heldDays: string[];
   /** The person's open timer, whichever day it belongs to. */

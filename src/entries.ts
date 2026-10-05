@@ -982,7 +982,7 @@ export function restoreEntry(args: { userId: number; actorUserId: number; entryI
   // them as any delete does.
   db()
     .query(
-      "UPDATE day_notes SET kept_in_accounting_at = NULL, updated_at = ? WHERE rolled_into_entry_id = ? AND kept_in_accounting_at IS NOT NULL",
+      "UPDATE day_notes SET settled_as = NULL, settled_at = NULL, updated_at = ? WHERE rolled_into_entry_id = ? AND settled_as = 'kept_in_accounting'",
     )
     .run(args.now, entry.id);
   recomputeDuration(entry.id, args.now);

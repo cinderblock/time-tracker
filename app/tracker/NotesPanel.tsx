@@ -29,7 +29,7 @@ import {
   zonedTimeInput,
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
-import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
+import { SIGNED_OFF_STATUSES, isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
 import { DurationInput } from "../components/duration-input.tsx";
 import { lineOf } from "../offline/reducer.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
@@ -53,6 +53,11 @@ import classes from "./notes.module.css";
  *
  * In timer mode the panel only shows a day's leftover notes (from before a
  * switch), so they can still be turned into hours.
+ *
+ * Notes that won't become hours — billed some other way, or not work — can be
+ * left out instead: settled, kept as a record, and no longer waited on. A
+ * submitted day takes no new notes or hours until it's taken back, but its
+ * leftover notes can still be left out, since that changes no time.
  */
 export function NotesPanel() {
   const { model, hrefFor, actingFor } = useTracker();
@@ -64,7 +69,9 @@ export function NotesPanel() {
   // until they're hours; with it off, it's called out but doesn't wait.
   const unfinished = writable ? (model.notesToRollUp ?? null) : null;
   const heldBy = unfinished && model.notesHold ? unfinished : null;
-  const canAdd = writable && !heldBy;
+  // A submitted day is done: new notes or hours wait until it's taken back.
+  const submitted = model.entries.length > 0 && model.entries.every((e) => SIGNED_OFF_STATUSES.has(e.status));
+  const canAdd = writable && !heldBy && !submitted;
   const thisDay = isToday ? "today" : formatWorkDate(model.workDate);
   const sections = useMemo(() => groupByJob(model.notes), [model.notes]);
   // The section whose note box should take the cursor next.
@@ -80,8 +87,8 @@ export function NotesPanel() {
         <Alert color="yellow" title={`${formatWorkDate(heldBy.date)} isn't finished`}>
           <Stack gap="xs">
             <Text size="sm">
-              Turn {heldBy.count === 1 ? "its note" : `its ${heldBy.count} notes`} into hours before{" "}
-              {isToday ? "today's notes" : `notes on ${thisDay}`} start.
+              Turn {heldBy.count === 1 ? "its note" : `its ${heldBy.count} notes`} into hours, or leave{" "}
+              {heldBy.count === 1 ? "it" : "them"} out, before {isToday ? "today's notes" : `notes on ${thisDay}`} start.
             </Text>
             <Group>
               <Button component={Link} to={hrefFor(heldBy.date)} size="sm">
@@ -99,7 +106,8 @@ export function NotesPanel() {
         <Alert color="yellow" title={`${formatWorkDate(unfinished.date)} isn't finished`}>
           <Stack gap="xs">
             <Text size="sm">
-              It still has {unfinished.count === 1 ? "a note" : `${unfinished.count} notes`} to turn into hours.{" "}
+              It still has {unfinished.count === 1 ? "a note" : `${unfinished.count} notes`} to turn into hours or leave
+              out.{" "}
               {isToday ? "Today's notes" : "This day's notes"} don't have to wait for it.
             </Text>
             <Group>
@@ -109,6 +117,11 @@ export function NotesPanel() {
             </Group>
           </Stack>
         </Alert>
+      )}
+      {submitted && (writable || sections.some((s) => s.pending.length > 0)) && (
+        <Text c="dimmed" size="sm">
+          This day is submitted. Take it back to add notes or turn them into hours.
+        </Text>
       )}
       {canAdd && <AddJob sections={sections} onAdded={setFocusJob} />}
       {sections.length === 0
@@ -128,6 +141,7 @@ export function NotesPanel() {
               key={s.key}
               section={s}
               canAdd={canAdd}
+              canTurn={!submitted}
               focused={focusJob != null && focusJob === s.jobId}
               onFocused={clearFocus}
             />
@@ -174,6 +188,8 @@ interface Section {
   notes: NoteView[];
   startedAt: number;
   pending: NoteView[];
+  /** Left out of the hours by the person; can be brought back. */
+  leftOut: NoteView[];
 }
 
 /** The day's notes by job, sections in the order the jobs were started. */
@@ -192,6 +208,7 @@ function groupByJob(notes: readonly NoteView[]): Section[] {
       notes: list,
       startedAt: list[0]!.at,
       pending: list.filter(isPendingNote),
+      leftOut: list.filter((n) => n.settled === "left_out"),
     }))
     .sort((a, b) => a.startedAt - b.startedAt);
 }
@@ -272,15 +289,19 @@ function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: s
 function JobSection({
   section,
   canAdd,
+  canTurn,
   focused,
   onFocused,
 }: {
   section: Section;
   canAdd: boolean;
+  /** Its notes can become hours here: not while the day is submitted. */
+  canTurn: boolean;
   focused: boolean;
   onFocused: () => void;
 }) {
-  const { model } = useTracker();
+  const { model, dispatch, pending: busy } = useTracker();
+  const undoToast = useUndoToast();
   // Open or not survives a reload, with what was typed in it (HoursDialog).
   const [hours, setHours] = useTrackerDraft(section.jobId ? `hours-open:${model.workDate}:${section.jobId}` : null, false);
   // Where this job's hours fly from when its notes become time.
@@ -288,6 +309,15 @@ function JobSection({
   const name = section.jobId ? (section.jobName ?? "Unknown job") : null;
   const { name: title, above: place } = jobPath(name ?? "");
   const written = section.pending.filter((n) => n.kind === "note").length;
+
+  async function leaveOut() {
+    const result = await dispatch("notes.leave_out", { noteIds: section.pending.map((n) => n.id), at: Date.now() });
+    if (result.ok) undoToast(section.pending.length === 1 ? "Note left out." : "Notes left out.");
+  }
+
+  async function bringBack() {
+    await dispatch("notes.bring_back", { noteIds: section.leftOut.map((n) => n.id), at: Date.now() });
+  }
 
   return (
     <Card
@@ -331,10 +361,23 @@ function JobSection({
           </Text>
         )}
 
-        {section.jobId && section.pending.length > 0 && (
+        {section.pending.length > 0 && (
           <Group>
-            <Button size="sm" variant="light" onClick={() => setHours(true)}>
-              {written > 0 ? `Turn ${written} note${written === 1 ? "" : "s"} into hours` : "Turn into hours"}
+            {section.jobId && canTurn && (
+              <Button size="sm" variant="light" onClick={() => setHours(true)}>
+                {written > 0 ? `Turn ${written} note${written === 1 ? "" : "s"} into hours` : "Turn into hours"}
+              </Button>
+            )}
+            {/* Time billed some other way, or that wasn't work: settled without hours. */}
+            <Button size="sm" variant="subtle" color="gray" onClick={() => void leaveOut()} disabled={busy}>
+              Leave out
+            </Button>
+          </Group>
+        )}
+        {section.leftOut.length > 0 && (
+          <Group>
+            <Button size="compact-sm" variant="subtle" color="gray" onClick={() => void bringBack()} disabled={busy}>
+              Bring back
             </Button>
           </Group>
         )}
@@ -471,7 +514,7 @@ function NoteBox({
 function NoteRow({ note }: { note: NoteView }) {
   const { model, dispatch, pending } = useTracker();
   const undoToast = useUndoToast();
-  // Part of an entry, or settled by the accounting system's record: a record either way.
+  // Part of an entry, or settled without one: a record either way.
   const rolled = !isPendingNote(note);
   // An edit under way is kept on the device — open, with what's been typed —
   // so an update or a crash brings it back as it was.
@@ -591,7 +634,11 @@ function NoteRow({ note }: { note: NoteView }) {
           {what}
           {rolled && (
             <Badge size="sm" variant="light" color="gray">
-              {note.keptInAccounting ? "kept in accounting" : "added to time"}
+              {note.settled === "kept_in_accounting"
+                ? "kept in accounting"
+                : note.settled === "left_out"
+                  ? "left out"
+                  : "added to time"}
             </Badge>
           )}
         </Group>

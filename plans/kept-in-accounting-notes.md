@@ -1,4 +1,4 @@
-# Notes whose time was kept in accounting stay settled
+# Settled notes: kept in accounting, or left out
 
 ## Goal
 
@@ -7,6 +7,11 @@ earlier, submitted day "isn't finished — it still has 5 notes to turn into
 hours", and offered to turn them into hours. Those notes' time was already in
 the accounting system, already invoiced and paid. Turning them into hours
 again would have made a second copy of billed time.
+
+Fixing that, three follow-ups were asked for (2026-10-05): a submitted day
+takes no new notes or hours until it's taken back; submitting a day with
+notes not yet hours asks first; and notes can be *left out* — billed some
+other way, or not work.
 
 ## What happened (the cause, confirmed in live data)
 
@@ -30,66 +35,79 @@ again would have made a second copy of billed time.
 
 Nothing was double-booked: the notes were never turned into hours a second
 time. Had they been, the new entry would have been held again by the
-duplicate check (the accounting record is still nobody's here), so the
-duplicate check was a second line of defence — but one that asks the person the same question
-again, about time they had already settled.
+duplicate check (the accounting record is still nobody's here) — a second
+line of defence, but one asking the same question about time already settled.
 
 ## Decisions already made (don't re-ask)
 
-1. **The settled state lives on the notes**, as `day_notes.kept_in_accounting_at`,
-   not on the deleted entry. The entry's own state can't carry it safely:
-   marking its `duplicate_check` as resolved would make a restored entry
-   sendable without a hold. A note marked this way is not pending, cannot be
-   edited, re-timed, moved, deleted or turned into hours — the same freeze as
-   a note that is part of an entry.
-2. **Restoring the entry clears the mark**: its notes are its own again, and
-   a later ordinary delete frees them as before.
-3. **Existing data is repaired by the migration**: notes rolled into an entry
-   that is deleted and whose audit trail has a `duplicate_discard` are marked,
-   with the entry's deletion time.
-4. On the day, such a note reads "kept in accounting" where a rolled-up note
-   reads "added to time".
+1. **Settled is a state of the note**: `day_notes.settled_as`
+   (`kept_in_accounting` | `left_out`) and `settled_at`, not something on the
+   deleted entry. The entry's own state can't carry it safely: marking its
+   `duplicate_check` resolved would make a restored entry sendable without a
+   hold. A settled note is not pending, and can't be edited, re-timed, moved,
+   deleted or turned into hours — the same freeze as a note in an entry.
+2. **Kept in accounting**: set by the `discard` answer. Restoring the entry
+   clears it (its notes are its own again, and a later ordinary delete frees
+   them). It can't be "brought back" by itself.
+3. **Left out**: the person's choice, per job section ("Leave out"), with an
+   undo and a "Bring back". All or nothing per op, on server and reducer
+   alike. Allowed on a submitted day — it changes no time.
+4. **A submitted day** (every entry signed off) takes no new jobs, notes or
+   "Turn into hours" until taken back; the panel says so. Client-side only,
+   like the hold: the server already handles a rollup onto a locked line.
+5. **Submitting asks** when the day has notes not yet hours ("Submit anyway"
+   / "Not yet"); "submit them all" for earlier days asks the same when any of
+   them has some (`unsubmittedWithNotes` on the day model).
+6. **Existing data is repaired by migration `012_settled_notes`**: notes
+   rolled into an entry deleted by a `duplicate_discard` (audit time equal to
+   the deletion time) are marked kept in accounting. Migration `012` has not
+   run anywhere yet, which is why its first version (a single
+   `kept_in_accounting_at` column, commit `4fa8d29`) could be reworked.
 
 ## Plan / steps
 
-1. [x] Migration `012_notes_kept_in_accounting` with the backfill.
-2. [x] Server: `discard` marks the entry's notes; `restoreEntry` clears them;
-   `pendingNotesBefore`, the note freeze, and `DayNote` know the mark.
-3. [x] Client: `NoteView.keptInAccounting`; pending checks in the panel and
-   the day header; the reducer mirrors discard and restore.
-4. [x] Tests: sync (discard settles the notes; restore frees them), migration
-   backfill, reducer.
-5. [x] typecheck, unit, e2e; commit. Deploy waits for the user.
+1. [x] Migration `012_settled_notes` with the backfill.
+2. [x] Server: `discard` settles the entry's notes; `restoreEntry` clears
+   them; `notes.leave_out` / `notes.bring_back` ops; `pendingNotesBefore`,
+   `datesWithPendingNotes`, the note freeze and `DayNote.settled`.
+3. [x] Client: `NoteView.settled`, `isPendingNote`; the panel (Leave out,
+   Bring back, badges, the submitted-day lock); SubmitDay asks; the day
+   header and callouts mention leaving out; reducer, undo, sync badge.
+4. [x] Tests: sync (discard settles; restore frees), tracking (leave out /
+   bring back, audit, all-or-nothing), migration backfill, reducer mirrors,
+   undo, and an e2e walk through submit-asks / submitted lock / leave out.
+5. [x] README.
+6. [x] typecheck, unit, e2e; commit. **Deploy waits for the user.**
 
 ## Findings / gotchas
 
-- The client mirror already behaved "right" by accident: on a discard it
+- The client mirror already behaved "right" by accident on a discard: it
   removed the entry but left the notes pointing at it, so they looked rolled
-  up until the next fresh copy from the server freed them.
-- A submitted day with leftover notes still offers "Turn into hours" and
-  (since 2026-10-04) new jobs and notes. Not changed here; see open questions.
+  up until the server's next copy freed them.
+- A reducer field added to the day model needs `?? []` where the state is
+  copied: a copy stored on a device before the field existed has none.
+- The submitted-day lock covers notes only; "Add time manually" is still
+  offered on a submitted day (unchanged; it makes draft time on that day).
+- PowerShell's `[IO.File]` calls resolve relative paths against the process
+  directory, not the shell's — use absolute paths or the Edit tool.
 
 ## Progress log
 
 - [x] 2026-10-05 — Report read, cause traced to discard + the undo rule,
       confirmed read-only against live data. Plan written.
-- [x] 2026-10-05 — **Built** on branch `kept-in-accounting-notes`.
-      Typecheck clean; 478 unit (3 new: the discard/restore cycle, the
-      reducer mirror, the migration backfill), and the two behaviour tests
-      fail with the fix removed; 82 e2e passed, 3 skipped. The backfill's
+- [x] 2026-10-05 — **Fix built** (`4fa8d29`): typecheck, 478 unit (the two
+      behaviour tests fail with the fix removed), 82 e2e. The backfill's
       selection, run read-only against live data, marks exactly the five
-      notes from the report and nothing else. Not deployed.
+      notes from the report and nothing else.
+- [x] 2026-10-05 — **Follow-ups built** (the user's yes to all three):
+      settled notes generalised, leave out / bring back, submitted-day lock,
+      submit asks. Typecheck, 481 unit, 83 e2e passed (3 skipped:
+      screenshot-only), screenshots of the locked day and left-out notes
+      checked. Not deployed.
 
 ## Open questions for the user
 
-1. Should a submitted day's notes panel ask for the day to be taken back
-   before it takes new jobs, notes or "Turn into hours"? Today it allows
-   them, making new draft time on a submitted day.
-2. Should submitting a day with notes not yet turned into hours warn?
-   Today it doesn't, so leftovers are only noticed by the next day's callout.
-3. Is a per-job "leave these out" action for notes wanted — time that was
-   billed some other way, or wasn't work? Nothing in the app does that today
-   but deleting the notes.
+None.
 
 ## Things not to do
 
@@ -97,3 +115,5 @@ again, about time they had already settled.
   a restored entry would then be sent without a hold.
 - Don't make every delete settle notes: deleting an entry is how a rollup is
   undone, and those notes must come back.
+- Don't let "Bring back" undo a kept-in-accounting note: its time is the
+  accounting record's; restoring the entry is the way back.

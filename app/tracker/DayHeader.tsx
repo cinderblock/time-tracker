@@ -122,7 +122,7 @@ export function DayHeader() {
       </Group>
       {heldHere && workDate < today && (
         <Text size="xs" c="dimmed" ta="center">
-          Turn this day's notes into hours to move on.
+          Turn this day's notes into hours, or leave them out, to move on.
         </Text>
       )}
 

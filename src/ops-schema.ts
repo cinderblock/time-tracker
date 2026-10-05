@@ -44,6 +44,14 @@ const location = z
 export const NOTE_KINDS = ["note", "start"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 
+/**
+ * How a note is settled without being part of an entry here: the accounting
+ * system's record of the same time was kept in place of its hours, or the
+ * person left it out (billed some other way, or not work).
+ */
+export const NOTE_SETTLED = ["kept_in_accounting", "left_out"] as const;
+export type NoteSettled = (typeof NOTE_SETTLED)[number];
+
 export const opPayloads = {
   "timer.start": z.object({
     entryId: id,
@@ -128,6 +136,10 @@ export const opPayloads = {
   }),
   "note.delete": z.object({ noteId: id, at: instant }),
   "note.restore": z.object({ noteId: id, at: instant }),
+  // Notes that won't become hours (billed some other way, or not work), and
+  // the way back. The day stops waiting on them; no time changes.
+  "notes.leave_out": z.object({ noteIds: z.array(id).min(1).max(500), at: instant }),
+  "notes.bring_back": z.object({ noteIds: z.array(id).min(1).max(500), at: instant }),
 
   "rollup.commit": z.object({
     workDate,

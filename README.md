@@ -41,6 +41,11 @@ repository. All of that is deployment configuration or an admin setting.
     start; anyone who'd rather finish old notes later turns that off (it's
     offered right where it holds them, and on the Account page), and an
     unfinished day is then still called out, but doesn't hold anything back.
+    Notes whose time was billed some other way, or wasn't work, can be *left
+    out* instead: kept as a record, with nothing left waiting (and brought
+    back if that was wrong). Submitting a day that still has notes asks
+    first; a submitted day takes no new notes or hours from notes until it's
+    taken back, though its leftover notes can still be left out.
   - *Manual entry*, either way — a start and end time (overnight shifts included)
     or just a duration, on any past day. A duration is one field, written the way
     it's said: `1:30`, `1.5` or `90m` all mean an hour and a half, and the field
@@ -142,8 +147,10 @@ repository. All of that is deployment configuration or an admin setting.
     person sees it on their own day: the entry is marked, a banner points at any
     other days waiting, and a side-by-side of their entry and QuickBooks' record
     offers the ways out, each with what it does — keep mine (QuickBooks' record is
-    changed to match), keep QuickBooks' (the entry is deleted here), they're
-    different (both are sent), or check again after fixing it in QuickBooks.
+    changed to match), keep QuickBooks' (the entry is deleted here, and any
+    notes it was made from read "kept in accounting" rather than waiting to be
+    hours again), they're different (both are sent), or check again after
+    fixing it in QuickBooks.
     Admins can answer from the Accounting page too.
   - **A job, or a whole customer, can be not billable** (Jobs page). Its time is
     still sent, with its service item, marked not billable — for internal work

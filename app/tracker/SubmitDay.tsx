@@ -1,10 +1,12 @@
 import { Alert, Anchor, Button, Card, Group, Stack, Text } from "@mantine/core";
+import { useState } from "react";
 import { Link } from "react-router";
 
 import { isOwnerReopenable } from "../../src/entry-status.ts";
 import { formatWorkDate } from "../../src/time.ts";
 import appear from "../components/appear.module.css";
 import { useTracker } from "./context.tsx";
+import { isPendingNote } from "./model.ts";
 
 /**
  * Submitting a day: the person saying their time is done.
@@ -17,6 +19,10 @@ import { useTracker } from "./context.tsx";
  * Taking a day back is offered whenever it's the person's own submission to
  * withdraw. Once an admin has approved an entry it stays put, and the card
  * says who to ask.
+ *
+ * A day with notes not yet turned into hours asks first: submitting says the
+ * day is done, and those notes would otherwise only be noticed later, as an
+ * unfinished day. Turn them into hours, leave them out, or submit anyway.
  */
 export function SubmitDay() {
   const { model, dispatch, dispatchAll, pending, actingFor, hrefFor } = useTracker();
@@ -26,14 +32,24 @@ export function SubmitDay() {
   const approved = stopped.filter((e) => e.adminApproved);
   const running = model.entries.some((e) => e.status === "open");
   const who = actingFor ? actingFor.name : "you";
+  // Jobs on this day with notes still to become hours; and earlier days, waiting
+  // to be submitted, that have some.
+  const jobsWithNotes = new Set(model.notes.filter(isPendingNote).map((n) => n.jobId)).size;
+  const earlierWithNotes = (model.unsubmittedWithNotes ?? []).filter((d) => model.unsubmittedDays.includes(d));
+  const [asking, setAsking] = useState<"day" | "earlier" | null>(null);
 
   // A day with nothing on it has nothing to say — except about other days.
   if (stopped.length === 0 && model.unsubmittedDays.length === 0) return null;
 
-  const submitDay = () => void dispatch("day.submit", { workDate: model.workDate });
+  const submitDay = () => {
+    setAsking(null);
+    void dispatch("day.submit", { workDate: model.workDate });
+  };
   const takeBack = () => void dispatch("day.unsubmit", { workDate: model.workDate });
-  const submitEarlier = () =>
+  const submitEarlier = () => {
+    setAsking(null);
     void dispatchAll(model.unsubmittedDays.map((workDate) => ({ type: "day.submit" as const, payload: { workDate } })));
+  };
 
   return (
     <Stack gap="sm">
@@ -46,10 +62,34 @@ export function SubmitDay() {
                   <Text fw={500}>
                     {unsubmitted.length} {unsubmitted.length === 1 ? "entry" : "entries"} not submitted
                   </Text>
-                  <Button onClick={submitDay} loading={pending} disabled={running}>
+                  <Button
+                    onClick={jobsWithNotes > 0 ? () => setAsking("day") : submitDay}
+                    loading={pending}
+                    disabled={running || asking === "day"}
+                  >
                     Submit this day
                   </Button>
                 </Group>
+                {asking === "day" && (
+                  <Alert color="yellow" title="Some notes aren't hours yet" className={appear.appear}>
+                    <Stack gap="xs">
+                      <Text size="sm">
+                        {jobsWithNotes === 1 ? "A job" : `${jobsWithNotes} jobs`} on this day still{" "}
+                        {jobsWithNotes === 1 ? "has" : "have"} notes not turned into hours. Turn them into hours, or
+                        leave them out if their time was billed some other way. Submitting without them leaves them
+                        waiting.
+                      </Text>
+                      <Group>
+                        <Button size="compact-sm" variant="light" color="yellow" onClick={submitDay}>
+                          Submit anyway
+                        </Button>
+                        <Button size="compact-sm" variant="default" onClick={() => setAsking(null)}>
+                          Not yet
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Alert>
+                )}
                 <Text size="sm" c="dimmed">
                   {running
                     ? "Stop the timer first — a running timer can't be submitted."
@@ -101,10 +141,35 @@ export function SubmitDay() {
               {model.unsubmittedDays.length > 5 && ` and ${model.unsubmittedDays.length - 5} more`}.
             </Text>
             <Group>
-              <Button size="compact-sm" variant="light" color="yellow" onClick={submitEarlier} loading={pending}>
-                Submit {model.unsubmittedDays.length === 1 ? "it" : "them all"}
+              <Button
+                size="compact-sm"
+                variant="light"
+                color="yellow"
+                onClick={earlierWithNotes.length > 0 && asking !== "earlier" ? () => setAsking("earlier") : submitEarlier}
+                loading={pending}
+              >
+                {asking === "earlier" ? "Submit anyway" : `Submit ${model.unsubmittedDays.length === 1 ? "it" : "them all"}`}
               </Button>
+              {asking === "earlier" && (
+                <Button size="compact-sm" variant="default" onClick={() => setAsking(null)}>
+                  Not yet
+                </Button>
+              )}
             </Group>
+            {asking === "earlier" && (
+              <Text size="sm">
+                Notes on{" "}
+                {earlierWithNotes.map((date, i) => (
+                  <span key={date}>
+                    {i > 0 && ", "}
+                    <Anchor component={Link} to={hrefFor(date)} size="sm">
+                      {formatWorkDate(date)}
+                    </Anchor>
+                  </span>
+                ))}{" "}
+                aren't hours yet. Turn them into hours or leave them out first, or submit anyway.
+              </Text>
+            )}
           </Stack>
         </Alert>
       )}

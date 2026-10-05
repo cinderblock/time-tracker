@@ -772,6 +772,45 @@ describe("notes and rollup", () => {
     expect(loadDay(userId, TODAY).notesToRollUp).toEqual({ date: "2026-09-12", count: 1 });
   });
 
+  test("notes left out are settled: the day stops waiting on them, and they can be brought back", () => {
+    const yesterday = NINE - 24 * HOUR; // 2026-09-15
+    const [start, note] = [uuidv7(), uuidv7()];
+    ok(send("note.create", { noteId: start, at: yesterday, kind: "start", jobId: jobA }));
+    ok(send("note.create", { noteId: note, at: yesterday + HOUR, text: "Billed by hand", jobId: jobA }));
+    ok(send("entry.create", { entryId: uuidv7(), jobId: jobB, workDate: "2026-09-15", durationSeconds: 3600 }));
+    setTrackingMode({ userId, mode: "notes", actorUserId: userId });
+    expect(loadDay(userId, TODAY)).toMatchObject({
+      notesToRollUp: { date: "2026-09-15", count: 2 },
+      unsubmittedDays: ["2026-09-15"],
+      unsubmittedWithNotes: ["2026-09-15"],
+    });
+
+    ok(send("notes.leave_out", { noteIds: [start, note], at: NINE }));
+    expect(listNotesForDate(userId, "2026-09-15").map((n) => n.settled)).toEqual(["left_out", "left_out"]);
+    expect(loadDay(userId, TODAY)).toMatchObject({ notesToRollUp: null, unsubmittedWithNotes: [] });
+    // Left out is settled: not edited, made into hours, or left out twice.
+    rejected(send("note.update", { noteId: note, text: "changed" }), "conflict");
+    rejected(
+      send("rollup.commit", {
+        workDate: "2026-09-15",
+        lines: [{ entryId: uuidv7(), jobId: jobA, durationSeconds: 3600, noteIds: [start, note] }],
+      }),
+      "conflict",
+    );
+    rejected(send("notes.leave_out", { noteIds: [note], at: NINE }), "conflict");
+    expect(
+      db().query("SELECT action, after_json FROM audit_log WHERE entity = 'notes' ORDER BY id").all(),
+    ).toEqual([{ action: "leave_out", after_json: JSON.stringify({ noteIds: [start, note] }) }]);
+
+    // Brought back, they're notes to turn into hours again; all or nothing.
+    const other = uuidv7();
+    ok(send("note.create", { noteId: other, at: yesterday + 2 * HOUR, text: "Still pending", jobId: jobA }));
+    rejected(send("notes.bring_back", { noteIds: [note, other], at: NINE }), "conflict");
+    expect(listNotesForDate(userId, "2026-09-15").find((n) => n.id === note)!.settled).toBe("left_out");
+    ok(send("notes.bring_back", { noteIds: [start, note], at: NINE }));
+    expect(loadDay(userId, TODAY).notesToRollUp).toEqual({ date: "2026-09-15", count: 3 });
+  });
+
   test("the hold is the person's own choice: on by default, off on request, and audited", () => {
     ok(send("note.create", { noteId: uuidv7(), at: NINE - 24 * HOUR, text: "Framing", jobId: jobA }));
     setTrackingMode({ userId, mode: "notes", actorUserId: userId });

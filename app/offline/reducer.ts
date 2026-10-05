@@ -3,7 +3,15 @@ import { MAX_ENTRY_SECONDS, NOTE_MAX_LENGTH } from "../../src/limits.ts";
 import type { Op } from "../../src/ops-schema.ts";
 import { joinDescriptions } from "../../src/rollup.ts";
 import { workDateOf } from "../../src/time.ts";
-import { type DayModel, type EntryView, type JobView, type NoteView, compareEntries, compareNotes } from "../tracker/model.ts";
+import {
+  type DayModel,
+  type EntryView,
+  type JobView,
+  type NoteView,
+  compareEntries,
+  compareNotes,
+  isPendingNote,
+} from "../tracker/model.ts";
 
 /**
  * Applies not-yet-reflected ops to the last server copy of a day, so the
@@ -28,6 +36,7 @@ export function applyPending(base: DayModel, ops: readonly Op[]): DayModel {
       unsubmittedDays: [...base.unsubmittedDays],
       // A copy stored before this field existed has none.
       heldDays: [...(base.heldDays ?? [])],
+      unsubmittedWithNotes: [...(base.unsubmittedWithNotes ?? [])],
       week: base.week.map((d) => ({ ...d })),
     },
     deletedEntries: new Map(),
@@ -527,7 +536,7 @@ function applyOne(s: State, op: Op): void {
         jobId: p.jobId ?? null,
         jobName: p.jobId ? jobName(m, p.jobId) : null,
         rolledIntoEntryId: null,
-        keptInAccounting: false,
+        settled: null,
       });
       return;
     }
@@ -563,6 +572,25 @@ function applyOne(s: State, op: Op): void {
       if (!n || m.notes.some((x) => x.id === n.id)) return;
       s.deletedNotes.delete(n.id);
       m.notes.push(n);
+      return;
+    }
+
+    case "notes.leave_out": {
+      const p = op.payload;
+      // All or nothing, as on the server: every one still waiting to be hours.
+      const ids = new Set(p.noteIds);
+      const these = m.notes.filter((n) => ids.has(n.id));
+      if (these.length !== ids.size || !these.every(isPendingNote)) return;
+      m.notes = m.notes.map((n) => (ids.has(n.id) ? { ...n, settled: "left_out" } : n));
+      return;
+    }
+
+    case "notes.bring_back": {
+      const p = op.payload;
+      const ids = new Set(p.noteIds);
+      const these = m.notes.filter((n) => ids.has(n.id));
+      if (these.length !== ids.size || !these.every((n) => n.settled === "left_out")) return;
+      m.notes = m.notes.map((n) => (ids.has(n.id) ? { ...n, settled: null } : n));
       return;
     }
 
@@ -688,6 +716,7 @@ function applyOne(s: State, op: Op): void {
       // Submitting takes every stopped entry on the day, so the day stops
       // being one that's waiting — whether or not it's the day on screen.
       m.unsubmittedDays = m.unsubmittedDays.filter((d) => d !== workDate);
+      m.unsubmittedWithNotes = m.unsubmittedWithNotes.filter((d) => d !== workDate);
       // A running timer isn't submitted; the server skips it and says so, and
       // submitting again after it stops picks it up.
       if (workDate !== m.workDate) return;
@@ -725,7 +754,7 @@ function applyOne(s: State, op: Op): void {
         if (e.status !== "draft" && !isOwnerReopenable(e.status, e.adminApproved)) return;
         // Its notes are settled by the record kept there, not hours to make again.
         m.notes = m.notes.map((n) =>
-          n.rolledIntoEntryId === e.id ? { ...n, rolledIntoEntryId: null, keptInAccounting: true } : n,
+          n.rolledIntoEntryId === e.id ? { ...n, rolledIntoEntryId: null, settled: "kept_in_accounting" } : n,
         );
         m.entries = m.entries.filter((x) => x.id !== e.id);
         if (m.open?.id === e.id) m.open = null;

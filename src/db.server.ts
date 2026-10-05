@@ -607,26 +607,33 @@ const migrations: Migration[] = [
     `,
   },
   {
-    name: "012_notes_kept_in_accounting",
+    name: "012_settled_notes",
     sql: `
-        -- Notes whose entry was deleted because the accounting system already
-        -- had the same time ("keep theirs", see src/sync.ts): their time is
-        -- accounted for, so they are settled, not notes to turn into hours
-        -- again. Deleting an entry otherwise frees its notes — that is how a
-        -- rollup is undone — which is why this needs saying on the notes.
-        ALTER TABLE day_notes ADD COLUMN kept_in_accounting_at INTEGER;
+        -- A note that won't become hours here, and isn't waiting to: settled.
+        --   kept_in_accounting  its entry was deleted because the accounting
+        --                       system already had the same time, and that
+        --                       record was kept ("keep theirs", src/sync.ts)
+        --   left_out            the person said so: billed some other way, or
+        --                       not work
+        -- Deleting an entry otherwise frees its notes — that is how a rollup
+        -- is undone — which is why this needs saying on the notes.
+        ALTER TABLE day_notes ADD COLUMN settled_as TEXT
+          CHECK (settled_as IN ('kept_in_accounting', 'left_out'));
+        ALTER TABLE day_notes ADD COLUMN settled_at INTEGER;
 
-        -- Every such answer given so far: entries whose deletion is that
+        -- Every "keep theirs" answered so far: entries whose deletion is that
         -- answer (the discard deletes at the moment it's audited), not one
         -- restored since and deleted some other way.
         UPDATE day_notes
-           SET kept_in_accounting_at = (SELECT e.deleted_at FROM time_entries e WHERE e.id = day_notes.rolled_into_entry_id)
-         WHERE rolled_into_entry_id IN (
-           SELECT e.id FROM time_entries e
-            WHERE e.deleted_at IS NOT NULL
-              AND EXISTS (SELECT 1 FROM audit_log a
-                           WHERE a.entity = 'entry' AND a.entity_id = e.id
-                             AND a.action = 'duplicate_discard' AND a.at = e.deleted_at));
+           SET settled_as = 'kept_in_accounting',
+               settled_at = (SELECT e.deleted_at FROM time_entries e WHERE e.id = day_notes.rolled_into_entry_id)
+         WHERE deleted_at IS NULL
+           AND rolled_into_entry_id IN (
+             SELECT e.id FROM time_entries e
+              WHERE e.deleted_at IS NOT NULL
+                AND EXISTS (SELECT 1 FROM audit_log a
+                             WHERE a.entity = 'entry' AND a.entity_id = e.id
+                               AND a.action = 'duplicate_discard' AND a.at = e.deleted_at));
     `,
   },
 ];

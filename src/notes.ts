@@ -3,7 +3,7 @@ import { db } from "./db.server.ts";
 import { type LocationFix, addToLine, createManualEntry, lineFor, recordEntryAlias } from "./entries.ts";
 import { requireBookableJob } from "./jobs.ts";
 import { OpError } from "./op-error.ts";
-import type { NoteKind } from "./ops-schema.ts";
+import type { NoteKind, NoteSettled } from "./ops-schema.ts";
 import { rollupProblems } from "./rollup.ts";
 import { workDateOf } from "./time.ts";
 
@@ -11,7 +11,9 @@ import { workDateOf } from "./time.ts";
  * Day notes: quick "what I'm doing now" jottings under the job they're
  * about, later turned into time entries. A 'start' is a note with no words
  * that marks being on a job from that moment. A note that has been turned
- * into time is part of an entry and is frozen.
+ * into time is part of an entry and is frozen. So is a settled one: a note
+ * that won't become hours here, because the accounting system's record of
+ * the same time was kept, or because the person left it out.
  */
 
 export interface DayNote {
@@ -24,11 +26,8 @@ export interface DayNote {
   text: string;
   jobId: string | null;
   rolledIntoEntryId: string | null;
-  /**
-   * Its entry was deleted because the accounting system already had the same
-   * time: settled, as if still part of that entry (see `discardedFor`).
-   */
-  keptInAccounting: boolean;
+  /** Settled without being part of an entry here, and how; null if not. */
+  settled: NoteSettled | null;
 }
 
 interface NoteRow {
@@ -40,7 +39,7 @@ interface NoteRow {
   text: string;
   job_id: string | null;
   rolled_into_entry_id: string | null;
-  kept_in_accounting_at: number | null;
+  settled_as: NoteSettled | null;
   deleted_at: number | null;
 }
 
@@ -51,8 +50,11 @@ interface NoteRow {
  */
 const COLUMNS = `n.id, n.user_id, n.at, n.work_date, n.kind, n.text, n.job_id,
        CASE WHEN e.id IS NOT NULL AND e.deleted_at IS NULL THEN n.rolled_into_entry_id END AS rolled_into_entry_id,
-       n.kept_in_accounting_at, n.deleted_at`;
+       n.settled_as, n.deleted_at`;
 const FROM = "day_notes n LEFT JOIN time_entries e ON e.id = n.rolled_into_entry_id";
+
+/** Still to be turned into hours: part of no live entry, and not settled. */
+const PENDING = "(n.rolled_into_entry_id IS NULL OR e.id IS NULL OR e.deleted_at IS NOT NULL) AND n.settled_as IS NULL";
 
 const toNote = (r: NoteRow): DayNote => ({
   id: r.id,
@@ -63,7 +65,7 @@ const toNote = (r: NoteRow): DayNote => ({
   text: r.text,
   jobId: r.job_id,
   rolledIntoEntryId: r.rolled_into_entry_id,
-  keptInAccounting: r.kept_in_accounting_at != null,
+  settled: r.settled_as,
 });
 
 function getRow(id: string): NoteRow | null {
@@ -82,8 +84,11 @@ function assertNotRolled(row: NoteRow): void {
   if (row.rolled_into_entry_id) {
     throw new OpError("conflict", "That note is already part of a time entry; edit the entry instead.");
   }
-  if (row.kept_in_accounting_at != null) {
+  if (row.settled_as === "kept_in_accounting") {
     throw new OpError("conflict", "That note's time is already in the accounting system.");
+  }
+  if (row.settled_as === "left_out") {
+    throw new OpError("conflict", "That note was left out of the hours; bring it back first.");
   }
 }
 
@@ -95,8 +100,52 @@ function assertNotRolled(row: NoteRow): void {
  */
 export function discardedFor(entryId: string, now: number): void {
   db()
-    .query("UPDATE day_notes SET kept_in_accounting_at = ?, updated_at = ? WHERE rolled_into_entry_id = ? AND deleted_at IS NULL")
+    .query(
+      `UPDATE day_notes SET settled_as = 'kept_in_accounting', settled_at = ?, updated_at = ?
+        WHERE rolled_into_entry_id = ? AND deleted_at IS NULL`,
+    )
     .run(now, now, entryId);
+}
+
+/**
+ * Leave notes out of the hours: their time was billed some other way, or
+ * wasn't work. They stay as a record, settled, and the day no longer waits
+ * on them. Nothing about time changes, so a submitted day may do this too.
+ */
+export function leaveOutNotes(args: { userId: number; actorUserId: number; noteIds: string[]; now: number }): void {
+  const rows = args.noteIds.map((id) => ownLiveNote(args.userId, id));
+  for (const row of rows) assertNotRolled(row);
+  const mark = db().query("UPDATE day_notes SET settled_as = 'left_out', settled_at = ?, updated_at = ? WHERE id = ?");
+  for (const row of rows) mark.run(args.now, args.now, row.id);
+  audit({
+    actorUserId: args.actorUserId,
+    entity: "notes",
+    entityId: rows[0]!.work_date,
+    action: "leave_out",
+    after: { noteIds: args.noteIds },
+    at: args.now,
+  });
+}
+
+/** Undo leaving notes out: they are notes to turn into hours again. */
+export function bringBackNotes(args: { userId: number; actorUserId: number; noteIds: string[]; now: number }): void {
+  const rows = args.noteIds.map((id) => ownLiveNote(args.userId, id));
+  for (const row of rows) {
+    if (row.settled_as === "kept_in_accounting") {
+      throw new OpError("conflict", "That note's time is in the accounting system, kept in place of its hours here.");
+    }
+    if (row.settled_as !== "left_out") throw new OpError("conflict", "That note wasn't left out.");
+  }
+  const clear = db().query("UPDATE day_notes SET settled_as = NULL, settled_at = NULL, updated_at = ? WHERE id = ?");
+  for (const row of rows) clear.run(args.now, row.id);
+  audit({
+    actorUserId: args.actorUserId,
+    entity: "notes",
+    entityId: rows[0]!.work_date,
+    action: "bring_back",
+    after: { noteIds: args.noteIds },
+    at: args.now,
+  });
 }
 
 export function listNotesForDate(userId: number, workDate: string): DayNote[] {
@@ -113,21 +162,33 @@ export function listNotesForDate(userId: number, workDate: string): DayNote[] {
 /**
  * The latest day before `before` whose notes haven't been turned into time,
  * if any. In notes mode that day has to be finished before a later one can
- * take notes. Notes kept in accounting are settled, not waiting.
+ * take notes. Settled notes aren't waiting on anything.
  */
 export function pendingNotesBefore(userId: number, before: string): { date: string; count: number } | null {
   const row = db()
     .query<{ work_date: string; n: number }, [number, string]>(
       `SELECT n.work_date, COUNT(*) AS n FROM ${FROM}
-        WHERE n.user_id = ? AND n.work_date < ? AND n.deleted_at IS NULL
-          AND (n.rolled_into_entry_id IS NULL OR e.id IS NULL OR e.deleted_at IS NOT NULL)
-          AND n.kept_in_accounting_at IS NULL
+        WHERE n.user_id = ? AND n.work_date < ? AND n.deleted_at IS NULL AND ${PENDING}
         GROUP BY n.work_date
         ORDER BY n.work_date DESC
         LIMIT 1`,
     )
     .get(userId, before);
   return row ? { date: row.work_date, count: row.n } : null;
+}
+
+/** Those of `dates` with notes still to turn into hours, latest first. */
+export function datesWithPendingNotes(userId: number, dates: readonly string[]): string[] {
+  if (dates.length === 0) return [];
+  return db()
+    .query<{ work_date: string }, (number | string)[]>(
+      `SELECT DISTINCT n.work_date FROM ${FROM}
+        WHERE n.user_id = ? AND n.work_date IN (${dates.map(() => "?").join(",")})
+          AND n.deleted_at IS NULL AND ${PENDING}
+        ORDER BY n.work_date DESC`,
+    )
+    .all(userId, ...dates)
+    .map((r) => r.work_date);
 }
 
 export function createNote(args: {

@@ -69,7 +69,7 @@ describe("migrations", () => {
       "009_notifications",
       "010_notes_hold",
       "011_one_line_per_job",
-      "012_notes_kept_in_accounting",
+      "012_settled_notes",
     ]);
     expect(first[0]!.fingerprint).toMatch(/^[0-9a-f]{16}$/);
 
@@ -105,7 +105,7 @@ describe("migrations", () => {
   });
 });
 
-describe("012_notes_kept_in_accounting", () => {
+describe("012_settled_notes", () => {
   test("settles the notes of entries deleted for the accounting system's record, and only those", () => {
     const path = freshFile();
     initDb(path, () => {});
@@ -113,8 +113,9 @@ describe("012_notes_kept_in_accounting", () => {
 
     // The database as it was before 012, with three days' worth of answers in it.
     const raw = new Database(path);
-    raw.exec("ALTER TABLE day_notes DROP COLUMN kept_in_accounting_at");
-    raw.exec("DELETE FROM migrations WHERE name = '012_notes_kept_in_accounting'");
+    raw.exec("ALTER TABLE day_notes DROP COLUMN settled_as");
+    raw.exec("ALTER TABLE day_notes DROP COLUMN settled_at");
+    raw.exec("DELETE FROM migrations WHERE name = '012_settled_notes'");
     raw.exec(`INSERT INTO users (id, name, role, webauthn_user_id, created_at, updated_at) VALUES (1, 'A', 'employee', 'w', 0, 0)`);
     const entry = raw.query(
       `INSERT INTO time_entries (id, user_id, work_date, source, status, created_at, updated_at, deleted_at)
@@ -147,13 +148,15 @@ describe("012_notes_kept_in_accounting", () => {
     const after = new Database(path, { readonly: true });
     try {
       const rows = after
-        .query<{ id: string; kept_in_accounting_at: number | null }, []>("SELECT id, kept_in_accounting_at FROM day_notes ORDER BY id")
+        .query<{ id: string; settled_as: string | null; settled_at: number | null }, []>(
+          "SELECT id, settled_as, settled_at FROM day_notes ORDER BY id",
+        )
         .all();
       expect(rows).toEqual([
-        { id: "n-deleted", kept_in_accounting_at: null },
-        { id: "n-kept", kept_in_accounting_at: 1000 },
-        { id: "n-live", kept_in_accounting_at: null },
-        { id: "n-undone", kept_in_accounting_at: null },
+        { id: "n-deleted", settled_as: null, settled_at: null },
+        { id: "n-kept", settled_as: "kept_in_accounting", settled_at: 1000 },
+        { id: "n-live", settled_as: null, settled_at: null },
+        { id: "n-undone", settled_as: null, settled_at: null },
       ]);
     } finally {
       after.close();

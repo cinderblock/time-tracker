@@ -9,7 +9,7 @@ import {
   unsubmittedDatesBefore,
 } from "../src/entries.ts";
 import { listJobs, recentJobIds } from "../src/jobs.ts";
-import { listNotesForDate, pendingNotesBefore } from "../src/notes.ts";
+import { datesWithPendingNotes, listNotesForDate, pendingNotesBefore } from "../src/notes.ts";
 import { isEditable } from "../src/entry-status.ts";
 import { requireApproval, requireNoteOnStop, weekStartsOn } from "../src/settings.ts";
 import { heldEntries } from "../src/sync.ts";
@@ -96,6 +96,7 @@ export function loadDay(userId: number, workDate: string): DayModel {
   const totals = totalsByDate(userId, weekStart, weekEnd);
   const held = heldEntries(userId);
   // Only days where the hold is in force: signed-off time that would otherwise be sent.
+  const unsubmittedDays = unsubmittedDatesBefore(userId, workDate);
   const heldDays = [
     ...new Set([...held.values()].filter((h) => h.workDate !== workDate && !isEditable(h.status)).map((h) => h.workDate)),
   ]
@@ -113,7 +114,8 @@ export function loadDay(userId: number, workDate: string): DayModel {
     notesHold: person?.notesHoldNextDay ?? true,
     requireNoteOnStop: requireNoteOnStop(),
     requireApproval: requireApproval(),
-    unsubmittedDays: unsubmittedDatesBefore(userId, workDate),
+    unsubmittedDays,
+    unsubmittedWithNotes: datesWithPendingNotes(userId, unsubmittedDays),
     heldDays,
     open: open ? entryView(open, jobNames, held) : null,
     entries: dayEntries.map((e) => entryView(e, jobNames, held)).sort(compareEntries),
@@ -126,7 +128,7 @@ export function loadDay(userId: number, workDate: string): DayModel {
       jobId: n.jobId,
       jobName: n.jobId ? (jobNames.get(n.jobId) ?? null) : null,
       rolledIntoEntryId: n.rolledIntoEntryId,
-      keptInAccounting: n.keptInAccounting,
+      settled: n.settled,
     }))
       .sort(compareNotes),
     jobs,

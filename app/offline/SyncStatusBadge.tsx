@@ -74,6 +74,10 @@ function describe(op: Op): string {
     case "note.delete":
     case "note.restore":
       return "Deleting a note";
+    case "notes.leave_out":
+      return "Leaving notes out";
+    case "notes.bring_back":
+      return "Bringing notes back";
     case "rollup.commit":
       return "Turning notes into time";
     case "day.submit":

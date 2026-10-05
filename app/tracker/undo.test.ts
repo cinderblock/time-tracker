@@ -223,6 +223,23 @@ describe("undo puts the day back", () => {
     );
   });
 
+  test("leaving notes out, and bringing them back", () => {
+    const [n1, n2] = [uuidv7(), uuidv7()];
+    undone(
+      [
+        op("note.create", { noteId: n1, at: NINE, kind: "start", jobId: jobA }),
+        op("note.create", { noteId: n2, at: NINE + HOUR, text: "Billed by hand", jobId: jobA }),
+      ],
+      [op("notes.leave_out", { noteIds: [n1, n2], at: NINE + HOUR })],
+      { label: "leaving notes out" },
+    );
+    undone(
+      [op("notes.leave_out", { noteIds: [n1, n2], at: NINE + HOUR })],
+      [op("notes.bring_back", { noteIds: [n1, n2], at: NINE + HOUR })],
+      { label: "bringing notes back" },
+    );
+  });
+
   test("submitting a day, and taking it back", () => {
     const id = uuidv7();
     undone(

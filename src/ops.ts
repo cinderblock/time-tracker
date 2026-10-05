@@ -14,7 +14,7 @@ import {
   updateEntry,
 } from "./entries.ts";
 import { createJob } from "./jobs.ts";
-import { commitRollup, createNote, deleteNote, restoreNote, updateNote } from "./notes.ts";
+import { bringBackNotes, commitRollup, createNote, deleteNote, leaveOutNotes, restoreNote, updateNote } from "./notes.ts";
 import { OpError } from "./op-error.ts";
 import { resolveDuplicate } from "./sync.ts";
 import {
@@ -82,6 +82,10 @@ const handlers: { [T in OpType]: Handler<T> } = {
   "note.update": (c, p) => void updateNote({ userId: c.userId, now: c.now, ...p }),
   "note.delete": (c, p) => void deleteNote({ userId: c.userId, now: c.now, ...p }),
   "note.restore": (c, p) => void restoreNote({ userId: c.userId, now: c.now, noteId: p.noteId }),
+  "notes.leave_out": (c, p) =>
+    void leaveOutNotes({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, noteIds: p.noteIds }),
+  "notes.bring_back": (c, p) =>
+    void bringBackNotes({ userId: c.userId, actorUserId: c.actorUserId, now: c.now, noteIds: p.noteIds }),
 
   "rollup.commit": (c, p) => ({ entryIds: commitRollup({ ...c, ...p }) }),
 

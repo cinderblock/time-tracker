@@ -476,9 +476,9 @@ describe("the reducer mirrors the server", () => {
 
     const m = mirror([op("duplicate.resolve", { entryId, action: "discard" })]);
     expect(m.entries).toEqual([]);
-    expect(m.notes.map((n) => [n.rolledIntoEntryId, n.keptInAccounting])).toEqual([
-      [null, true],
-      [null, true],
+    expect(m.notes.map((n) => [n.rolledIntoEntryId, n.settled])).toEqual([
+      [null, "kept_in_accounting"],
+      [null, "kept_in_accounting"],
     ]);
     // The next day isn't told this one is unfinished.
     setTrackingMode({ userId, mode: "notes", actorUserId: userId });
@@ -551,6 +551,24 @@ describe("one line per job per day, mirrored", () => {
     ]);
     expect(m.entries.map((e) => [e.durationSeconds, e.note])).toEqual([[5400, "Framing; Paint; Sand"]]);
     expect(m.notes.every((n) => n.rolledIntoEntryId === m.entries[0]!.id)).toBe(true);
+  });
+
+  test("leaving notes out and bringing them back; refused on both sides when they aren't all waiting", () => {
+    const [n1, n2, n3] = [uuidv7(), uuidv7(), uuidv7()];
+    mirror([
+      op("note.create", { noteId: n1, at: NINE, kind: "start", jobId: jobA }),
+      op("note.create", { noteId: n2, at: NINE + HOUR, text: "Billed by hand", jobId: jobA }),
+      op("note.create", { noteId: n3, at: NINE + 2 * HOUR, text: "Paint", jobId: jobB }),
+      op("rollup.commit", { workDate: DAY, lines: [{ entryId: uuidv7(), jobId: jobB, durationSeconds: 1800, noteIds: [n3] }] }),
+    ]);
+    const left = mirror([op("notes.leave_out", { noteIds: [n1, n2], at: NINE })]);
+    expect(left.notes.map((n) => n.settled)).toEqual(["left_out", "left_out", null]);
+    // Already left out, or already hours: nothing changes on either side.
+    mirror([op("notes.leave_out", { noteIds: [n2], at: NINE })], { expectRejected: 1 });
+    mirror([op("notes.leave_out", { noteIds: [n3], at: NINE })], { expectRejected: 1 });
+    mirror([op("notes.bring_back", { noteIds: [n2, n3], at: NINE })], { expectRejected: 1 });
+    const back = mirror([op("notes.bring_back", { noteIds: [n1, n2], at: NINE })]);
+    expect(back.notes.map((n) => n.settled)).toEqual([null, null, null]);
   });
 
   test("taking back what an add put on a line", () => {

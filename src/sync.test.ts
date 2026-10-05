@@ -571,11 +571,12 @@ describe("time the accounting system already has", () => {
     ok(send(alice, "duplicate.resolve", { entryId, action: "discard" }));
     // The time is QuickBooks' record now: the day isn't left with notes to turn into hours again.
     expect(pendingNotesBefore(alice, "2026-09-17")).toBeNull();
-    expect(listNotesForDate(alice, DAY).map((n) => [n.rolledIntoEntryId, n.keptInAccounting])).toEqual([
-      [null, true],
-      [null, true],
+    expect(listNotesForDate(alice, DAY).map((n) => [n.rolledIntoEntryId, n.settled])).toEqual([
+      [null, "kept_in_accounting"],
+      [null, "kept_in_accounting"],
     ]);
-    // Settled like a note that is part of an entry: not edited, deleted, or made into hours again.
+    // Settled like a note that is part of an entry: not edited, deleted, made
+    // into hours again, or "brought back" as if it had only been left out.
     expect(send(alice, "note.update", { noteId: note, text: "More framing" })).toMatchObject({ ok: false, code: "conflict" });
     expect(send(alice, "note.delete", { noteId: note, at: now })).toMatchObject({ ok: false, code: "conflict" });
     expect(
@@ -584,13 +585,14 @@ describe("time the accounting system already has", () => {
         lines: [{ entryId: uuidv7(), jobId: acme2, durationSeconds: 3600, note: "Framing", noteIds: [start, note] }],
       }),
     ).toMatchObject({ ok: false, code: "conflict" });
+    expect(send(alice, "notes.bring_back", { noteIds: [note], at: now })).toMatchObject({ ok: false, code: "conflict" });
 
     // The entry restored: the notes are its own again, and an ordinary delete
     // afterwards frees them, as it undoes any rollup.
     ok(send(alice, "entry.restore", { entryId, at: now }));
-    expect(listNotesForDate(alice, DAY).map((n) => [n.rolledIntoEntryId, n.keptInAccounting])).toEqual([
-      [entryId, false],
-      [entryId, false],
+    expect(listNotesForDate(alice, DAY).map((n) => [n.rolledIntoEntryId, n.settled])).toEqual([
+      [entryId, null],
+      [entryId, null],
     ]);
     ok(send(alice, "entry.delete", { entryId, at: now }));
     expect(pendingNotesBefore(alice, "2026-09-17")).toEqual({ date: DAY, count: 2 });

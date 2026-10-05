@@ -197,6 +197,18 @@ export function inverseOf(m: DayModel, op: Op, now: number): Undoable | null {
     case "note.restore":
       return { label: "restoring a note", ops: [step("note.delete", { noteId: op.payload.noteId, at: now })] };
 
+    case "notes.leave_out":
+      return {
+        label: "leaving notes out",
+        ops: [step("notes.bring_back", { noteIds: op.payload.noteIds, at: now })],
+      };
+
+    case "notes.bring_back":
+      return {
+        label: "bringing notes back",
+        ops: [step("notes.leave_out", { noteIds: op.payload.noteIds, at: now })],
+      };
+
     case "rollup.commit": {
       const p = op.payload;
       return {
