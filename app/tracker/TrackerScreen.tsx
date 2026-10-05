@@ -3,6 +3,7 @@ import { Link } from "react-router";
 
 import { jobLabel } from "../../src/job-names.ts";
 import { formatDurationHuman } from "../../src/time.ts";
+import { useBugContext } from "../bugs/context.ts";
 import { type ActingFor, TrackerProvider, useNow, useTracker } from "./context.tsx";
 import { DayHeader } from "./DayHeader.tsx";
 import { markDayMove, moveBetween } from "./day-move.ts";
@@ -128,6 +129,8 @@ function OfflineNotice() {
 
 /** Placeholder while the day loads in the browser. */
 export function TrackerSkeleton() {
+  // A report made before the day arrives says so, rather than just lacking it.
+  useBugContext("day", () => ({ loading: true }));
   return (
     <Stack gap="lg" maw={1100} aria-busy="true" aria-label="Loading">
       <Skeleton height={36} width={180} mx="auto" />

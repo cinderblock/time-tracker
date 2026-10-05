@@ -92,6 +92,8 @@ test("Report a problem: what the person says, a screenshot, and what the page kn
   await page.getByRole("link", { name: "Your account" }).first().click();
   await expect(page).toHaveURL(/\/account$/);
   await page.getByRole("link", { name: "Track time" }).click();
+  // The day itself, not its loading placeholder: its data goes in the report.
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
 
   await page.getByRole("button", { name: "Report a problem" }).click();
   const dialog = page.getByRole("dialog", { name: "Report a problem" });
@@ -126,7 +128,8 @@ test("Report a problem: what the person says, a screenshot, and what the page kn
   expect(strFromU8(files["report.md"]!)).toContain("Checking the week's total");
   const context = JSON.parse(strFromU8(files["context.json"]!)) as { screens: Record<string, unknown>; device: unknown; breadcrumbs: unknown[] };
   // The day screen's own data rode along.
-  expect(Object.keys(context.screens)).toContain("day");
+  expect(context.screens.day).toHaveProperty("shown.workDate");
+  expect(context.screens.navigation).toMatchObject({ state: "idle" });
   expect(context.breadcrumbs.length).toBeGreaterThan(2);
 
   await page.getByRole("combobox", { name: "Status" }).click();

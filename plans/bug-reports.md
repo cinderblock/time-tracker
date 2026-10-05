@@ -146,6 +146,13 @@ Mine, following from those:
 - **`getByText` is a substring match**: "Errors" matched the page's own
   description; and the toast of an earlier test showed up again inside the
   next report's breadcrumbs — the capture working, and a selector trap.
+- **Pressing the button while a screen loads** catches its placeholder: the
+  day's data isn't there yet. Tests wait for the day; reports say `loading`.
+- **Cross-browser check without passkeys**: WebKit and Firefox have no
+  virtual authenticator, so the check made the session itself
+  (`createSession` + `sessionCookie.serialize`) in a throwaway database. The
+  script was kept out of the repo; making it a Playwright project would need
+  a test-only way to sign in.
 - **e2e under load**: one full run timed out in `accounting.spec.ts` ("a
   refusal is shown, and can be retried"); the project alone passed 10/10 and
   the next full run was all green. Timing, not this change.
@@ -166,6 +173,19 @@ Mine, following from those:
       malformed batch (400); `POST /api/bug-reports` signed out answers 401
       `signed_out`; `/admin/bugs` signed out redirects to sign-in. Not yet
       seen: a real report from a phone, or a push to an admin about one.
+- [x] 2026-10-05 — **Proven working** (user: "get the bug reporter
+      working"). Production had no reports and no traffic since the deploy,
+      so it was exercised directly: an error thrown on the live sign-in page
+      in a real browser arrived (204) and grouped (`bun run bugs` in the
+      container lists it — "prod probe … safe to ignore"). Reports, which
+      need a session, were run against the production build locally in
+      WebKit (desktop and iPhone-sized), Firefox and headed Chrome, signed in
+      with a session made directly in a throwaway database: all four stored
+      the report with its screenshot (dialog ready in 2.3–3.9 s). Fixed from
+      that: the dialog emptied while fading out (looked like the report
+      vanished); `%c` styling in console breadcrumbs; a report made while the
+      day is still loading now says `loading` instead of just lacking the
+      day; the navigation state rides along. Typecheck, 503 unit, 86 e2e.
 
 ## Open questions for the user
 

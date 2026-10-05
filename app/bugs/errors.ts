@@ -50,6 +50,24 @@ function describe(value: unknown): { message: string; name?: string; stack?: str
   }
 }
 
+/**
+ * A console call's arguments as the line it prints: format directives in the
+ * first string filled in (%s %d %i %f %o %O), styling (%c) dropped along with
+ * its CSS, then the rest.
+ */
+export function consoleText(args: readonly unknown[]): string {
+  const text = (a: unknown) => (a instanceof Error ? a.message : typeof a === "string" ? a : describe(a).message);
+  if (typeof args[0] !== "string") return args.map(text).join(" ");
+  let next = 1;
+  const first = args[0].replace(/%([csdifoO%])/g, (whole, d: string) => {
+    if (d === "%") return "%";
+    if (next >= args.length) return whole;
+    const value = args[next++];
+    return d === "c" ? "" : text(value);
+  });
+  return [first, ...args.slice(next).map(text)].join(" ").replace(/\s+/g, " ").trim();
+}
+
 /** Report an error. Safe to call from anywhere in the browser; never throws. */
 export function reportError(value: unknown, source: Source, extra?: string): void {
   if (typeof window === "undefined" || reporting) return;
@@ -134,7 +152,7 @@ export function installErrorCapture(): void {
   console.error = (...args: unknown[]) => {
     original(...args);
     const err = args.find((a) => a instanceof Error);
-    const text = args.map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : describe(a).message)).join(" ");
+    const text = consoleText(args);
     if (!err) {
       reportError(text, "console");
       return;
@@ -148,7 +166,7 @@ export function installErrorCapture(): void {
   const warn = console.warn.bind(console);
   console.warn = (...args: unknown[]) => {
     warn(...args);
-    addCrumb("console", args.map((a) => describe(a).message).join(" ").slice(0, 500), { level: "warn" });
+    addCrumb("console", consoleText(args).slice(0, 500), { level: "warn" });
   };
 
   // Requests the app makes: the failures, and how long the API took.

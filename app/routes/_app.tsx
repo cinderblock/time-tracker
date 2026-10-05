@@ -1,9 +1,10 @@
 import { Anchor, AppShell, Avatar, Burger, Divider, Group, NavLink, ScrollArea, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useEffect } from "react";
-import { Link, Outlet, useLocation, useRouteLoaderData } from "react-router";
+import { Link, Outlet, useLocation, useNavigation, useRouteLoaderData } from "react-router";
 
 import { requireUser } from "../auth.server.ts";
+import { useBugContext } from "../bugs/context.ts";
 import { setProblemUser } from "../bugs/queue.ts";
 import { ReportBugButton } from "../bugs/ReportBug.tsx";
 import { isOfflineError } from "../offline/loaders.ts";
@@ -52,6 +53,13 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   useSyncLifecycle(user);
   // Reports wait on the device for the person who made them.
   useEffect(() => setProblemUser(user.id), [user.id]);
+  // Whether a page was still on its way when a report was made, and which.
+  const navigation = useNavigation();
+  useBugContext("navigation", () => ({
+    state: navigation.state,
+    to: navigation.location ? `${navigation.location.pathname}${navigation.location.search}` : null,
+    user,
+  }));
 
   // Close the phone drawer after navigating — and on the tap itself (below),
   // because tapping the item for the page already shown changes no path, and

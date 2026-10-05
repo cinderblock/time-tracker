@@ -1,7 +1,7 @@
 import { Alert, Button, Collapse, Group, Image, List, Modal, Stack, Text, Textarea, UnstyledButton } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { LIMITS } from "../../src/bug-schema.ts";
 import { CODE_BUILD } from "../../src/build-info.ts";
@@ -32,6 +32,10 @@ export function ReportBugButton({ userId }: { userId: number }) {
   const [description, setDescription, discardDescription] = useDraft(draftKey(scope, "bug-report:description"), "");
   const [expected, setExpected, discardExpected] = useDraft(draftKey(scope, "bug-report:expected"), "");
   const narrow = useMediaQuery("(max-width: 36em)");
+  // Sent: what was typed goes too, once the dialog has closed.
+  const sentRef = useRef(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
   async function start() {
     if (phase !== "idle") return;
@@ -61,8 +65,8 @@ export function ReportBugButton({ userId }: { userId: number }) {
   }
 
   function close() {
-    // What was typed stays (a draft); the picture and context were of that moment.
-    forget();
+    // What was typed stays (a draft); the picture and context were of that
+    // moment, and are let go once the dialog has finished closing.
     setPhase("idle");
   }
 
@@ -109,9 +113,7 @@ export function ReportBugButton({ userId }: { userId: number }) {
       setPhase("open");
       return;
     }
-    discardDescription();
-    discardExpected();
-    forget();
+    sentRef.current = true;
     setPhase("idle");
     const stale = result.status === "sent" && result.serverRevision && result.serverRevision !== CODE_BUILD.revision;
     notifications.show({
@@ -144,6 +146,18 @@ export function ReportBugButton({ userId }: { userId: number }) {
       <Modal
         opened={opened}
         onClose={close}
+        // Emptied only once it's out of sight: clearing it while it fades out
+        // looks like the report vanished.
+        // (Not when it only stepped aside for a screen capture.)
+        onExitTransitionEnd={() => {
+          if (phaseRef.current !== "idle") return;
+          forget();
+          if (sentRef.current) {
+            sentRef.current = false;
+            discardDescription();
+            discardExpected();
+          }
+        }}
         title="Report a problem"
         fullScreen={narrow}
         size="lg"
