@@ -177,6 +177,16 @@ export function pendingNotesBefore(userId: number, before: string): { date: stri
   return row ? { date: row.work_date, count: row.n } : null;
 }
 
+/** How many of one day's notes are still to turn into hours. */
+export function pendingNotesOn(userId: number, workDate: string): number {
+  return db()
+    .query<{ n: number }, [number, string]>(
+      `SELECT COUNT(*) AS n FROM ${FROM}
+        WHERE n.user_id = ? AND n.work_date = ? AND n.deleted_at IS NULL AND ${PENDING}`,
+    )
+    .get(userId, workDate)!.n;
+}
+
 /** Those of `dates` with notes still to turn into hours, latest first. */
 export function datesWithPendingNotes(userId: number, dates: readonly string[]): string[] {
   if (dates.length === 0) return [];

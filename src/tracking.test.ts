@@ -4,7 +4,7 @@ import { db } from "./db.server.ts";
 import { getEntry, getOpenEntry, listEntriesForDate, totalsByDate } from "./entries.ts";
 import { loadDay } from "../app/tracker.server.ts";
 import { getJob, listJobs, recentJobIds, updateJob } from "./jobs.ts";
-import { listNotesForDate, pendingNotesBefore } from "./notes.ts";
+import { listNotesForDate, pendingNotesBefore, pendingNotesOn } from "./notes.ts";
 import { applyOp, applyOps } from "./ops.ts";
 import type { OpPayload, OpResult, OpType } from "./ops-schema.ts";
 import { proposeRollup, rollupProblems } from "./rollup.ts";
@@ -788,6 +788,8 @@ describe("notes and rollup", () => {
     ok(send("notes.leave_out", { noteIds: [start, note], at: NINE }));
     expect(listNotesForDate(userId, "2026-09-15").map((n) => n.settled)).toEqual(["left_out", "left_out"]);
     expect(loadDay(userId, TODAY)).toMatchObject({ notesToRollUp: null, unsubmittedWithNotes: [] });
+    // The end-of-day reminder counts them the same way.
+    expect(pendingNotesOn(userId, "2026-09-15")).toBe(0);
     // Left out is settled: not edited, made into hours, or left out twice.
     rejected(send("note.update", { noteId: note, text: "changed" }), "conflict");
     rejected(
@@ -809,6 +811,7 @@ describe("notes and rollup", () => {
     expect(listNotesForDate(userId, "2026-09-15").find((n) => n.id === note)!.settled).toBe("left_out");
     ok(send("notes.bring_back", { noteIds: [start, note], at: NINE }));
     expect(loadDay(userId, TODAY).notesToRollUp).toEqual({ date: "2026-09-15", count: 3 });
+    expect(pendingNotesOn(userId, "2026-09-15")).toBe(3);
   });
 
   test("the hold is the person's own choice: on by default, off on request, and audited", () => {

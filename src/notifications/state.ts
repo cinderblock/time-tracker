@@ -1,7 +1,7 @@
 import { db } from "../db.server.ts";
 import { getOpenEntry } from "../entries.ts";
 import { isEditable } from "../entry-status.ts";
-import { pendingNotesBefore } from "../notes.ts";
+import { pendingNotesBefore, pendingNotesOn } from "../notes.ts";
 import { heldEntries, syncOverview } from "../sync.ts";
 import { durationSeconds, workDateOf, zonedParts } from "../time.ts";
 import type { PersonState } from "./rules.ts";
@@ -42,13 +42,9 @@ export function personState(args: {
       )
       .get(userId, today)?.s ?? 0;
 
-  const notesToday =
-    db()
-      .query<{ n: number }, [number, string]>(
-        `SELECT COUNT(*) AS n FROM day_notes
-          WHERE user_id = ? AND work_date = ? AND deleted_at IS NULL AND rolled_into_entry_id IS NULL`,
-      )
-      .get(userId, today)?.n ?? 0;
+  // As the day screen counts them: not left out, not kept in accounting, and
+  // not part of a live entry.
+  const notesToday = pendingNotesOn(userId, today);
 
   const draftDays = db()
     .query<{ work_date: string }, [number, string]>(
