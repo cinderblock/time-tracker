@@ -197,7 +197,7 @@ function TrackingModeSetting({ mode, notesHold }: { mode: TrackingMode; notesHol
         <Switch
           mt="md"
           label="Finish a day's notes before starting the next"
-          description="On: a new day takes no notes until the last one's are hours. Off: an unfinished day is just a reminder."
+          description="On: a new day takes no notes until the last one's are hours. Off: an unfinished day is still called out, but doesn't hold the next one."
           checked={holdOn}
           disabled={hold.state !== "idle"}
           onChange={(e) => {

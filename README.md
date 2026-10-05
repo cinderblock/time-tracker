@@ -32,14 +32,15 @@ repository. All of that is deployment configuration or an admin setting.
     its jobs) or the whole organisation can require a note before a timer stops.
   - *Notes* — add the job you're on — one tap on a recent job, as starting a
     timer is — then jot what you do under it as you go (and add a second job
-    when you move to one). Tap a note to correct it or
-    move it to another job. At the end of the day (or the next morning) each
-    job's notes become hours: the timeline suggests them, you confirm, and one
-    entry per job carries the notes as its description. By default a day's
-    notes have to become hours before the next day's can start; anyone who'd
-    rather finish old notes later turns that off (it's offered right where it
-    holds them, and on the Account page), and an unfinished day is then just a
-    reminder.
+    when you move to one). Tap a note to correct it, change its time or
+    move it to another job. A day gone by can be written up afterwards the
+    same way, each job and note saying when. At the end of the day (or the
+    next morning) each job's notes become hours: the timeline suggests them,
+    you confirm, and one entry per job carries the notes as its description.
+    By default a day's notes have to become hours before the next day's can
+    start; anyone who'd rather finish old notes later turns that off (it's
+    offered right where it holds them, and on the Account page), and an
+    unfinished day is then still called out, but doesn't hold anything back.
   - *Manual entry*, either way — a start and end time (overnight shifts included)
     or just a duration, on any past day. A duration is one field, written the way
     it's said: `1:30`, `1.5` or `90m` all mean an hour and a half, and the field

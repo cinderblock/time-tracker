@@ -734,13 +734,13 @@ test("someone who'd rather finish old notes later can turn the hold off where it
   if (shots) await page.screenshot({ path: `${shots}/notes-held.png`, fullPage: true });
   await held.getByRole("button", { name: "Start today anyway" }).click();
 
-  // Today takes jobs; the unfinished day is a reminder now, not a wall.
-  await expect(held).toHaveCount(0);
+  // Today takes jobs; the unfinished day is still called out, as a warning,
+  // just not a wall.
+  await expect(held.getByRole("button", { name: "Start today anyway" })).toHaveCount(0);
   await expect(page.getByPlaceholder("Add a job for today — type to search")).toBeVisible();
-  const reminder = page.getByText(/still has a note to turn into hours/);
-  await expect(reminder).toBeVisible();
+  await expect(held).toContainText("It still has a note to turn into hours. Today's notes don't have to wait for it.");
   if (shots) await page.screenshot({ path: `${shots}/notes-reminder.png`, fullPage: true });
-  await page.getByRole("link", { name: /^Go to / }).click();
+  await held.getByRole("link", { name: /^Go to / }).click();
   await expect(page).toHaveURL(new RegExp(`/day/${yesterday}$`));
   // Moving on from it isn't held either.
   await expect(page.getByText("Turn this day's notes into hours to move on.")).toHaveCount(0);
@@ -757,6 +757,46 @@ test("someone who'd rather finish old notes later can turn the hold off where it
 
   // Leave the day as it was for what follows.
   await send(ctx.request, "note.delete", { noteId: leftover, at: Date.now() });
+});
+
+test("a past day can be written up afterwards, each note saying when, and a note's time corrected", async () => {
+  const day = new Date(Date.now() - 3 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+  await page.goto(`/day/${day}`);
+
+  // A job on a past day needs the time it began; an empty day suggests none.
+  const startedAt = page.getByLabel("Started at");
+  await expect(startedAt).toHaveValue("");
+  const picker = page.getByPlaceholder("Add a job you were on — type to search");
+  await pickJob(picker, "Alpha Site");
+  await expect(page.getByText("Say when.")).toBeVisible();
+  await startedAt.fill("08:00");
+  await pickJob(picker, "Alpha Site");
+  const alpha = page.getByRole("group", { name: "Riverside › Alpha Site" });
+  await expect(alpha.getByText("since 8:00 AM")).toBeVisible();
+
+  // The note's time starts from the job's latest, and is the person's to set.
+  const noteAt = alpha.getByLabel("Time of the note for Riverside › Alpha Site");
+  await expect(noteAt).toHaveValue("08:00");
+  await noteAt.fill("10:30");
+  await alpha.getByPlaceholder("What did you do?").fill("Formwork");
+  await alpha.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(alpha.getByRole("button", { name: "Edit Formwork" })).toContainText("10:30 AM");
+  const shots = process.env.E2E_SCREENSHOTS;
+  if (shots) await page.screenshot({ path: `${shots}/notes-past-day.png`, fullPage: true });
+
+  // Mistyped — it was 11:30. A note's own editor fixes its time.
+  await alpha.getByRole("button", { name: "Edit Formwork" }).click();
+  await alpha.getByLabel("Time of the note", { exact: true }).fill("11:30");
+  await alpha.getByRole("button", { name: "Save" }).click();
+  await expect(alpha.getByRole("button", { name: "Edit Formwork" })).toContainText("11:30 AM");
+
+  // The hours come from those times, as on the day itself.
+  await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
+  const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
+  await expect(dialog.getByText(/ran 8:00 AM – 11:30 AM: 3h 30m\./)).toBeVisible();
+  await dialog.getByRole("button", { name: "Add 3h 30m to Alpha Site" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(entryRows().filter({ hasText: "Formwork" }).getByText("3h 30m", { exact: true })).toBeVisible();
 });
 
 test("a second line for one job, from before one line per job, is flagged and combined on request", async () => {

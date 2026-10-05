@@ -12,6 +12,7 @@ import {
   Title,
   UnstyledButton,
 } from "@mantine/core";
+import { TimeInput } from "@mantine/dates";
 import { useMediaQuery } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useFetcher } from "react-router";
@@ -25,6 +26,7 @@ import {
   formatDurationInput,
   formatWorkDate,
   parseDuration,
+  zonedTimeInput,
 } from "../../src/time.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { isEditable, isOwnerReopenable } from "../../src/entry-status.ts";
@@ -34,6 +36,7 @@ import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
 import type { NoteView } from "./model.ts";
+import { latestTimeOn, noteTimeOn } from "./note-time.ts";
 import { useTrackerDraft } from "./tracker-draft.ts";
 import appear from "../components/appear.module.css";
 import classes from "./notes.module.css";
@@ -42,9 +45,11 @@ import classes from "./notes.module.css";
  * Notes mode, by job. Adding a job to the day marks being on it from that
  * moment; notes then go under that job as the work happens. At the end of
  * the day each job's notes are turned into hours — one entry per job, its
- * notes as the description. By default a day's notes must all be hours before
- * the next day can start; a person can turn that hold off (it's offered in the
- * alert itself), and then an unfinished day is only a reminder.
+ * notes as the description. A past day can be written up afterwards the same
+ * way, each note saying when. By default a day's notes must all be hours
+ * before the next day can start; a person can turn that hold off (it's offered
+ * in the alert itself), and then an unfinished day is still called out, but
+ * doesn't block.
  *
  * In timer mode the panel only shows a day's leftover notes (from before a
  * switch), so they can still be turned into hours.
@@ -53,11 +58,14 @@ export function NotesPanel() {
   const { model, hrefFor, actingFor } = useTracker();
   const isToday = model.workDate === model.today;
   const notesMode = model.mode === "notes";
-  // An earlier day's notes come first. With the hold on, today takes none until
-  // they're hours; with it off, it's a reminder.
-  const unfinished = notesMode && isToday ? (model.notesToRollUp ?? null) : null;
+  // Today, or a day gone by being written up; never a day still to come.
+  const writable = notesMode && model.workDate <= model.today;
+  // An earlier day's notes come first. With the hold on, this day takes none
+  // until they're hours; with it off, it's called out but doesn't wait.
+  const unfinished = writable ? (model.notesToRollUp ?? null) : null;
   const heldBy = unfinished && model.notesHold ? unfinished : null;
-  const canAdd = notesMode && isToday && !heldBy;
+  const canAdd = writable && !heldBy;
+  const thisDay = isToday ? "today" : formatWorkDate(model.workDate);
   const sections = useMemo(() => groupByJob(model.notes), [model.notes]);
   // The section whose note box should take the cursor next.
   const [focusJob, setFocusJob] = useState<string | null>(null);
@@ -72,30 +80,34 @@ export function NotesPanel() {
         <Alert color="yellow" title={`${formatWorkDate(heldBy.date)} isn't finished`}>
           <Stack gap="xs">
             <Text size="sm">
-              Turn {heldBy.count === 1 ? "its note" : `its ${heldBy.count} notes`} into hours before today's notes
-              start.
+              Turn {heldBy.count === 1 ? "its note" : `its ${heldBy.count} notes`} into hours before{" "}
+              {isToday ? "today's notes" : `notes on ${thisDay}`} start.
             </Text>
             <Group>
               <Button component={Link} to={hrefFor(heldBy.date)} size="sm">
                 Go to {formatWorkDate(heldBy.date)}
               </Button>
               {/* The setting is the person's own; an admin acting for them can't change it here. */}
-              {!actingFor && <StartAnyway />}
+              {!actingFor && <StartAnyway label={isToday ? "Start today anyway" : "Start this day anyway"} />}
             </Group>
           </Stack>
         </Alert>
       )}
+      {/* Not holding anything back doesn't make it less unfinished: still the
+          warning, just without the wall. */}
       {unfinished && !heldBy && (
-        <Alert color="gray" variant="light">
-          <Group justify="space-between" gap="xs">
+        <Alert color="yellow" title={`${formatWorkDate(unfinished.date)} isn't finished`}>
+          <Stack gap="xs">
             <Text size="sm">
-              {formatWorkDate(unfinished.date)} still has{" "}
-              {unfinished.count === 1 ? "a note" : `${unfinished.count} notes`} to turn into hours.
+              It still has {unfinished.count === 1 ? "a note" : `${unfinished.count} notes`} to turn into hours.{" "}
+              {isToday ? "Today's notes" : "This day's notes"} don't have to wait for it.
             </Text>
-            <Button component={Link} to={hrefFor(unfinished.date)} size="compact-sm" variant="light">
-              Go to {formatWorkDate(unfinished.date)}
-            </Button>
-          </Group>
+            <Group>
+              <Button component={Link} to={hrefFor(unfinished.date)} size="sm">
+                Go to {formatWorkDate(unfinished.date)}
+              </Button>
+            </Group>
+          </Stack>
         </Alert>
       )}
       {canAdd && <AddJob sections={sections} onAdded={setFocusJob} />}
@@ -105,7 +117,9 @@ export function NotesPanel() {
               {model.partial
                 ? "Notes for this day aren't on this device."
                 : canAdd
-                  ? "Add the job you're on, then jot what you do as you go. At the end of the day, turn each job's notes into hours."
+                  ? isToday
+                    ? "Add the job you're on, then jot what you do as you go. At the end of the day, turn each job's notes into hours."
+                    : "Write this day up: add each job you were on and when you started it, then what you did and when. Then turn each job's notes into hours."
                   : "No notes on this day."}
             </Text>
           )
@@ -127,7 +141,7 @@ export function NotesPanel() {
  * unfinished day is a reminder rather than a wall. The Account page has the
  * same switch, to turn it back on.
  */
-function StartAnyway() {
+function StartAnyway({ label }: { label: string }) {
   const fetcher = useFetcher<{ ok: boolean; error?: string }>();
   const busy = fetcher.state !== "idle";
   return (
@@ -138,7 +152,7 @@ function StartAnyway() {
         loading={busy}
         onClick={() => fetcher.submit({ intent: "notes-hold", hold: "0" }, { method: "post", action: "/account" })}
       >
-        Start today anyway
+        {label}
       </Button>
       <Text size="xs" c="dimmed">
         From now on, an unfinished day won't hold the next one. Change it back under Your account.
@@ -182,10 +196,18 @@ function groupByJob(notes: readonly NoteView[]): Section[] {
     .sort((a, b) => a.startedAt - b.startedAt);
 }
 
-/** Pick a job to be on from now. One already on the day just takes the cursor. */
+/**
+ * Pick a job to be on from now — or, writing up an earlier day, from the time
+ * given. One already on the day just takes the cursor.
+ */
 function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: string) => void }) {
-  const { dispatch, location, pending } = useTracker();
+  const { model, dispatch, location, pending } = useTracker();
+  const isToday = model.workDate === model.today;
   const [value, setValue] = useState<string | null>(null);
+  // Untouched, the time follows the latest one written on the day.
+  const [time, setTime] = useTrackerDraft<string | null>(isToday ? null : `add-job-at:${model.workDate}`, null);
+  const shownTime = time ?? latestTimeOn(model.notes, model.timezone);
+  const [problem, setProblem] = useState<string | null>(null);
 
   async function pick(jobId: string | null) {
     setValue(null);
@@ -194,14 +216,28 @@ function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: s
       onAdded(jobId);
       return;
     }
+    let at = Date.now();
+    if (!isToday) {
+      const when = noteTimeOn(model.workDate, shownTime, model.timezone, at);
+      if (!when.ok) {
+        setProblem(when.problem);
+        return;
+      }
+      at = when.at;
+    }
+    setProblem(null);
     const result = await dispatch("note.create", {
       noteId: uuidv7(),
-      at: Date.now(),
+      at,
       kind: "start",
       jobId,
-      location: location(),
+      // Where the device is now says nothing about where an earlier day was.
+      location: isToday ? location() : null,
     });
-    if (result.ok) onAdded(jobId);
+    if (result.ok) {
+      setTime(null);
+      onAdded(jobId);
+    }
   }
 
   // The buttons are the fast way onto a job you've been on lately — the same
@@ -209,8 +245,26 @@ function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: s
   // button: tapping it is how you say you're back on it.
   return (
     <Stack gap="xs">
+      {!isToday && (
+        <TimeInput
+          label="Started at"
+          description="When you got onto the job you pick below"
+          value={shownTime}
+          onChange={(e) => {
+            setTime(e.currentTarget.value);
+            setProblem(null);
+          }}
+          error={problem}
+          data-draft
+          maw={320}
+        />
+      )}
       <RecentJobButtons onPick={(job) => void pick(job.id)} disabled={pending} />
-      <JobSelect value={value} onChange={(id) => void pick(id)} placeholder="Add a job for today — type to search" />
+      <JobSelect
+        value={value}
+        onChange={(id) => void pick(id)}
+        placeholder={isToday ? "Add a job for today — type to search" : "Add a job you were on — type to search"}
+      />
     </Stack>
   );
 }
@@ -264,7 +318,13 @@ function JobSection({
         ))}
 
         {section.jobId ? (
-          canAdd && <NoteBox jobId={section.jobId} jobName={name!} autoFocus={focused} onFocused={onFocused} />
+          canAdd && <NoteBox
+              jobId={section.jobId}
+              jobName={name!}
+              notes={section.notes}
+              autoFocus={focused}
+              onFocused={onFocused}
+            />
         ) : (
           <Text size="sm" c="dimmed">
             Give these notes a job (edit each one) to turn them into hours.
@@ -293,21 +353,34 @@ function JobSection({
   );
 }
 
-/** A note for one job, written as the work happens. */
+/**
+ * A note for one job, written as the work happens — or, writing up an earlier
+ * day, with the time it happened.
+ */
 function NoteBox({
   jobId,
   jobName,
+  notes,
   autoFocus,
   onFocused,
 }: {
   jobId: string;
   jobName: string;
+  /** The job's notes so far, in time order. */
+  notes: readonly NoteView[];
   autoFocus: boolean;
   onFocused: () => void;
 }) {
   const { model, dispatch, location } = useTracker();
+  const isToday = model.workDate === model.today;
   // Kept on the device as it's typed: an update or a crash puts it back.
   const [text, setText] = useTrackerDraft(`note-box:${model.workDate}:${jobId}`, "");
+  // Writing up an earlier day, each note says when. Untouched, the time follows
+  // this job's latest note — not the day's: a note after another job's start
+  // would mean being back on this one, and reshape both jobs' hours.
+  const [time, setTime] = useTrackerDraft<string | null>(isToday ? null : `note-box-at:${model.workDate}:${jobId}`, null);
+  const shownTime = time ?? latestTimeOn(notes, model.timezone);
+  const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -321,6 +394,16 @@ function NoteBox({
     event.preventDefault();
     const written = text.trim();
     if (!written) return;
+    let at = Date.now();
+    if (!isToday) {
+      const when = noteTimeOn(model.workDate, shownTime, model.timezone, at);
+      if (!when.ok) {
+        setProblem(when.problem);
+        return;
+      }
+      at = when.at;
+    }
+    setProblem(null);
     // Empty the field now rather than when the dispatch answers. The note is
     // already in the list by then — the outbox takes it whether or not there
     // is a connection — and someone jotting a day's work types the next one
@@ -330,20 +413,36 @@ function NoteBox({
     setBusy(true);
     const result = await dispatch("note.create", {
       noteId: uuidv7(),
-      at: Date.now(),
+      at,
       text: written,
       jobId,
-      location: location(),
+      // Where the device is now says nothing about where an earlier day was.
+      location: isToday ? location() : null,
     });
     setBusy(false);
     // Hand it back if it was refused — but not over a note begun since, which
     // would be the same mistake pointing the other way.
     if (!result.ok) setText((current) => (current === "" ? written : current));
+    // The time typed stays for the next note: writing a day up, the next one
+    // is usually a little later, and that's the person's to say.
   }
 
   return (
     <form onSubmit={add}>
-      <Group gap="xs" align="end" wrap="nowrap">
+      <Group gap="xs" align="start" wrap="nowrap">
+        {!isToday && (
+          <TimeInput
+            aria-label={`Time of the note for ${jobLabel(jobName)}`}
+            value={shownTime}
+            onChange={(e) => {
+              setTime(e.currentTarget.value);
+              setProblem(null);
+            }}
+            error={problem}
+            data-draft
+            w={130}
+          />
+        )}
         <TextInput
           ref={ref}
           placeholder="What did you do?"
@@ -375,23 +474,32 @@ function NoteRow({ note }: { note: NoteView }) {
   const rolled = note.rolledIntoEntryId != null;
   // An edit under way is kept on the device — open, with what's been typed —
   // so an update or a crash brings it back as it was.
-  const [edit, setEdit, discardEdit] = useTrackerDraft<{ text: string; jobId: string | null } | null>(
+  const [edit, setEdit, discardEdit] = useTrackerDraft<{ text: string; jobId: string | null; time?: string } | null>(
     rolled ? null : `note-edit:${note.id}`,
     null,
   );
   const editing = edit != null;
+  const noteTime = zonedTimeInput(note.at, model.timezone);
   const text = edit ? edit.text : note.text;
   const jobId = edit ? edit.jobId : note.jobId;
+  const time = edit?.time ?? noteTime;
   const setEditing = (open: boolean) => (open ? setEdit({ text: note.text, jobId: note.jobId }) : discardEdit());
-  const setText = (value: string) => setEdit((e) => ({ text: value, jobId: e ? e.jobId : note.jobId }));
-  const setJobId = (value: string | null) => setEdit((e) => ({ text: e ? e.text : note.text, jobId: value }));
+  const setText = (value: string) => setEdit((e) => ({ ...e, text: value, jobId: e ? e.jobId : note.jobId }));
+  const setJobId = (value: string | null) => setEdit((e) => ({ ...e, text: e ? e.text : note.text, jobId: value }));
+  const setTime = (value: string) =>
+    setEdit((e) => ({ text: e ? e.text : note.text, jobId: e ? e.jobId : note.jobId, time: value }));
   const start = note.kind === "start";
+  // Untouched, the time stays to the second; typed, it's that minute on the
+  // note's own day, and not later than now.
+  const retimed = time === noteTime ? null : noteTimeOn(model.workDate, time, model.timezone, Date.now());
 
   async function save() {
+    if (retimed && !retimed.ok) return;
     const result = await dispatch("note.update", {
       noteId: note.id,
       text: text.trim() !== note.text ? text.trim() : undefined,
       jobId: jobId !== note.jobId ? jobId : undefined,
+      at: retimed?.ok ? retimed.at : undefined,
     });
     if (result.ok) setEditing(false);
   }
@@ -415,7 +523,19 @@ function NoteRow({ note }: { note: NoteView }) {
             aria-label="Note text"
             data-draft
           />
-          <JobSelect value={jobId} onChange={setJobId} placeholder="Job" required />
+          <Group gap="xs" align="start" wrap="nowrap">
+            <TimeInput
+              aria-label="Time of the note"
+              value={time}
+              onChange={(e) => setTime(e.currentTarget.value)}
+              error={retimed && !retimed.ok ? retimed.problem : null}
+              data-draft
+              w={130}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <JobSelect value={jobId} onChange={setJobId} placeholder="Job" required />
+            </div>
+          </Group>
           <Group justify="space-between">
             <Button variant="subtle" color="red" size="xs" onClick={() => void remove()} disabled={pending}>
               Delete
@@ -424,7 +544,11 @@ function NoteRow({ note }: { note: NoteView }) {
               <Button variant="default" size="xs" onClick={() => setEditing(false)}>
                 Cancel
               </Button>
-              <Button size="xs" onClick={() => void save()} disabled={!text.trim() || pending}>
+              <Button
+                size="xs"
+                onClick={() => void save()}
+                disabled={!text.trim() || (retimed != null && !retimed.ok) || pending}
+              >
                 Save
               </Button>
             </Group>
