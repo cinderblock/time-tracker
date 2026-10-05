@@ -24,6 +24,11 @@ export interface DayNote {
   text: string;
   jobId: string | null;
   rolledIntoEntryId: string | null;
+  /**
+   * Its entry was deleted because the accounting system already had the same
+   * time: settled, as if still part of that entry (see `discardedFor`).
+   */
+  keptInAccounting: boolean;
 }
 
 interface NoteRow {
@@ -35,6 +40,7 @@ interface NoteRow {
   text: string;
   job_id: string | null;
   rolled_into_entry_id: string | null;
+  kept_in_accounting_at: number | null;
   deleted_at: number | null;
 }
 
@@ -45,7 +51,7 @@ interface NoteRow {
  */
 const COLUMNS = `n.id, n.user_id, n.at, n.work_date, n.kind, n.text, n.job_id,
        CASE WHEN e.id IS NOT NULL AND e.deleted_at IS NULL THEN n.rolled_into_entry_id END AS rolled_into_entry_id,
-       n.deleted_at`;
+       n.kept_in_accounting_at, n.deleted_at`;
 const FROM = "day_notes n LEFT JOIN time_entries e ON e.id = n.rolled_into_entry_id";
 
 const toNote = (r: NoteRow): DayNote => ({
@@ -57,6 +63,7 @@ const toNote = (r: NoteRow): DayNote => ({
   text: r.text,
   jobId: r.job_id,
   rolledIntoEntryId: r.rolled_into_entry_id,
+  keptInAccounting: r.kept_in_accounting_at != null,
 });
 
 function getRow(id: string): NoteRow | null {
@@ -75,6 +82,21 @@ function assertNotRolled(row: NoteRow): void {
   if (row.rolled_into_entry_id) {
     throw new OpError("conflict", "That note is already part of a time entry; edit the entry instead.");
   }
+  if (row.kept_in_accounting_at != null) {
+    throw new OpError("conflict", "That note's time is already in the accounting system.");
+  }
+}
+
+/**
+ * An entry is being deleted because the accounting system already has the
+ * same time, and its record there is the one kept. The notes that became
+ * the entry are settled by that record: unlike a delete that undoes a rollup,
+ * they don't go back to being notes to turn into hours.
+ */
+export function discardedFor(entryId: string, now: number): void {
+  db()
+    .query("UPDATE day_notes SET kept_in_accounting_at = ?, updated_at = ? WHERE rolled_into_entry_id = ? AND deleted_at IS NULL")
+    .run(now, now, entryId);
 }
 
 export function listNotesForDate(userId: number, workDate: string): DayNote[] {
@@ -91,7 +113,7 @@ export function listNotesForDate(userId: number, workDate: string): DayNote[] {
 /**
  * The latest day before `before` whose notes haven't been turned into time,
  * if any. In notes mode that day has to be finished before a later one can
- * take notes.
+ * take notes. Notes kept in accounting are settled, not waiting.
  */
 export function pendingNotesBefore(userId: number, before: string): { date: string; count: number } | null {
   const row = db()
@@ -99,6 +121,7 @@ export function pendingNotesBefore(userId: number, before: string): { date: stri
       `SELECT n.work_date, COUNT(*) AS n FROM ${FROM}
         WHERE n.user_id = ? AND n.work_date < ? AND n.deleted_at IS NULL
           AND (n.rolled_into_entry_id IS NULL OR e.id IS NULL OR e.deleted_at IS NOT NULL)
+          AND n.kept_in_accounting_at IS NULL
         GROUP BY n.work_date
         ORDER BY n.work_date DESC
         LIMIT 1`,

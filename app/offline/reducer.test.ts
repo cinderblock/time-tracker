@@ -11,7 +11,7 @@ import { applyOp } from "../../src/ops.ts";
 import type { Op, OpPayload, OpType } from "../../src/ops-schema.ts";
 import { freshDb } from "../../src/testing/db.ts";
 import { setDefaultServiceItemId, setRequireNoteOnStop, setWeekStartsOn } from "../../src/settings.ts";
-import { createUser } from "../../src/users.ts";
+import { createUser, setTrackingMode } from "../../src/users.ts";
 import { uuidv7 } from "../../src/uuid.ts";
 import { loadDay } from "../tracker.server.ts";
 import type { DayModel } from "../tracker/model.ts";
@@ -450,6 +450,39 @@ describe("the reducer mirrors the server", () => {
 
     // Already answered, or never held: nothing happens on either side.
     mirror([op("duplicate.resolve", { entryId: keep, action: "separate" })], { expectRejected: 1 });
+  });
+
+  test("keeping QuickBooks' record for hours made from notes: the notes stay settled, on both sides", async () => {
+    const qb = sampleCompany();
+    const backend = new QbBridgeBackend({ baseUrl: "http://bridge.test", apiKey: "k", fetch: fakeBridgeFetch(qb, { apiKey: "k" }) });
+    const sync = () => runSync(backend, () => NINE);
+    await sync();
+    linkPerson({ userId, remoteId: "E-ALICE", actorUserId: userId });
+    setDefaultServiceItemId("I-LABOR", userId);
+    const phase2 = loadDay(userId, DAY).jobs.find((j) => j.fullName === "Acme:Phase 2")!.id;
+    qb.addForeign({ txnDate: DAY, entity: "E-ALICE", customer: "C-ACME-2", duration: "PT1H0M0S", notes: "Theirs" });
+    const [start, note, entryId] = [uuidv7(), uuidv7(), uuidv7()];
+    mirror([
+      op("note.create", { noteId: start, at: NINE, kind: "start", jobId: phase2 }),
+      op("note.create", { noteId: note, at: NINE + 30 * MIN, text: "Framing", jobId: phase2 }),
+      op("rollup.commit", {
+        workDate: DAY,
+        lines: [{ entryId, jobId: phase2, durationSeconds: 3600, note: "Framing", noteIds: [start, note] }],
+      }),
+    ]);
+    submitEntries({ userId, from: DAY, to: DAY, actorUserId: userId });
+    await sync();
+    expect(loadDay(userId, DAY).entries[0]!.heldBy).toHaveLength(1);
+
+    const m = mirror([op("duplicate.resolve", { entryId, action: "discard" })]);
+    expect(m.entries).toEqual([]);
+    expect(m.notes.map((n) => [n.rolledIntoEntryId, n.keptInAccounting])).toEqual([
+      [null, true],
+      [null, true],
+    ]);
+    // The next day isn't told this one is unfinished.
+    setTrackingMode({ userId, mode: "notes", actorUserId: userId });
+    expect(loadDay(userId, "2026-09-17")).toMatchObject({ mode: "notes", notesToRollUp: null });
   });
 
   test("a timer started on another day is shown as open but not listed", () => {

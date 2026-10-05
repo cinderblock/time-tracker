@@ -527,6 +527,7 @@ function applyOne(s: State, op: Op): void {
         jobId: p.jobId ?? null,
         jobName: p.jobId ? jobName(m, p.jobId) : null,
         rolledIntoEntryId: null,
+        keptInAccounting: false,
       });
       return;
     }
@@ -722,6 +723,10 @@ function applyOne(s: State, op: Op): void {
         // acting for them may delete it anyway — the server says so, and the
         // fresh copy shows it.)
         if (e.status !== "draft" && !isOwnerReopenable(e.status, e.adminApproved)) return;
+        // Its notes are settled by the record kept there, not hours to make again.
+        m.notes = m.notes.map((n) =>
+          n.rolledIntoEntryId === e.id ? { ...n, rolledIntoEntryId: null, keptInAccounting: true } : n,
+        );
         m.entries = m.entries.filter((x) => x.id !== e.id);
         if (m.open?.id === e.id) m.open = null;
         addToWeek(m, e.workDate, -e.durationSeconds);

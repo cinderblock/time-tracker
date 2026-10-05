@@ -35,7 +35,7 @@ import { lineOf } from "../offline/reducer.ts";
 import { useTracker, useUndoToast } from "./context.tsx";
 import { useFlight, whereItIs } from "./flight.tsx";
 import { JobSelect, RecentJobButtons } from "./JobPicker.tsx";
-import type { NoteView } from "./model.ts";
+import { type NoteView, isPendingNote } from "./model.ts";
 import { latestTimeOn, noteTimeOn } from "./note-time.ts";
 import { useTrackerDraft } from "./tracker-draft.ts";
 import appear from "../components/appear.module.css";
@@ -191,7 +191,7 @@ function groupByJob(notes: readonly NoteView[]): Section[] {
       jobName: list[0]!.jobName,
       notes: list,
       startedAt: list[0]!.at,
-      pending: list.filter((n) => !n.rolledIntoEntryId),
+      pending: list.filter(isPendingNote),
     }))
     .sort((a, b) => a.startedAt - b.startedAt);
 }
@@ -471,7 +471,8 @@ function NoteBox({
 function NoteRow({ note }: { note: NoteView }) {
   const { model, dispatch, pending } = useTracker();
   const undoToast = useUndoToast();
-  const rolled = note.rolledIntoEntryId != null;
+  // Part of an entry, or settled by the accounting system's record: a record either way.
+  const rolled = !isPendingNote(note);
   // An edit under way is kept on the device — open, with what's been typed —
   // so an update or a crash brings it back as it was.
   const [edit, setEdit, discardEdit] = useTrackerDraft<{ text: string; jobId: string | null; time?: string } | null>(
@@ -590,7 +591,7 @@ function NoteRow({ note }: { note: NoteView }) {
           {what}
           {rolled && (
             <Badge size="sm" variant="light" color="gray">
-              added to time
+              {note.keptInAccounting ? "kept in accounting" : "added to time"}
             </Badge>
           )}
         </Group>

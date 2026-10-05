@@ -126,6 +126,7 @@ export function loadDay(userId: number, workDate: string): DayModel {
       jobId: n.jobId,
       jobName: n.jobId ? (jobNames.get(n.jobId) ?? null) : null,
       rolledIntoEntryId: n.rolledIntoEntryId,
+      keptInAccounting: n.keptInAccounting,
     }))
       .sort(compareNotes),
     jobs,

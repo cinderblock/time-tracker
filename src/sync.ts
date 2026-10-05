@@ -13,6 +13,7 @@ import {
   updateSyncState,
 } from "./settings.ts";
 import { reopenEntries } from "./approvals.ts";
+import { discardedFor } from "./notes.ts";
 import { OpError } from "./op-error.ts";
 
 /**
@@ -464,6 +465,8 @@ export function resolveDuplicate(args: {
         }
         reopenEntries({ userId: row.user_id, entryIds: [args.entryId], actorUserId: args.actorUserId, now, ownSubmissionsOnly: own });
         db().query("UPDATE time_entries SET deleted_at = ?, updated_at = ? WHERE id = ?").run(now, now, args.entryId);
+        // Its notes' time is the record there now, not hours still to make.
+        discardedFor(args.entryId, now);
         event("duplicate_discard", { before: { status: row.status, found: check.found } });
         return;
       }

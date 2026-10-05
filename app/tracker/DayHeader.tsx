@@ -7,7 +7,7 @@ import { useNow, useTracker } from "./context.tsx";
 import classes from "./DayHeader.module.css";
 import { type DayMove, markDayMove, moveBetween } from "./day-move.ts";
 import { daySteps } from "./day-steps.ts";
-import { liveSeconds } from "./model.ts";
+import { isPendingNote, liveSeconds } from "./model.ts";
 
 const WEEKDAY = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -63,7 +63,7 @@ export function DayHeader() {
   const isToday = workDate === today;
   // In notes mode a day's notes have to become time before moving on from it —
   // unless the person has turned that hold off.
-  const heldHere = model.mode === "notes" && model.notesHold && model.notes.some((n) => !n.rolledIntoEntryId);
+  const heldHere = model.mode === "notes" && model.notesHold && model.notes.some(isPendingNote);
   const weekStart = model.week[0]?.date ?? workDate;
   const steps = daySteps({ workDate, today, weekStart, heldHere });
   const moveTo = (date: string) => moveBetween(workDate, date, weekStart);

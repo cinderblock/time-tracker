@@ -74,7 +74,15 @@ export interface NoteView {
   jobId: string | null;
   jobName: string | null;
   rolledIntoEntryId: string | null;
+  /**
+   * Its entry was deleted because the accounting system already had the same
+   * time, and that record was kept: settled, though part of no entry here.
+   */
+  keptInAccounting: boolean;
 }
+
+/** A note still to be turned into hours: part of no entry, and not settled in accounting. */
+export const isPendingNote = (n: NoteView): boolean => !n.rolledIntoEntryId && !n.keptInAccounting;
 
 export interface DayModel {
   userId: number;

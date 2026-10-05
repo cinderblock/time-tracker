@@ -6,6 +6,7 @@ import { createCategory, setUserCategory } from "./categories.ts";
 import { db } from "./db.server.ts";
 import { getEntry } from "./entries.ts";
 import { getJob, listJobs, resolveJob, updateJob } from "./jobs.ts";
+import { listNotesForDate, pendingNotesBefore } from "./notes.ts";
 import { applyOp } from "./ops.ts";
 import type { OpPayload, OpResult, OpType } from "./ops-schema.ts";
 import {
@@ -545,6 +546,54 @@ describe("time the accounting system already has", () => {
     // Answering twice, or about an entry that isn't waiting, is refused.
     expect(send(alice, "duplicate.resolve", { entryId: mine, action: "separate" })).toMatchObject({ ok: false, code: "conflict" });
     expect(send(alice, "duplicate.resolve", { entryId: uuidv7(), action: "separate" })).toMatchObject({ ok: false, code: "not_found" });
+  });
+
+  test("keeping QuickBooks' record settles the notes that became the entry; restoring the entry hands them back", async () => {
+    await connected();
+    const acme2 = jobByRemote("C-ACME-2").id;
+    theirs();
+    // A day in notes: on the job, a note, turned into an hour, submitted.
+    const start = uuidv7();
+    const note = uuidv7();
+    ok(send(alice, "note.create", { noteId: start, at: NINE, kind: "start", jobId: acme2 }));
+    ok(send(alice, "note.create", { noteId: note, at: NINE + MIN, text: "Framing", jobId: acme2 }));
+    const entryId = uuidv7();
+    ok(
+      send(alice, "rollup.commit", {
+        workDate: DAY,
+        lines: [{ entryId, jobId: acme2, durationSeconds: 3600, note: "Framing", noteIds: [start, note] }],
+      }),
+    );
+    submitEntries({ userId: alice, from: DAY, to: DAY, actorUserId: alice });
+    await sync();
+    expect(heldEntries(alice).has(entryId)).toBe(true);
+
+    ok(send(alice, "duplicate.resolve", { entryId, action: "discard" }));
+    // The time is QuickBooks' record now: the day isn't left with notes to turn into hours again.
+    expect(pendingNotesBefore(alice, "2026-09-17")).toBeNull();
+    expect(listNotesForDate(alice, DAY).map((n) => [n.rolledIntoEntryId, n.keptInAccounting])).toEqual([
+      [null, true],
+      [null, true],
+    ]);
+    // Settled like a note that is part of an entry: not edited, deleted, or made into hours again.
+    expect(send(alice, "note.update", { noteId: note, text: "More framing" })).toMatchObject({ ok: false, code: "conflict" });
+    expect(send(alice, "note.delete", { noteId: note, at: now })).toMatchObject({ ok: false, code: "conflict" });
+    expect(
+      send(alice, "rollup.commit", {
+        workDate: DAY,
+        lines: [{ entryId: uuidv7(), jobId: acme2, durationSeconds: 3600, note: "Framing", noteIds: [start, note] }],
+      }),
+    ).toMatchObject({ ok: false, code: "conflict" });
+
+    // The entry restored: the notes are its own again, and an ordinary delete
+    // afterwards frees them, as it undoes any rollup.
+    ok(send(alice, "entry.restore", { entryId, at: now }));
+    expect(listNotesForDate(alice, DAY).map((n) => [n.rolledIntoEntryId, n.keptInAccounting])).toEqual([
+      [entryId, false],
+      [entryId, false],
+    ]);
+    ok(send(alice, "entry.delete", { entryId, at: now }));
+    expect(pendingNotesBefore(alice, "2026-09-17")).toEqual({ date: DAY, count: 2 });
   });
 
   test("once an admin has approved it, deleting it is the admin's call; and 'check again' asks once more", async () => {

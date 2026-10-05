@@ -977,6 +977,14 @@ export function restoreEntry(args: { userId: number; actorUserId: number; entryI
     db().query("UPDATE time_entries SET status = 'draft' WHERE id = ?").run(entry.id);
   }
   db().query("UPDATE time_entries SET deleted_at = NULL WHERE id = ?").run(entry.id);
+  // Back, it owns its notes again — including any it was deleted in favour of
+  // the accounting system's record for (`discardedFor`); a later delete frees
+  // them as any delete does.
+  db()
+    .query(
+      "UPDATE day_notes SET kept_in_accounting_at = NULL, updated_at = ? WHERE rolled_into_entry_id = ? AND kept_in_accounting_at IS NOT NULL",
+    )
+    .run(args.now, entry.id);
   recomputeDuration(entry.id, args.now);
   audit({ actorUserId: args.actorUserId, entity: "entry", entityId: entry.id, action: "restore", at: args.now });
   return getEntry(entry.id)!;

@@ -69,6 +69,7 @@ describe("migrations", () => {
       "009_notifications",
       "010_notes_hold",
       "011_one_line_per_job",
+      "012_notes_kept_in_accounting",
     ]);
     expect(first[0]!.fingerprint).toMatch(/^[0-9a-f]{16}$/);
 
@@ -101,5 +102,61 @@ describe("migrations", () => {
     expect(() => initDb(path, () => {})).not.toThrow();
     closeDb();
     expect(migrationRows(path)[0]!.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("012_notes_kept_in_accounting", () => {
+  test("settles the notes of entries deleted for the accounting system's record, and only those", () => {
+    const path = freshFile();
+    initDb(path, () => {});
+    closeDb();
+
+    // The database as it was before 012, with three days' worth of answers in it.
+    const raw = new Database(path);
+    raw.exec("ALTER TABLE day_notes DROP COLUMN kept_in_accounting_at");
+    raw.exec("DELETE FROM migrations WHERE name = '012_notes_kept_in_accounting'");
+    raw.exec(`INSERT INTO users (id, name, role, webauthn_user_id, created_at, updated_at) VALUES (1, 'A', 'employee', 'w', 0, 0)`);
+    const entry = raw.query(
+      `INSERT INTO time_entries (id, user_id, work_date, source, status, created_at, updated_at, deleted_at)
+       VALUES (?, 1, '2026-09-21', 'note_rollup', 'draft', 0, 0, ?)`,
+    );
+    const note = raw.query(
+      `INSERT INTO day_notes (id, user_id, at, work_date, text, rolled_into_entry_id, created_at, updated_at)
+       VALUES (?, 1, 0, '2026-09-21', 'x', ?, 0, 0)`,
+    );
+    const audited = raw.query(`INSERT INTO audit_log (actor_user_id, at, entity, entity_id, action) VALUES (1, ?, 'entry', ?, ?)`);
+    // Kept theirs: deleted by the discard itself.
+    entry.run("kept", 1000);
+    audited.run(1000, "kept", "duplicate_discard");
+    note.run("n-kept", "kept");
+    // Kept theirs, restored, then deleted as an ordinary undo of the rollup.
+    entry.run("undone", 3000);
+    audited.run(1000, "undone", "duplicate_discard");
+    audited.run(2000, "undone", "restore");
+    audited.run(3000, "undone", "delete");
+    note.run("n-undone", "undone");
+    // Deleted the ordinary way, and a live entry.
+    entry.run("deleted", 1000);
+    note.run("n-deleted", "deleted");
+    entry.run("live", null);
+    note.run("n-live", "live");
+    raw.close();
+
+    reopen(path);
+    closeDb();
+    const after = new Database(path, { readonly: true });
+    try {
+      const rows = after
+        .query<{ id: string; kept_in_accounting_at: number | null }, []>("SELECT id, kept_in_accounting_at FROM day_notes ORDER BY id")
+        .all();
+      expect(rows).toEqual([
+        { id: "n-deleted", kept_in_accounting_at: null },
+        { id: "n-kept", kept_in_accounting_at: 1000 },
+        { id: "n-live", kept_in_accounting_at: null },
+        { id: "n-undone", kept_in_accounting_at: null },
+      ]);
+    } finally {
+      after.close();
+    }
   });
 });
