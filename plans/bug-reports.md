@@ -129,7 +129,7 @@ Mine, following from those:
    route, `bun run bugs`.
 7. [x] Notifications: `problems` kind, admin switch, rule tests.
 8. [x] e2e (`e2e/bugs.spec.ts`), README; typecheck, 501 unit, 86 e2e.
-9. [ ] Commit; deploy waits for the user.
+9. [x] Committed (`77b80c0`) and deployed.
 
 ## Findings / gotchas
 
@@ -159,6 +159,13 @@ Mine, following from those:
 - [x] 2026-10-05 — **Built.** Typecheck clean, 501 unit (20 new), 86 e2e
       (3 new) green; screenshots of the dialog and the admin report checked.
       Not deployed.
+- [x] 2026-10-05 — **Deployed** at `77b80c0` (user: "deploy"). Snapshot
+      first; image digest checked against its revision label. Live: healthy
+      on the pinned digest, `applying migration 013_bug_reports` in the log.
+      Probed: `POST /api/client-errors` refuses a foreign origin (403) and a
+      malformed batch (400); `POST /api/bug-reports` signed out answers 401
+      `signed_out`; `/admin/bugs` signed out redirects to sign-in. Not yet
+      seen: a real report from a phone, or a push to an admin about one.
 
 ## Open questions for the user
 
