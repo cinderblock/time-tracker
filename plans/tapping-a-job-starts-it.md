@@ -48,6 +48,12 @@ Feedback from use (2026-10-05), on writing up a past day in notes mode:
       the start from its editor.
 - [x] README; `bun run typecheck`, 475 unit, 82 e2e (3 skipped) green.
 - [x] Committed. Deploy waits for the user.
+- [x] 2026-10-05 — Rebased onto the settled-notes and bug-report work (one
+      conflict: the rolled-note badge keeps "kept in accounting" / "left
+      out"; one e2e line: the submitted-day test now taps its job instead of
+      filling "Started at"). Typecheck, 503 unit, 86 e2e. **Deployed
+      `a22d015`** (user: "finish this and deploy it"); image label checked
+      against the commit; healthy.
 
 ## Open questions for the user
 
@@ -55,8 +61,6 @@ None. (Asked whether "edit my notes" meant notes already turned into hours;
 answered 2026-10-05: it meant start times, which decision 3 covers. Rolled
 notes stay read-only.)
 
-Deploy is on hold at the user's request (2026-10-05) while another bug is
-worked on.
 
 ## Things not to do
 
