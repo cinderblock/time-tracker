@@ -16,6 +16,7 @@ import {
   Scripts,
   ScrollRestoration,
   isRouteErrorResponse,
+  useLocation,
   useRouteError,
   useRouteLoaderData,
 } from "react-router";
@@ -31,10 +32,22 @@ import "@mantine/notifications/styles.css";
 import { branding } from "../src/branding.ts";
 import { config } from "../src/config.server.ts";
 import { authMiddleware } from "./auth.server.ts";
+import { addCrumb, installBreadcrumbs } from "./bugs/breadcrumbs.ts";
+import { BoundaryReport } from "./bugs/BoundaryReport.tsx";
+import { installErrorCapture } from "./bugs/errors.ts";
+import { installTabRollCall } from "./bugs/tabs.ts";
 import { MOTION, motionCss } from "./motion.ts";
 import { startAutoUpdate } from "./pwa/auto-update.ts";
 import { UpdateReady } from "./pwa/UpdateReady.tsx";
 import { initMiddleware } from "./server-init.ts";
+
+// Errors and breadcrumbs from the first moment the app's code runs in the
+// browser, not from when the first screen mounts (see app/bugs/).
+if (typeof window !== "undefined") {
+  installErrorCapture();
+  installBreadcrumbs();
+  installTabRollCall();
+}
 
 // Order matters: the database must be open before the session is resolved.
 // Middleware (unlike the root loader) also runs for the JSON API routes.
@@ -138,6 +151,10 @@ export default function App({ loaderData }: Route.ComponentProps) {
 
   useEffect(() => rootCopy.write(loaderData), [loaderData]);
 
+  // Where the person goes, for bug reports' breadcrumbs.
+  const location = useLocation();
+  useEffect(() => addCrumb("nav", `${location.pathname}${location.search}`), [location.pathname, location.search]);
+
   const theme = useMemo(
     () =>
       createTheme({
@@ -208,6 +225,8 @@ export function ErrorBoundary() {
     <main style={{ padding: "2rem", fontFamily: "system-ui, sans-serif", maxWidth: "36rem", margin: "0 auto" }}>
       <h1>{heading}</h1>
       <p>{detail}</p>
+      {/* Not for "not found" or "offline": those are answers, not faults. */}
+      {!isOfflineError(error) && !(isRouteErrorResponse(error) && error.status < 500) && <BoundaryReport error={error} />}
       <p>
         <a href="/">Back to the app</a>
       </p>

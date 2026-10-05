@@ -11,6 +11,10 @@ FROM oven/bun:1 AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# The commit being built (CI passes it; .git isn't copied in), baked into the
+# code so a bug report says exactly which build it came from.
+ARG REVISION=dev
+ENV APP_REVISION=$REVISION
 RUN bun --bun run build
 
 # ---- runtime ----
@@ -40,6 +44,11 @@ COPY --from=builder /app/server.ts ./server.ts
 
 VOLUME ["/data"]
 EXPOSE 3000
+
+# The same commit for code run from source here (the operator CLI). Last, so
+# a new commit doesn't invalidate the layers above.
+ARG REVISION=dev
+ENV APP_REVISION=$REVISION
 
 # Any answer below 500 means the server is up (signed out, / redirects). The
 # first request also starts the app — migrations, the first-run setup link in

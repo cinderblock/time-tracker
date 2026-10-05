@@ -14,7 +14,8 @@
     "typecheck": "react-router typegen && tsc --noEmit",
     "test": "bun test src/ app/",
     "test:e2e": "bun run build && playwright test",
-    "admin-link": "bun src/cli/admin-link.ts"
+    "admin-link": "bun src/cli/admin-link.ts",
+    "bugs": "bun src/cli/bugs.ts"
   },
   "dependencies": {
     "@mantine/colors-generator": "^9.6.1",
@@ -31,7 +32,9 @@
     "dayjs": "^1.11.0",
     "express": "^5.2.1",
     "fast-xml-parser": "^5.11.1",
+    "fflate": "^0.8.3",
     "idb": "^8.0.0",
+    "modern-screenshot": "^4.7.0",
     "morgan": "^1.12.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",

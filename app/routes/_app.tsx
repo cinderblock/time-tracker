@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { Link, Outlet, useLocation, useRouteLoaderData } from "react-router";
 
 import { requireUser } from "../auth.server.ts";
+import { setProblemUser } from "../bugs/queue.ts";
+import { ReportBugButton } from "../bugs/ReportBug.tsx";
 import { isOfflineError } from "../offline/loaders.ts";
 import { shellCopy } from "../offline/storage.ts";
 import { SignOutButton, SyncStatusBadge, useSyncLifecycle } from "../offline/SyncStatusBadge.tsx";
@@ -48,6 +50,8 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   const [opened, { toggle, close }] = useDisclosure();
   const location = useLocation();
   useSyncLifecycle(user);
+  // Reports wait on the device for the person who made them.
+  useEffect(() => setProblemUser(user.id), [user.id]);
 
   // Close the phone drawer after navigating — and on the tap itself (below),
   // because tapping the item for the page already shown changes no path, and
@@ -70,6 +74,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           { to: "/admin/rates", label: "Rates & categories" },
           { to: "/admin/accounting", label: "Accounting" },
           { to: "/admin/settings", label: "Settings" },
+          { to: "/admin/bugs", label: "Bug reports" },
         ]
       : [];
   const isActive = (to: string) =>
@@ -95,6 +100,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
             </Anchor>
           </Group>
           <Group gap="sm" wrap="nowrap">
+          <ReportBugButton userId={user.id} />
           <SyncStatusBadge />
           <UnstyledButton component={Link} to="/account" aria-label="Your account">
             <Group gap="xs" wrap="nowrap">

@@ -148,6 +148,38 @@ export async function readJson(request: Request): Promise<Record<string, unknown
 }
 
 /**
+ * `readJson` for a body that could be large (a bug report's screenshots):
+ * refused with 413 past `maxBytes`, whether the size is declared up front or
+ * only found out while reading.
+ */
+export async function readJsonLimited(request: Request, maxBytes: number): Promise<Record<string, unknown>> {
+  const tooLarge = () => Response.json({ error: "That's too large to send." }, { status: 413 });
+  const declared = Number(request.headers.get("Content-Length") ?? "");
+  if (declared > maxBytes) throw tooLarge();
+  if (!request.body) throw Response.json({ error: "Malformed request." }, { status: 400 });
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  try {
+    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (body && typeof body === "object" && !Array.isArray(body)) return body as Record<string, unknown>;
+  } catch {
+    // fall through
+  }
+  throw Response.json({ error: "Malformed request." }, { status: 400 });
+}
+
+/**
  * Turn a UserInputError into a 400 with its message; let anything else
  * propagate as a real error (logged, generic message to the user).
  */

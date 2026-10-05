@@ -77,6 +77,9 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:latest
           # A deployment can verify this label against the commit its pin
           # claims, so a mistyped digest can't quietly ship a different build.
+          # The commit is also built into the code, so bug reports name it.
+          build-args: |
+            REVISION=${{ github.sha }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

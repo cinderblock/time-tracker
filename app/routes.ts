@@ -23,6 +23,9 @@ export default [
       route("rates", "routes/_app.admin.rates.tsx"),
       route("accounting", "routes/_app.admin.accounting.tsx"),
       route("settings", "routes/_app.admin.settings.tsx"),
+      route("bugs", "routes/_app.admin.bugs.tsx"),
+      route("bugs/errors/:groupId", "routes/_app.admin.bugs.errors.$groupId.tsx"),
+      route("bugs/:id", "routes/_app.admin.bugs.$id.tsx"),
     ]),
   ]),
 
@@ -32,6 +35,8 @@ export default [
   // Report downloads (no page chrome).
   route("admin/reports.csv", "routes/admin.reports.csv.ts"),
   route("admin/accounting.qwc", "routes/admin.accounting.qwc.ts"),
+  route("admin/bugs/:id/bundle.zip", "routes/admin.bugs.$id.bundle.ts"),
+  route("admin/bugs/:id/images/:imageId", "routes/admin.bugs.$id.images.$imageId.ts"),
 
   // Every change to tracking data arrives here as an op.
   route("api/ops", "routes/api.ops.ts"),
@@ -42,6 +47,10 @@ export default [
   // connection file points at. They answer 404 unless it's the configured backend.
   route("qbwc", "routes/qbwc.ts"),
   route("qbwc/support", "routes/qbwc.support.ts"),
+
+  // Problems: errors a page sends on its own, and reports people file.
+  route("api/client-errors", "routes/api.client-errors.ts"),
+  route("api/bug-reports", "routes/api.bug-reports.ts"),
 
   // A button pressed on a notification, sent by the service worker.
   route("api/notifications/action", "routes/api.notifications.action.ts"),

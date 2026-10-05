@@ -4,8 +4,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useRevalidator } from "react-router";
 
 import type { Op, OpPayload, OpResult, OpType } from "../../src/ops-schema.ts";
+import { addCrumb } from "../bugs/breadcrumbs.ts";
+import { useBugContext } from "../bugs/context.ts";
 import { getEngine, useQueuedOps } from "../offline/client.ts";
 import { applyPending } from "../offline/reducer.ts";
+import { describe as describeOp } from "../offline/SyncStatusBadge.tsx";
 import { SignedOutError } from "../offline/sync.ts";
 import { dayHref } from "./day-href.ts";
 import { type Fix, recentFix, refreshLocation } from "./location.ts";
@@ -139,6 +142,10 @@ export function TrackerProvider({
   useDayRollover(base.today, base.timezone, askAgain);
 
   const model = useMemo(() => (ops.length ? applyPending(base, ops) : base), [base, ops]);
+  // A bug report carries the day as shown — the server's copy with the
+  // device's changes on top — and the server's copy on its own.
+  useBugContext("day", () => ({ shown: model, fromServer: base, pendingOps: ops, actingFor }));
+  useBugContext("undo", () => undoStack.current.map((u) => u.label));
   // The day as it is right now, for working out what a change undoes —
   // read at dispatch time rather than captured, so `dispatch` stays stable.
   const current = useRef(model);
@@ -159,6 +166,12 @@ export function TrackerProvider({
           const answers = await Promise.all(list.map((op) => engine.enqueue(op, wait ? ANSWER_WAIT_MS : 0)));
           results = answers.map((a, i): DispatchResult => a ?? { opId: list[i]!.opId, ok: true, queued: true });
         }
+        // Every change, and what came of it, for bug reports' breadcrumbs.
+        list.forEach((op, i) => {
+          const r = results[i];
+          const outcome = !r ? "no answer" : !r.ok ? `refused: ${r.error}` : "queued" in r ? "queued" : "done";
+          addCrumb("op", `${describeOp(op)} — ${outcome}`, { type: op.type, opId: op.opId, payload: op.payload, actingFor: actingFor?.userId ?? null });
+        });
         // A refused change did nothing, so there is nothing to put back.
         if (inverse && results.every((r) => r.ok)) {
           undoStack.current = [...undoStack.current.slice(-(UNDO_DEPTH - 1)), inverse];

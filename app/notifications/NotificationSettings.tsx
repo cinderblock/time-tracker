@@ -447,6 +447,13 @@ function PrefsForm({
               />
             </Group>
           )}
+          {isAdmin && (
+            <Switch
+              label="When someone reports a problem, or a new kind of error shows up in someone's browser"
+              checked={p.problems.on}
+              onChange={(e) => set("problems", { on: e.currentTarget.checked })}
+            />
+          )}
           <Group gap="sm" align="end">
             <Switch
               label="Only on workdays, between"

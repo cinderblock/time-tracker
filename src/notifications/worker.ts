@@ -27,6 +27,7 @@ const TTL_SECONDS: Record<Due["kind"], number> = {
   time_held: 24 * 3600,
   send_failed: 24 * 3600,
   admin_attention: 24 * 3600,
+  problems: 24 * 3600,
   test: 300,
 };
 

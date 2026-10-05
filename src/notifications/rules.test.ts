@@ -22,6 +22,7 @@ function state(over: Partial<PersonState> = {}): PersonState {
     held: [],
     failed: [],
     attention: null,
+    problems: null,
     ...over,
   };
 }
@@ -260,5 +261,34 @@ describe("admins", () => {
 
   test("never for someone who isn't an admin", () => {
     expect(dueNotifications(prefs(), state({ attention, secondsToday: 1, minutesNow: 9 * 60 }), log(), NOW)).toEqual([]);
+  });
+});
+
+describe("problems (admins)", () => {
+  const base = { isAdmin: true, secondsToday: 1, minutesNow: 9 * 60 };
+
+  test("a new report: told once, and straight to it", () => {
+    const s = state({ ...base, problems: { reports: ["r1"], errors: [] } });
+    const due = dueNotifications(prefs(), s, log(), NOW);
+    expect(kinds(due)).toEqual(["problems@r:r1"]);
+    expect(due[0]!.title).toBe("1 new bug report");
+    expect(due[0]!.url).toBe("/admin/bugs/r1");
+    // Already told about that one: nothing more until something new.
+    expect(dueNotifications(prefs(), s, log([{ kind: "problems", key: "r:r1" }]), NOW)).toEqual([]);
+  });
+
+  test("a new kind of error: told the first time it shows up, not each time it happens", () => {
+    const told = log([{ kind: "problems", key: "e:7,r:r1" }]);
+    const same = state({ ...base, problems: { reports: ["r1"], errors: [7] } });
+    expect(dueNotifications(prefs(), same, told, NOW)).toEqual([]);
+    const due = dueNotifications(prefs(), state({ ...base, problems: { reports: ["r1"], errors: [7, 9] } }), told, NOW);
+    expect(due[0]!.title).toBe("1 new kind of error");
+    expect(due[0]!.url).toBe("/admin/bugs");
+  });
+
+  test("switched off, or not an admin: nothing", () => {
+    const problems = { reports: ["r1"], errors: [3] };
+    expect(dueNotifications(prefs({ problems: { on: false } }), state({ ...base, problems }), log(), NOW)).toEqual([]);
+    expect(dueNotifications(prefs(), state({ ...base, isAdmin: false, problems }), log(), NOW)).toEqual([]);
   });
 });

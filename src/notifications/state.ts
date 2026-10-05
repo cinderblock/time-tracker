@@ -1,3 +1,5 @@
+import { openBugReportIds } from "../bug-reports.ts";
+import { openErrorGroupIds } from "../client-errors.ts";
 import { db } from "../db.server.ts";
 import { getOpenEntry } from "../entries.ts";
 import { isEditable } from "../entry-status.ts";
@@ -90,5 +92,6 @@ export function personState(args: {
     held,
     failed,
     attention: args.isAdmin ? args.attention() : null,
+    problems: args.isAdmin ? { reports: openBugReportIds(), errors: openErrorGroupIds() } : null,
   };
 }

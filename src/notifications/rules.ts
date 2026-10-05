@@ -26,6 +26,7 @@ export const KINDS = [
   "time_held",
   "send_failed",
   "admin_attention",
+  "problems",
   "test",
 ] as const;
 export type Kind = (typeof KINDS)[number];
@@ -54,6 +55,8 @@ export interface PersonState {
   failed: { entryId: string; workDate: string; error: string }[];
   /** Admins: entries anyone has waiting on an admin. */
   attention: { held: string[]; blocked: string[]; failed: string[] } | null;
+  /** Admins: bug reports nobody has dealt with, and kinds of browser error still open. */
+  problems: { reports: string[]; errors: number[] } | null;
 }
 
 export interface LogEntry {
@@ -293,6 +296,31 @@ export function dueNotifications(prefs: NotificationPrefs, state: PersonState, l
     const ids = [...a.held.map((id) => `h:${id}`), ...a.blocked.map((id) => `b:${id}`), ...a.failed.map((id) => `f:${id}`)];
     const key = alert("admin_attention", ids);
     if (key) due.push(attentionDue(key, a));
+  }
+
+  // Each new report, and each kind of error the first time it's seen (or
+  // back after a fix): the set of open ones holding something new.
+  if (state.isAdmin && prefs.problems.on && state.problems) {
+    const p = state.problems;
+    const key = alert("problems", [...p.reports.map((id) => `r:${id}`), ...p.errors.map((id) => `e:${id}`)]);
+    if (key) {
+      const last = log.latest("problems");
+      const before = new Set(last ? last.key.split(",") : []);
+      const newReports = p.reports.filter((id) => !before.has(`r:${id}`)).length;
+      const newErrors = p.errors.filter((id) => !before.has(`e:${id}`)).length;
+      const parts = [
+        newReports ? plural(newReports, "new bug report") : null,
+        newErrors ? plural(newErrors, "new kind of error", "new kinds of error") : null,
+      ].filter(Boolean);
+      due.push({
+        kind: "problems",
+        key,
+        title: parts.length ? parts.join(" and ") : "Problems waiting",
+        body: `${plural(p.reports.length, "report")} and ${plural(p.errors.length, "error")} open. The Bug reports page has each one, ready to hand to an agent.`,
+        url: newReports && p.reports.length === 1 ? `/admin/bugs/${p.reports[0]}` : "/admin/bugs",
+        actions: [SNOOZE],
+      });
+    }
   }
 
   return due;

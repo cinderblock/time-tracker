@@ -90,6 +90,8 @@ export const prefsSchema = z.object({
       on: z.boolean().catch(true),
       when: z.enum(["immediately", "daily"]).catch("immediately"),
     }),
+  /** Admins only: a new bug report, or a new kind of error in someone's browser. */
+  problems: section({ on: z.boolean().catch(true) }),
 });
 
 export type NotificationPrefs = z.infer<typeof prefsSchema>;

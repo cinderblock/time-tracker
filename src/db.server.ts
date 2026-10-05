@@ -636,6 +636,91 @@ const migrations: Migration[] = [
                                AND a.action = 'duplicate_discard' AND a.at = e.deleted_at));
     `,
   },
+  {
+    name: "013_bug_reports",
+    sql: `
+        -- A person pressing "Report a problem": what they say, and everything
+        -- the browser could gather about the moment (context, JSON — the
+        -- screen's data, recent actions, errors, device, other tabs). The id is
+        -- the device's, so a report sent again from the offline queue is the
+        -- same report. Only admins read these. See src/bug-reports.ts.
+        CREATE TABLE bug_reports (
+          id               TEXT PRIMARY KEY,
+          user_id          INTEGER NOT NULL REFERENCES users(id),
+          -- When the button was pressed, by the device's clock; and when the
+          -- server got it (later, if it waited offline).
+          client_time      INTEGER NOT NULL,
+          received_at      INTEGER NOT NULL,
+          description      TEXT NOT NULL,
+          expected         TEXT,
+          url              TEXT NOT NULL,
+          -- The build the page was running, and the server's at the time:
+          -- different means a tab left open across an update.
+          client_revision  TEXT NOT NULL,
+          server_revision  TEXT NOT NULL,
+          server_build_id  TEXT NOT NULL,
+          user_agent       TEXT,
+          context          TEXT NOT NULL,
+          status           TEXT NOT NULL DEFAULT 'new'
+                             CHECK (status IN ('new', 'fixed', 'wont_fix')),
+          status_note      TEXT,
+          status_at        INTEGER,
+          status_by        INTEGER REFERENCES users(id)
+        );
+        CREATE INDEX idx_bug_reports_status ON bug_reports(status, received_at);
+
+        -- Screenshots: the page as drawn by the app when the button was
+        -- pressed, and a real screen capture when the person took one.
+        CREATE TABLE bug_report_images (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          report_id  TEXT NOT NULL REFERENCES bug_reports(id) ON DELETE CASCADE,
+          kind       TEXT NOT NULL CHECK (kind IN ('drawn', 'captured')),
+          mime       TEXT NOT NULL CHECK (mime IN ('image/webp', 'image/png', 'image/jpeg')),
+          width      INTEGER,
+          height     INTEGER,
+          data       BLOB NOT NULL
+        );
+        CREATE INDEX idx_bug_report_images_report ON bug_report_images(report_id);
+
+        -- Errors in people's browsers, sent on their own. Grouped by what the
+        -- error is (fingerprint: its message and where in the code), so the
+        -- same fault on every phone is one line with a count. A group marked
+        -- fixed that happens again is new again. See src/client-errors.ts.
+        CREATE TABLE client_error_groups (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          fingerprint    TEXT NOT NULL UNIQUE,
+          message        TEXT NOT NULL,
+          first_seen_at  INTEGER NOT NULL,
+          last_seen_at   INTEGER NOT NULL,
+          count          INTEGER NOT NULL DEFAULT 0,
+          status         TEXT NOT NULL DEFAULT 'new'
+                           CHECK (status IN ('new', 'fixed', 'ignored')),
+          status_at      INTEGER,
+          status_by      INTEGER REFERENCES users(id),
+          -- Marked fixed, then seen again.
+          regressed_at   INTEGER
+        );
+        CREATE INDEX idx_client_error_groups_seen ON client_error_groups(last_seen_at);
+
+        -- Occurrences, the latest few per group (older ones are dropped):
+        -- who, when, which build, and the detail (JSON: stack, recent
+        -- actions, the page). user_id is NULL for errors before sign-in.
+        CREATE TABLE client_error_events (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          group_id         INTEGER NOT NULL REFERENCES client_error_groups(id) ON DELETE CASCADE,
+          user_id          INTEGER REFERENCES users(id),
+          client_time      INTEGER NOT NULL,
+          received_at      INTEGER NOT NULL,
+          -- The same error repeated on one page, sent once with how often.
+          repeats          INTEGER NOT NULL DEFAULT 1,
+          url              TEXT,
+          client_revision  TEXT,
+          user_agent       TEXT,
+          detail           TEXT NOT NULL
+        );
+        CREATE INDEX idx_client_error_events_group ON client_error_events(group_id, received_at);
+    `,
+  },
 ];
 
 /**

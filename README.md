@@ -106,6 +106,23 @@ repository. All of that is deployment configuration or an admin setting.
   notifications carry "Remind me in an hour" and "Day off" buttons. Signing a
   device out stops its notifications. On iPhone and iPad they need iOS 16.4+
   and the app added to the Home Screen.
+- **Report a problem**, in the header on every page. Pressing it takes a
+  picture of the page (drawn by the app — no prompt, works on phones; where
+  the browser can, the dialog also offers an exact screen capture) and gathers
+  what the app knows: the screen's data, the last hundred things the person
+  did (pages, buttons by name, changes and the server's answers, notices —
+  never what they typed), errors, changes waiting to sync, the device, the
+  app's version and the other tabs of the app that are open. The person adds a
+  sentence. Made offline, it's kept on the device and sent later. Admins read
+  reports under Admin → Bug reports, mark them fixed or won't fix, and
+  download each as one zip for an agent (`report.md`, `context.json`,
+  screenshots); `bun run bugs` does the same from the host.
+- **Browser errors reach the server on their own** — uncaught errors, unhandled
+  promise rejections, `console.error`, files that failed to load, a crashed
+  page — each with what led to it. They're grouped by kind (same message and
+  place in the code, whatever the numbers or the build), counted, and listed
+  beside the reports; one marked fixed that comes back opens again. Admins get
+  a push for each new report and the first time a new kind of error shows up.
 
 - **Works offline.** Installed to a home screen, the app starts and tracks time
   with no connection, or while the server is down. Changes are kept on the device,
@@ -344,11 +361,12 @@ app/tracker/     The time-tracking screen (also used by admins for someone else'
 app/offline/     Outbox, sync engine, device copies, offline loaders
 app/pwa/         Service worker registration, keeping an installed app current, push subscriptions
 app/notifications/ The account page's notification settings
+app/bugs/        Report a problem: breadcrumbs, error capture, context, screenshots, the offline queue
 src/             Server-side modules (SQLite, auth flows, time, sign-off, reports, sync)
 src/accounting/  Accounting backends and the qbXML encoder
 src/notifications/ What to notify whom about and when (pure rules), sending it by Web Push
 src/testing/     Test helpers: the software passkey authenticator, a pretend QuickBooks and bridge
-src/cli/         Operator commands (`bun run admin-link`)
+src/cli/         Operator commands (`bun run admin-link`, `bun run bugs`)
 e2e/             Playwright end-to-end tests (app instances: standalone, bridge, Web Connector; a pretend push service)
 docs/            Contracts with other systems
 public/          Service worker and icons served at the site root

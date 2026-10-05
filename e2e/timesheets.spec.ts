@@ -309,7 +309,7 @@ test("reports: totals by customer, costs frozen at approval, and a CSV", async (
   await expect(toast(page, "Rate set: $45.00/h")).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "Eddie Employee" })).toHaveCount(1);
 
-  await page.getByRole("link", { name: "Reports" }).click();
+  await page.getByRole("link", { name: "Reports", exact: true }).click();
   await expect(page.getByRole("row", { name: /Eddie Employee/ })).toBeVisible();
   await choose(page, "Group by", "Customer");
   await expect(page).toHaveURL(/by=customer/);

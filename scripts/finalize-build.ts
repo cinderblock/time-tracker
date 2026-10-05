@@ -8,6 +8,7 @@
  *
  *   bun scripts/finalize-build.ts          (run by `bun run build`)
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
@@ -47,4 +48,16 @@ if (!source.includes(PLACEHOLDER)) {
 }
 await writeFile(swPath, source.replace(PLACEHOLDER, JSON.stringify({ buildId, urls: files })));
 
-console.log(`Service worker stamped: build ${buildId}, ${files.length} files to keep offline.`);
+// What the server reports as its own build (src/build-info.server.ts): the
+// same build id, and the commit the bundle was built from.
+let revision = process.env.APP_REVISION || "";
+if (!revision) {
+  try {
+    revision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    revision = "dev";
+  }
+}
+await writeFile("build/build-info.json", JSON.stringify({ buildId, revision, builtAt: Date.now() }, null, 2));
+
+console.log(`Service worker stamped: build ${buildId} (${revision.slice(0, 7)}), ${files.length} files to keep offline.`);

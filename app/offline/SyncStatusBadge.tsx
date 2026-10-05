@@ -43,7 +43,7 @@ export function SyncStatusBadge() {
 }
 
 /** What a queued op was, in words, for a "couldn't save" message. */
-function describe(op: Op): string {
+export function describe(op: Op): string {
   switch (op.type) {
     case "timer.start":
       return "Starting a timer";
