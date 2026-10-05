@@ -214,35 +214,23 @@ function groupByJob(notes: readonly NoteView[]): Section[] {
 }
 
 /**
- * Pick a job to be on from now — or, writing up an earlier day, from the time
- * given. One already on the day just takes the cursor.
+ * Pick a job to be on from now. One already on the day just takes the cursor.
+ *
+ * Writing up an earlier day, a tap starts the job where the day's notes leave
+ * off — its start can be re-timed after, like any note. A day with no notes
+ * yet has nothing to go on, so the job's card opens asking when it started.
  */
 function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: string) => void }) {
   const { model, dispatch, location, pending } = useTracker();
   const isToday = model.workDate === model.today;
   const [value, setValue] = useState<string | null>(null);
-  // Untouched, the time follows the latest one written on the day.
-  const [time, setTime] = useTrackerDraft<string | null>(isToday ? null : `add-job-at:${model.workDate}`, null);
-  const shownTime = time ?? latestTimeOn(model.notes, model.timezone);
-  const [problem, setProblem] = useState<string | null>(null);
+  // A job picked on an empty earlier day, waiting for its time.
+  const [waiting, setWaiting, dropWaiting] = useTrackerDraft<string | null>(
+    isToday ? null : `start-waiting:${model.workDate}`,
+    null,
+  );
 
-  async function pick(jobId: string | null) {
-    setValue(null);
-    if (!jobId) return;
-    if (sections.some((s) => s.jobId === jobId)) {
-      onAdded(jobId);
-      return;
-    }
-    let at = Date.now();
-    if (!isToday) {
-      const when = noteTimeOn(model.workDate, shownTime, model.timezone, at);
-      if (!when.ok) {
-        setProblem(when.problem);
-        return;
-      }
-      at = when.at;
-    }
-    setProblem(null);
+  async function start(jobId: string, at: number) {
     const result = await dispatch("note.create", {
       noteId: uuidv7(),
       at,
@@ -251,10 +239,29 @@ function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: s
       // Where the device is now says nothing about where an earlier day was.
       location: isToday ? location() : null,
     });
-    if (result.ok) {
-      setTime(null);
+    if (result.ok) onAdded(jobId);
+    return result.ok;
+  }
+
+  function pick(jobId: string | null) {
+    setValue(null);
+    if (!jobId) return;
+    if (sections.some((s) => s.jobId === jobId)) {
       onAdded(jobId);
+      return;
     }
+    if (isToday) {
+      void start(jobId, Date.now());
+      return;
+    }
+    // The day's latest note to the millisecond: the start sorts after it (a
+    // new id is the later one on a tie), where a typed minute could fall
+    // just before it and cut that note's run short.
+    if (model.notes.length === 0) {
+      setWaiting(jobId);
+      return;
+    }
+    void start(jobId, Math.max(...model.notes.map((n) => n.at)));
   }
 
   // The buttons are the fast way onto a job you've been on lately — the same
@@ -262,27 +269,91 @@ function AddJob({ sections, onAdded }: { sections: Section[]; onAdded: (jobId: s
   // button: tapping it is how you say you're back on it.
   return (
     <Stack gap="xs">
-      {!isToday && (
-        <TimeInput
-          label="Started at"
-          description="When you got onto the job you pick below"
-          value={shownTime}
-          onChange={(e) => {
-            setTime(e.currentTarget.value);
-            setProblem(null);
-          }}
-          error={problem}
-          data-draft
-          maw={320}
-        />
-      )}
-      <RecentJobButtons onPick={(job) => void pick(job.id)} disabled={pending} />
+      <RecentJobButtons onPick={(job) => pick(job.id)} disabled={pending} />
       <JobSelect
         value={value}
-        onChange={(id) => void pick(id)}
+        onChange={pick}
         placeholder={isToday ? "Add a job for today — type to search" : "Add a job you were on — type to search"}
       />
+      {waiting && model.notes.length === 0 && (
+        <WhenStarted
+          key={waiting}
+          jobId={waiting}
+          onStart={async (at) => {
+            if (await start(waiting, at)) dropWaiting();
+          }}
+          onCancel={dropWaiting}
+        />
+      )}
     </Stack>
+  );
+}
+
+/**
+ * A job picked on an earlier day with nothing written on it yet: its card,
+ * asking when it began. The hours are worked out from that, so it isn't
+ * guessed.
+ */
+function WhenStarted({
+  jobId,
+  onStart,
+  onCancel,
+}: {
+  jobId: string;
+  onStart: (at: number) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { model, pending } = useTracker();
+  const name = model.jobs.find((j) => j.id === jobId)?.fullName ?? "Unknown job";
+  const { name: title, above: place } = jobPath(name);
+  const [time, setTime] = useTrackerDraft(`start-waiting-at:${model.workDate}:${jobId}`, "");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const when = noteTimeOn(model.workDate, time, model.timezone, Date.now());
+    if (!when.ok) {
+      setProblem(when.problem);
+      return;
+    }
+    void onStart(when.at);
+  }
+
+  return (
+    <Card withBorder padding="sm" role="group" aria-label={jobLabel(name)} className={appear.appear}>
+      <form onSubmit={submit}>
+        <Stack gap="xs">
+          <Stack gap={0} style={{ minWidth: 0 }}>
+            <Text fw={600}>{title}</Text>
+            {place && (
+              <Text size="xs" c="dimmed">
+                {place}
+              </Text>
+            )}
+          </Stack>
+          <Group gap="xs" align="end" wrap="nowrap">
+            <TimeInput
+              label="Started at"
+              value={time}
+              onChange={(e) => {
+                setTime(e.currentTarget.value);
+                setProblem(null);
+              }}
+              error={problem}
+              data-draft
+              autoFocus
+              w={130}
+            />
+            <Button type="submit" disabled={pending}>
+              Start
+            </Button>
+            <Button variant="default" onClick={onCancel}>
+              Cancel
+            </Button>
+          </Group>
+        </Stack>
+      </form>
+    </Card>
   );
 }
 
@@ -508,8 +579,9 @@ function NoteBox({
  * One line of the day. A note that hasn't become hours yet opens for editing
  * from anywhere on its row — the whole row is the tap target, as an entry's
  * is — with a pencil to say so: drawn on a touch device, where there is no
- * other clue, and faded in on hover where there's a mouse. The start marker
- * can only be removed, and a rolled-up note is just a record.
+ * other clue, and faded in on hover where there's a mouse. A job's start
+ * opens the same way, for its time or its job — it has no words to change.
+ * A rolled-up note is just a record.
  */
 function NoteRow({ note }: { note: NoteView }) {
   const { model, dispatch, pending } = useTracker();
@@ -559,17 +631,19 @@ function NoteRow({ note }: { note: NoteView }) {
     return (
       <Card withBorder padding="sm">
         <Stack gap="xs">
-          <Textarea
-            value={text}
-            onChange={(e) => setText(e.currentTarget.value)}
-            maxLength={NOTE_MAX_LENGTH}
-            autosize
-            aria-label="Note text"
-            data-draft
-          />
+          {!start && (
+            <Textarea
+              value={text}
+              onChange={(e) => setText(e.currentTarget.value)}
+              maxLength={NOTE_MAX_LENGTH}
+              autosize
+              aria-label="Note text"
+              data-draft
+            />
+          )}
           <Group gap="xs" align="start" wrap="nowrap">
             <TimeInput
-              aria-label="Time of the note"
+              aria-label={start ? "Started at" : "Time of the note"}
               value={time}
               onChange={(e) => setTime(e.currentTarget.value)}
               error={retimed && !retimed.ok ? retimed.problem : null}
@@ -582,7 +656,7 @@ function NoteRow({ note }: { note: NoteView }) {
           </Group>
           <Group justify="space-between">
             <Button variant="subtle" color="red" size="xs" onClick={() => void remove()} disabled={pending}>
-              Delete
+              {start ? "Remove" : "Delete"}
             </Button>
             <Group gap="xs">
               <Button variant="default" size="xs" onClick={() => setEditing(false)}>
@@ -591,7 +665,7 @@ function NoteRow({ note }: { note: NoteView }) {
               <Button
                 size="xs"
                 onClick={() => void save()}
-                disabled={!text.trim() || (retimed != null && !retimed.ok) || pending}
+                disabled={(!start && !text.trim()) || (retimed != null && !retimed.ok) || pending}
               >
                 Save
               </Button>
@@ -628,25 +702,23 @@ function NoteRow({ note }: { note: NoteView }) {
       align="start"
       opacity={rolled ? 0.6 : 1}
     >
-      {start || rolled ? (
+      {rolled ? (
         <Group gap="xs" wrap="nowrap" align="start" style={{ minWidth: 0 }}>
           {when}
           {what}
-          {rolled && (
-            <Badge size="sm" variant="light" color="gray">
-              {note.settled === "kept_in_accounting"
-                ? "kept in accounting"
-                : note.settled === "left_out"
-                  ? "left out"
-                  : "added to time"}
-            </Badge>
-          )}
+          <Badge size="sm" variant="light" color="gray">
+            {note.settled === "kept_in_accounting"
+              ? "kept in accounting"
+              : note.settled === "left_out"
+                ? "left out"
+                : "added to time"}
+          </Badge>
         </Group>
       ) : (
         <UnstyledButton
           className={classes.opener}
           onClick={() => setEditing(true)}
-          aria-label={`Edit ${note.text}`}
+          aria-label={start ? "Edit the start" : `Edit ${note.text}`}
           style={{ flex: 1, minWidth: 0 }}
         >
           <Group gap="xs" wrap="nowrap" align="start">
@@ -655,18 +727,6 @@ function NoteRow({ note }: { note: NoteView }) {
             <PencilIcon />
           </Group>
         </UnstyledButton>
-      )}
-      {!rolled && start && (
-        <Button
-          className={classes.action}
-          size="compact-xs"
-          variant="subtle"
-          color="gray"
-          onClick={() => void remove()}
-          disabled={pending}
-        >
-          Remove
-        </Button>
       )}
     </Group>
   );

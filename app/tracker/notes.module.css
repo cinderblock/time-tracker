@@ -1,23 +1,19 @@
 /*
- * A note row: its time and text on the left, its action on the right.
+ * A note row: its time and text on the left, the pencil on the right.
  *
- * The action used to be a text button sharing the row's width, and a long
- * note squeezed it — Mantine's button root is `overflow: hidden`, so as a
- * flex item it shrinks past its own label and clips it ("Edi"). Actions here
- * never shrink; the text takes what's left.
+ * There used to be a text button sharing the row's width, and a long note
+ * squeezed it — Mantine's button root is `overflow: hidden`, so as a flex
+ * item it shrinks past its own label and clips it ("Edi"). The pencil never
+ * shrinks; the text takes what's left.
  *
- * With a mouse the action fades in on the row, so a quiet row stays quiet.
- * On a phone there is no hover to fade anything in, so it stays drawn — the
- * pencil included: without it nothing says a note can be opened at all, and
- * a hint you can only find by guessing isn't worth the width it saves.
+ * With a mouse the pencil fades in on the row, so a quiet row stays quiet.
+ * On a phone there is no hover to fade anything in, so it stays drawn:
+ * without it nothing says a note can be opened at all, and a hint you can
+ * only find by guessing isn't worth the width it saves.
  */
 
 .row {
   position: relative;
-}
-
-.action {
-  flex: 0 0 auto;
 }
 
 .pencil {
@@ -29,14 +25,11 @@
 }
 
 @media (hover: hover) {
-  .action,
   .pencil {
     opacity: 0;
     transition: opacity 100ms ease;
   }
 
-  .row:hover .action,
-  .row:focus-within .action,
   .row:hover .pencil,
   .row:focus-within .pencil {
     opacity: 1;

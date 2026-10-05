@@ -33,8 +33,9 @@ repository. All of that is deployment configuration or an admin setting.
   - *Notes* — add the job you're on — one tap on a recent job, as starting a
     timer is — then jot what you do under it as you go (and add a second job
     when you move to one). Tap a note to correct it, change its time or
-    move it to another job. A day gone by can be written up afterwards the
-    same way, each job and note saying when. At the end of the day (or the
+    move it to another job; tap a job's start to change when it began. A day
+    gone by can be written up afterwards the same way: a tapped job starts
+    where the day's notes leave off, and each note says when. At the end of the day (or the
     next morning) each job's notes become hours: the timeline suggests them,
     you confirm, and one entry per job carries the notes as its description.
     By default a day's notes have to become hours before the next day's can

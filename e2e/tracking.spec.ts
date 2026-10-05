@@ -759,19 +759,23 @@ test("someone who'd rather finish old notes later can turn the hold off where it
   await send(ctx.request, "note.delete", { noteId: leftover, at: Date.now() });
 });
 
-test("a past day can be written up afterwards, each note saying when, and a note's time corrected", async () => {
+test("a past day can be written up afterwards, each note saying when, and a note's or a start's time corrected", async () => {
   const day = new Date(Date.now() - 3 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
   await page.goto(`/day/${day}`);
 
-  // A job on a past day needs the time it began; an empty day suggests none.
-  const startedAt = page.getByLabel("Started at");
-  await expect(startedAt).toHaveValue("");
+  // No time to fill in before picking: tapping a job starts it. On a day with
+  // nothing written yet there's no time to go on, so its card asks.
+  await expect(page.getByLabel("Started at")).toHaveCount(0);
   const picker = page.getByPlaceholder("Add a job you were on — type to search");
   await pickJob(picker, "Alpha Site");
-  await expect(page.getByText("Say when.")).toBeVisible();
-  await startedAt.fill("08:00");
-  await pickJob(picker, "Alpha Site");
   const alpha = page.getByRole("group", { name: "Riverside › Alpha Site" });
+  const startedAt = alpha.getByLabel("Started at");
+  await expect(startedAt).toBeFocused();
+  await expect(startedAt).toHaveValue("");
+  await alpha.getByRole("button", { name: "Start", exact: true }).click();
+  await expect(alpha.getByText("Say when.")).toBeVisible();
+  await startedAt.fill("08:00");
+  await alpha.getByRole("button", { name: "Start", exact: true }).click();
   await expect(alpha.getByText("since 8:00 AM")).toBeVisible();
 
   // The note's time starts from the job's latest, and is the person's to set.
@@ -790,13 +794,31 @@ test("a past day can be written up afterwards, each note saying when, and a note
   await alpha.getByRole("button", { name: "Save" }).click();
   await expect(alpha.getByRole("button", { name: "Edit Formwork" })).toContainText("11:30 AM");
 
-  // The hours come from those times, as on the day itself.
+  // The next job starts with one tap, where the day's notes leave off…
+  await pickJob(picker, "Bravo Site");
+  const bravo = page.getByRole("group", { name: "Riverside › Bravo Site" });
+  await expect(bravo.getByText("since 11:30 AM")).toBeVisible();
+  // …and its start opens like a note, to say when it really was.
+  await bravo.getByRole("button", { name: "Edit the start" }).click();
+  await expect(bravo.getByLabel("Note text")).toHaveCount(0);
+  await bravo.getByLabel("Started at").fill("12:00");
+  await bravo.getByRole("button", { name: "Save" }).click();
+  await expect(bravo.getByText("since 12:00 PM")).toBeVisible();
+
+  // The hours come from those times, as on the day itself: Alpha ran until
+  // Bravo's start.
   await alpha.getByRole("button", { name: "Turn 1 note into hours" }).click();
   const dialog = page.getByRole("dialog", { name: "Hours for Riverside › Alpha Site" });
-  await expect(dialog.getByText(/ran 8:00 AM – 11:30 AM: 3h 30m\./)).toBeVisible();
-  await dialog.getByRole("button", { name: "Add 3h 30m to Alpha Site" }).click();
+  await expect(dialog.getByText(/ran 8:00 AM – 12:00 PM: 4h\./)).toBeVisible();
+  await dialog.getByRole("button", { name: "Add 4h to Alpha Site" }).click();
   await expect(dialog).toBeHidden();
-  await expect(entryRows().filter({ hasText: "Formwork" }).getByText("3h 30m", { exact: true })).toBeVisible();
+  await expect(entryRows().filter({ hasText: "Formwork" }).getByText("4h", { exact: true })).toBeVisible();
+
+  // A start can be removed from its editor too — and leaves the day finished
+  // for what follows.
+  await bravo.getByRole("button", { name: "Edit the start" }).click();
+  await bravo.getByRole("button", { name: "Remove" }).click();
+  await expect(bravo).toHaveCount(0);
 });
 
 test("submitting with notes not yet hours asks first; a submitted day's leftover notes can be left out", async () => {
@@ -804,7 +826,7 @@ test("submitting with notes not yet hours asks first; a submitted day's leftover
   // whose time was billed some other way.
   const day = new Date(Date.now() - 3 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
   await page.goto(`/day/${day}`);
-  await page.getByLabel("Started at").fill("13:00");
+  // The day has notes already, so a tap starts the job where they leave off.
   await pickJob(page.getByPlaceholder("Add a job you were on — type to search"), "Bravo Site");
   const bravo = page.getByRole("group", { name: "Riverside › Bravo Site" });
   await bravo.getByLabel("Time of the note for Riverside › Bravo Site").fill("14:00");
