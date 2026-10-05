@@ -77,7 +77,7 @@ line of defence, but one asking the same question about time already settled.
    bring back, audit, all-or-nothing), migration backfill, reducer mirrors,
    undo, and an e2e walk through submit-asks / submitted lock / leave out.
 5. [x] README.
-6. [x] typecheck, unit, e2e; commit. **Deploy waits for the user.**
+6. [x] typecheck, unit, e2e; commit; deployed (`1cc0210`).
 
 ## Findings / gotchas
 
@@ -104,6 +104,15 @@ line of defence, but one asking the same question about time already settled.
       submit asks. Typecheck, 481 unit, 83 e2e passed (3 skipped:
       screenshot-only), screenshots of the locked day and left-out notes
       checked. Not deployed.
+- [x] 2026-10-05 — Also fixed: the end-of-day notes reminder now counts
+      pending notes by the same rule (`pendingNotesOn`, `1cc0210`).
+- [x] 2026-10-05 — **Deployed** at `1cc0210` (user: "deploy"). Snapshot
+      first; image digest checked against its revision label in the
+      registry. The hosted-runner outage that day cancelled the build and the
+      deploy several times before any step ran; re-run until they went
+      through. Live: healthy on the pinned digest, `applying migration
+      012_settled_notes` in the log, and the reported day's five notes read
+      back as `kept_in_accounting` (read-only query).
 
 ## Open questions for the user
 
