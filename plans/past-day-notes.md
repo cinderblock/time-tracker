@@ -82,6 +82,10 @@ Two asks from use (2026-10-04):
       a time; a note's editor sets its time. `bun run typecheck`, 475 unit
       (4 new in `app/tracker/note-time.test.ts`), 82 e2e green (one new test,
       one updated); screenshots of the callout and a written-up day checked.
+- [x] 2026-10-04 — **Deployed** at `8d51384` (image `sha256:16a7cfd1…`,
+      revision label checked against the commit from the registry). No
+      migrations. The container came up healthy on that digest, and the
+      deployment's tracker bundle contains the new past-day wording.
 
 ## Open questions for the user
 
